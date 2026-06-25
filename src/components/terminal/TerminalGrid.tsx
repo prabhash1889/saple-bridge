@@ -39,6 +39,53 @@ const workspaceNameFromPath = (path: string) => {
   return parts[parts.length - 1] || path;
 };
 
+const gridClassNameFor = (paneCount: number, maximizedPaneId: string | null) => {
+  if (maximizedPaneId) return 'terminal-grid terminal-grid-maximized';
+  if (paneCount <= 1) return 'terminal-grid terminal-grid-1';
+  if (paneCount === 2) return 'terminal-grid terminal-grid-2';
+  if (paneCount <= 4) return 'terminal-grid terminal-grid-4';
+  if (paneCount <= 6) return 'terminal-grid terminal-grid-6';
+  if (paneCount <= 9) return 'terminal-grid terminal-grid-9';
+  if (paneCount <= 12) return 'terminal-grid terminal-grid-12';
+  return 'terminal-grid terminal-grid-16';
+};
+
+interface WorkspaceTerminalGridProps {
+  panes: string[];
+  maximizedPaneId: string | null;
+  active: boolean;
+}
+
+// One workspace's terminal grid. Every open workspace renders one of these and they all
+// stay mounted; only the active workspace's grid is visible (the rest carry
+// `terminal-grid-hidden`). Switching workspaces therefore just flips visibility instead of
+// disposing and re-creating xterm panes — the churn that used to exhaust WebGL contexts and
+// leave the terminals frozen until the next keypress.
+const WorkspaceTerminalGridComponent: React.FC<WorkspaceTerminalGridProps> = ({ panes, maximizedPaneId, active }) => {
+  const gridClassName = useMemo(
+    () => gridClassNameFor(panes.length, maximizedPaneId),
+    [panes.length, maximizedPaneId],
+  );
+
+  return (
+    <div
+      className={active ? gridClassName : `${gridClassName} terminal-grid-hidden`}
+      aria-hidden={!active}
+    >
+      {panes.map((paneId) => (
+        <TerminalPane
+          key={paneId}
+          sessionId={paneId}
+          maximized={maximizedPaneId === paneId}
+          active={active}
+        />
+      ))}
+    </div>
+  );
+};
+
+const WorkspaceTerminalGrid = memo(WorkspaceTerminalGridComponent);
+
 interface TerminalGridProps {}
 
 const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
@@ -52,11 +99,17 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const currentProjectName = useProjectStore((state) => state.currentProjectName);
+  const currentWorkspaceId = useProjectStore((state) => state.currentWorkspaceId);
+  const openWorkspaces = useProjectStore((state) => state.openWorkspaces);
   const recentProjects = useProjectStore((state) => state.recentProjects);
   const openWorkspace = useProjectStore((state) => state.openWorkspace);
   const workspaceLoading = useProjectStore((state) => state.workspaceLoading);
+  // `panes` mirrors the active workspace (kept in sync by activateWorkspace) and drives the
+  // setup-wizard / launch logic below. The two `workspace*` maps drive the persistent grids:
+  // every open workspace renders its own grid so switching never unmounts a pane.
   const panes = useTerminalStore((state) => state.panes);
-  const maximizedPaneId = useTerminalStore((state) => state.maximizedPaneId);
+  const workspacePanes = useTerminalStore((state) => state.workspacePanes);
+  const workspaceMaximizedPaneIds = useTerminalStore((state) => state.workspaceMaximizedPaneIds);
   const initialize = useTerminalStore((state) => state.initialize);
   const addPane = useTerminalStore((state) => state.addPane);
   const canAddPane = useTerminalStore((state) => state.canAddPane);
@@ -233,23 +286,62 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
     setSetupComplete(true);
   }, [addPane, agentCounts, customCommandCount, clampedLayoutCount, currentProjectPath, maxLimit, panes.length, selectedProvider, customCommand]);
 
-  const gridClassName = useMemo(() => {
-    if (maximizedPaneId) return 'terminal-grid terminal-grid-maximized';
-    const count = panes.length;
-    if (count <= 1) return 'terminal-grid terminal-grid-1';
-    if (count === 2) return 'terminal-grid terminal-grid-2';
-    if (count <= 4) return 'terminal-grid terminal-grid-4';
-    if (count <= 6) return 'terminal-grid terminal-grid-6';
-    if (count <= 9) return 'terminal-grid terminal-grid-9';
-    if (count <= 12) return 'terminal-grid terminal-grid-12';
-    return 'terminal-grid terminal-grid-16';
-  }, [panes.length, maximizedPaneId]);
+  const showSetup = !setupComplete && panes.length === 0;
+  const currentStepIndex = SETUP_STEPS.findIndex((item) => item.id === setupStep);
 
-  if (!setupComplete && panes.length === 0) {
-    const currentStepIndex = SETUP_STEPS.findIndex((item) => item.id === setupStep);
+  // Build a persistent grid for every open workspace that has panes. Only the active
+  // workspace's grid is shown; the rest stay mounted but hidden so a workspace switch never
+  // tears a pane down (and re-replays its scrollback / re-grabs a WebGL context).
+  const workspaceGrids = openWorkspaces
+    .map((workspace) => ({ workspace, wsPanes: workspacePanes[workspace.id] || [] }))
+    .filter(({ wsPanes }) => wsPanes.length > 0)
+    .map(({ workspace, wsPanes }) => (
+      <WorkspaceTerminalGrid
+        key={workspace.id}
+        panes={wsPanes}
+        maximizedPaneId={workspaceMaximizedPaneIds[workspace.id] ?? null}
+        active={workspace.id === currentWorkspaceId}
+      />
+    ));
 
-    return (
-      <div className="command-setup">
+  return (
+    <>
+      {/* The persistent grids live here in every render (hidden behind the setup wizard when
+          the active workspace has none) so other workspaces' panes are never unmounted. */}
+      <div
+        className="terminal-room command-workbench"
+        style={showSetup ? { display: 'none' } : undefined}
+      >
+        <div className="terminal-grid-wrapper">
+          <div className="terminal-grid-container">
+            {workspaceGrids}
+            {!showSetup && panes.length === 0 && (
+              <div className="terminal-empty-state">
+                <TerminalIcon size={40} style={{ color: 'var(--text-muted)', marginBottom: 8 }} />
+                <p>No active terminal panes.</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
+                  Create up to {maxLimit} panes for parallel terminal or agent sessions
+                </p>
+                <button onClick={handleAddPane} className="primary" style={{ marginTop: '16px' }}>
+                  <Plus size={16} />
+                  <span>New Pane</span>
+                </button>
+                {savedPaneCount > 0 && (
+                  <button
+                    onClick={() => currentProjectPath && restoreWorkspacePanes(currentProjectPath)}
+                    style={{ marginTop: '10px' }}
+                  >
+                    <History size={15} />
+                    <span>Restore previous {savedPaneCount} terminal{savedPaneCount === 1 ? '' : 's'}</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {showSetup && (
+        <div className="command-setup">
         <div className="command-setup-shell" style={setupStep === 'agents' ? { padding: 0, background: 'transparent' } : undefined}>
           {setupStep !== 'agents' && savedPaneCount > 0 && (
             <div className="command-setup-restore">
@@ -507,48 +599,8 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
           </div>
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div className="terminal-room command-workbench">
-      <div className="terminal-grid-wrapper">
-        <div className="terminal-grid-container">
-          {panes.length > 0 ? (
-            <div className={gridClassName}>
-              {panes.map((paneId) => (
-                <TerminalPane
-                  key={paneId}
-                  sessionId={paneId}
-                  maximized={maximizedPaneId === paneId}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="terminal-empty-state">
-              <TerminalIcon size={40} style={{ color: 'var(--text-muted)', marginBottom: 8 }} />
-              <p>No active terminal panes.</p>
-              <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
-                Create up to {maxLimit} panes for parallel terminal or agent sessions
-              </p>
-              <button onClick={handleAddPane} className="primary" style={{ marginTop: '16px' }}>
-                <Plus size={16} />
-                <span>New Pane</span>
-              </button>
-              {savedPaneCount > 0 && (
-                <button
-                  onClick={() => currentProjectPath && restoreWorkspacePanes(currentProjectPath)}
-                  style={{ marginTop: '10px' }}
-                >
-                  <History size={15} />
-                  <span>Restore previous {savedPaneCount} terminal{savedPaneCount === 1 ? '' : 's'}</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      )}
+    </>
   );
 };
 

@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -346,14 +346,20 @@ const restoreTerminalScroll = (terminal: Terminal, snapshot: TerminalScrollSnaps
 interface TerminalPaneProps {
   sessionId: string;
   maximized?: boolean;
+  // Whether this pane's workspace is the one currently on screen. Panes in hidden
+  // workspaces stay mounted (so switching back never re-creates them) but give up their
+  // WebGL renderer while off-screen — see the `active` effect below.
+  active?: boolean;
 }
 
-const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized }) => {
+const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const settleTimeoutRef = useRef<number | null>(null);
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
+  const webglReleaseRef = useRef<(() => void) | null>(null);
   const [showBlockInfo, setShowBlockInfo] = useState(false);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -428,6 +434,62 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const lastCommand = sessionInfo?.lastCommandInput || '';
   const canCreatePane = Boolean(currentProjectPath && canAddPane());
 
+  // Drop this pane's WebGL renderer (if any) and free its slot in the global context
+  // budget. Idempotent: safe to call from the `active` effect, the context-loss handler,
+  // and the unmount cleanup without double-counting.
+  const unloadWebgl = useCallback(() => {
+    if (webglReleaseRef.current) {
+      webglReleaseRef.current();
+      webglReleaseRef.current = null;
+    }
+    if (webglAddonRef.current) {
+      try {
+        webglAddonRef.current.dispose();
+      } catch {
+        // Already disposed (e.g. via context loss) — ignore.
+      }
+      webglAddonRef.current = null;
+    }
+  }, []);
+
+  // Attach a WebGL renderer to the live terminal, unless one is already attached or the
+  // per-process context budget is spent (then the pane keeps xterm's slower DOM renderer).
+  const loadWebgl = useCallback(() => {
+    const term = terminalRef.current;
+    if (!term || webglAddonRef.current) return;
+    if (activeWebglContexts >= MAX_WEBGL_CONTEXTS) {
+      console.warn(
+        `[terminal ${sessionId}] WebGL context cap (${MAX_WEBGL_CONTEXTS}) reached; this pane uses the slower DOM renderer.`,
+      );
+      return;
+    }
+    try {
+      const webglAddon = new WebglAddon();
+      activeWebglContexts += 1;
+      let released = false;
+      webglReleaseRef.current = () => {
+        if (released) return;
+        released = true;
+        activeWebglContexts = Math.max(0, activeWebglContexts - 1);
+      };
+      webglAddonRef.current = webglAddon;
+      webglAddon.onContextLoss(() => {
+        // The browser reclaimed the GL context (e.g. the process-wide cap was hit). Drop the
+        // addon and free the slot so the pane falls back to the DOM renderer instead of
+        // sitting on a dead, frozen canvas.
+        unloadWebgl();
+      });
+      term.loadAddon(webglAddon);
+      term.refresh(0, term.rows - 1);
+    } catch {
+      // WebGL not supported / failed to init — fall back to the DOM renderer.
+      unloadWebgl();
+      console.warn(
+        `[terminal ${sessionId}] WebGL renderer unavailable; using the slower DOM renderer.`,
+      );
+    }
+  }, [sessionId, unloadWebgl]);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -471,38 +533,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
 
     term.open(containerRef.current);
 
-    let releaseWebgl = () => {};
-    if (activeWebglContexts < MAX_WEBGL_CONTEXTS) {
-      try {
-        const webglAddon = new WebglAddon();
-        activeWebglContexts += 1;
-        let released = false;
-        releaseWebgl = () => {
-          if (released) return;
-          released = true;
-          activeWebglContexts = Math.max(0, activeWebglContexts - 1);
-        };
-        webglAddon.onContextLoss(() => {
-          releaseWebgl();
-          webglAddon.dispose();
-        });
-        term.loadAddon(webglAddon);
-      } catch {
-        // WebGL not supported / failed to init, fall back to DOM renderer
-        releaseWebgl();
-        console.warn(
-          `[terminal ${sessionId}] WebGL renderer unavailable; using the slower DOM renderer.`,
-        );
-      }
-    } else {
-      // Past the per-process WebGL context cap: this pane renders with xterm's DOM renderer,
-      // which is noticeably slower for heavy output. Surface it so it's visible in DevTools when
-      // many panes are open (a canvas-renderer fallback would help here, but no stable
-      // @xterm/addon-canvas targets @xterm/xterm v6 yet).
-      console.warn(
-        `[terminal ${sessionId}] WebGL context cap (${MAX_WEBGL_CONTEXTS}) reached; this pane uses the slower DOM renderer.`,
-      );
-    }
+    // The WebGL renderer is acquired lazily and only while this pane's workspace is the one
+    // on screen (see the `active` effect below). Loading it here at mount — for every pane in
+    // every open workspace — would exhaust the browser's hard WebGL context cap and thrash the
+    // GPU compositor on each workspace switch (panes froze until the next keypress).
 
     const applyInitialSize = (retries = 8, delay = 100) => {
       if (disposed) return;
@@ -679,10 +713,32 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       dataDisposable.dispose();
       titleDisposable.dispose();
       unsubscribeOutput();
-      releaseWebgl();
+      unloadWebgl();
       term.dispose();
     };
   }, [sessionId]);
+
+  // Acquire/release the WebGL renderer as this pane's workspace gains/loses visibility.
+  // Acquisition is deferred one frame so the outgoing workspace's panes release their
+  // contexts first — that ordering is what keeps a switch from momentarily exceeding the
+  // browser's hard context cap (the cause of the post-switch scroll/render freeze).
+  useEffect(() => {
+    if (!active) {
+      unloadWebgl();
+      return;
+    }
+    const raf = window.requestAnimationFrame(() => {
+      loadWebgl();
+      const term = terminalRef.current;
+      if (term) {
+        // While hidden the container was display:none, so its size-guarded ResizeObserver
+        // may not fire on reveal (dimensions unchanged). Force one repaint so the pane shows
+        // current content immediately instead of staying blank until the next PTY write.
+        term.refresh(0, term.rows - 1);
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [active, loadWebgl, unloadWebgl]);
 
   useEffect(() => {
     if (isFocused && terminalRef.current) {
