@@ -343,6 +343,18 @@ const restoreTerminalScroll = (terminal: Terminal, snapshot: TerminalScrollSnaps
   terminal.scrollToLine(Math.min(snapshot.viewportY, terminal.buffer.active.baseY));
 };
 
+// Re-sync xterm's scroll viewport after the pane goes display:none -> visible (workspace or
+// view switch). In xterm v6 wheel scrollability is governed by Viewport._sync(), which only
+// runs on buffer scroll/resize/activate events — terminal.refresh() repaints cells but does
+// NOT re-sync the viewport, so the wheel stays dead until the next PTY write (the "press a
+// key to unfreeze" symptom). A net-zero scroll nudge fires onScroll -> _sync() without
+// moving the view. When there's no scrollback both calls are no-ops, but then there is
+// nothing to scroll anyway, so this is safe in every state.
+const resyncTerminalViewport = (terminal: Terminal) => {
+  terminal.scrollLines(-1);
+  terminal.scrollLines(1);
+};
+
 interface TerminalPaneProps {
   sessionId: string;
   maximized?: boolean;
@@ -654,6 +666,12 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
 
         const lastSize = lastSizeRef.current;
         if (lastSize?.cols === nextSize.cols && lastSize.rows === nextSize.rows) {
+          // Same size means no resize is needed — but this branch is also exactly what runs
+          // when a hidden pane is revealed at the unchanged window size (the ResizeObserver
+          // fired because the container went 0 -> real). xterm's viewport scroll area is
+          // stale after that, so restore wheel scrolling here. Covers the view switch
+          // (Terminals -> other room -> Terminals), where the `active` prop never changes.
+          resyncTerminalViewport(terminal);
           return;
         }
 
@@ -733,8 +751,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       if (term) {
         // While hidden the container was display:none, so its size-guarded ResizeObserver
         // may not fire on reveal (dimensions unchanged). Force one repaint so the pane shows
-        // current content immediately instead of staying blank until the next PTY write.
+        // current content immediately instead of staying blank until the next PTY write,
+        // and re-sync the scroll viewport so the mouse wheel works without a keypress.
         term.refresh(0, term.rows - 1);
+        resyncTerminalViewport(term);
       }
     });
     return () => window.cancelAnimationFrame(raf);
