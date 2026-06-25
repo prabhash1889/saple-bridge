@@ -26,13 +26,6 @@ portable-pty = "0.9.0"
 uuid = { version = "1", features = ["v4"] }
 rfd = "0.15.0"
 keyring = "2.1"
-# Amber agent: outbound HTTPS to LLM providers. rustls-tls (no native OpenSSL) keeps the
-# Windows build self-contained; `stream` enables Response::bytes_stream() for SSE.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
-futures-util = "0.3"
-# Amber "Claude Code" provider: spawn the `claude` CLI and stream its NDJSON output. Tauri already
-# pulls tokio; these features add async process spawn + line reading + select/sleep for cancel.
-tokio = { version = "1", features = ["process", "io-util", "time", "macros", "rt"] }
 
 [target.'cfg(windows)'.dependencies]
 # PTY process-tree cleanup: each shell is placed in a Job Object so closing a pane kills the

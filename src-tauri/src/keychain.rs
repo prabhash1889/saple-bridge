@@ -15,7 +15,7 @@ pub(crate) fn set_api_key_inner(service: String, key: String) -> Result<(), Stri
 }
 
 // NOTE: there is intentionally no `get_api_key` Tauri command. Secrets are read only in Rust
-// (PTY launch, Amber engine) via `get_api_key_inner`; the renderer uses `has_api_key` /
+// (e.g. PTY launch) via `get_api_key_inner`; the renderer uses `has_api_key` /
 // `test_provider_connection` so a raw key never crosses the IPC boundary.
 pub(crate) fn get_api_key_inner(service: String) -> Result<String, String> {
     let entry = Entry::new(&service, KEYCHAIN_USER).map_err(|e| e.to_string())?;
@@ -23,8 +23,8 @@ pub(crate) fn get_api_key_inner(service: String) -> Result<String, String> {
 }
 
 /// Report whether a key is stored for `service` WITHOUT returning the secret to the renderer.
-/// Amber's settings UI uses this (not `get_api_key`) so the key string never crosses the IPC
-/// boundary — the engine reads it in Rust via `get_api_key_inner`.
+/// The settings UI uses this (not `get_api_key`) so the key string never crosses the IPC
+/// boundary — Rust reads it internally via `get_api_key_inner`.
 #[tauri::command]
 pub async fn has_api_key(service: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || match get_api_key_inner(service) {

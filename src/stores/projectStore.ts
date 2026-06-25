@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../lib/id';
 
-export type ViewType = 'dashboard' | 'amber' | 'terminals' | 'kanban' | 'memory' | 'swarm' | 'review' | 'settings' | 'editor';
+export type ViewType = 'dashboard' | 'terminals' | 'kanban' | 'memory' | 'swarm' | 'review' | 'settings' | 'editor';
 
 export interface WorkspaceConfig {
   workspaceId: string;

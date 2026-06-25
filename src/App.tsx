@@ -22,14 +22,11 @@ const SwarmWorkspace = lazy(() => import('./components/swarm/SwarmWorkspace').th
 const ReviewWorkspace = lazy(() => import('./components/review/ReviewWorkspace').then((module) => ({ default: module.ReviewWorkspace })));
 const EditorPanel = lazy(() => import('./components/editor/EditorPanel').then((module) => ({ default: module.EditorPanel })));
 const CommandPalette = lazy(() => import('./components/common/CommandPalette').then((module) => ({ default: module.CommandPalette })));
-const AmberWorkspace = lazy(() => import('./components/amber/AmberWorkspace').then((module) => ({ default: module.AmberWorkspace })));
 
 // Heavy, stateful views are kept mounted once first visited and toggled with CSS
 // visibility, so switching back is instant (no remount, no xterm dispose/replay).
 // Light views (dashboard, editor, settings) render on demand.
-// Amber is heavy (kept mounted so an in-flight stream survives view switches) but, unlike the
-// other heavy views, is NOT project-gated — general chat works with no folder open.
-const HEAVY_VIEWS: ViewType[] = ['amber', 'terminals', 'kanban', 'memory', 'swarm', 'review'];
+const HEAVY_VIEWS: ViewType[] = ['terminals', 'kanban', 'memory', 'swarm', 'review'];
 
 function App() {
   const activeView = useProjectStore((state) => state.activeView);
@@ -124,7 +121,7 @@ function App() {
       // 3. Switch rooms: Alt + 1-9
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const index = parseInt(e.key, 10) - 1;
-        const rooms: ViewType[] = ['dashboard', 'amber', 'terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'settings'];
+        const rooms: ViewType[] = ['dashboard', 'terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'settings'];
         const view = rooms[index];
         if (view) {
           const requiresProject = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor'].includes(view);
@@ -189,7 +186,6 @@ function App() {
       <Sidebar onOpenPalette={() => setPaletteOpen(true)} />
       {!hideTopBar && <TopBar />}
       <main className="content-area">
-        {renderHeavyView('amber', <AmberWorkspace />)}
         {renderHeavyView('terminals', <TerminalGrid />)}
         {renderHeavyView('kanban', <KanbanBoard />)}
         {renderHeavyView('memory', <MemoryWorkspace />)}

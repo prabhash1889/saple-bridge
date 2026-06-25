@@ -31,5 +31,4 @@ Also use runtime-provided skills whose triggers match (`tauri-development`, `cod
 
 - Bridge React: `src/AGENTS.md`
 - Bridge Components: `src/components/AGENTS.md`
-- Amber components: `src/components/amber/AGENTS.md`
 - Bridge Rust: `src-tauri/src/AGENTS.md`

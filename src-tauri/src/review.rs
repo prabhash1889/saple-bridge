@@ -252,8 +252,7 @@ fn submit_review_decision_inner(
 /// Run a shell command in `project_path`, capturing stdout/stderr, killing it after `timeout`.
 /// Returns `(output, timed_out)`. On Windows this uses PowerShell (matching the interactive
 /// terminal panes in `pty.rs`) rather than `cmd.exe`, so commands behave the same whether the
-/// user types them or the Amber agent issues them. Shared by review verification and Amber's
-/// `run_command` builtin.
+/// user types them or review verification issues them.
 pub(crate) fn run_shell_with_timeout(
     project_path: &str,
     command_str: &str,

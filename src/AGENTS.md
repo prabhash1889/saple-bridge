@@ -33,13 +33,8 @@ Owns the AI workspace frontend: 8 views (Dashboard, Terminals, Kanban, Memory, S
 | confirmStore | `stores/confirmStore.ts` | in-memory (drives `common/ConfirmDialog`) |
 | notificationStore | `stores/notificationStore.ts` | in-memory (drives `common/ToastHost`) |
 | themeStore | `stores/themeStore.ts` | localStorage (persist) — light/dark/system mode |
-| amberStore | `stores/amberStore.ts` | Amber chat: subscribes to `amber://event`/`amber://run` (rAF-batched text deltas), persists ONLY `{provider, model, baseURL}` (never secrets/messages). Reloads the canonical log from Rust on run completion. Keys via `set_api_key`/`has_api_key` |
 
 ## Patterns
-
-Amber (`components/amber/`) is a heavy view but **not** project-gated — it is intentionally absent
-from `workspaceRooms` (Sidebar) and the `requiresProject` lists (App.tsx), so general chat works
-with no folder open.
 
 Adding a new view:
 1. Add store in `stores/` if it needs persisted state

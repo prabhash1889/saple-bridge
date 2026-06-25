@@ -6,7 +6,6 @@ import { ThemeToggle } from '../common/ThemeToggle';
 
 const roomMeta: Record<ViewType, { title: string; context: string }> = {
   dashboard: { title: 'Home', context: 'Choose a workspace flow.' },
-  amber: { title: 'Amber', context: 'Chat with an AI agent that can use your project tools.' },
   terminals: { title: 'Command Room', context: 'Arrange terminals and AI agents.' },
   kanban: { title: 'Tasks', context: 'Plan, launch, and track agent-ready work.' },
   memory: { title: 'Memory', context: 'Local markdown graph and MCP-ready project knowledge.' },

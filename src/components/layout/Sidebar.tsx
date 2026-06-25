@@ -17,7 +17,6 @@ import {
   Command,
   Terminal as TerminalIcon,
   FolderOpen,
-  Sparkles,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useKanbanStore } from '../../stores/kanbanStore';
@@ -67,9 +66,6 @@ const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
 
 const primaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
   { id: 'dashboard', label: 'Home', icon: Home, accent: 'home' },
-  // Amber is always reachable (general chat works with no folder open), so it is intentionally
-  // NOT added to `workspaceRooms` below.
-  { id: 'amber', label: 'Amber', icon: Sparkles, accent: 'amber' },
 ];
 
 const secondaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [

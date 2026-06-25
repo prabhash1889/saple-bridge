@@ -10,7 +10,6 @@ mod files;
 mod diagnostics;
 mod process_ext;
 mod fs_lock;
-mod amber;
 
 pub fn run_mcp(project_path: String) {
     mcp::run_mcp_server(project_path);
@@ -36,7 +35,6 @@ fn get_app_binary_path() -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(pty::PtyRegistry::new())
-        .manage(amber::AmberRegistry::new())
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| {
             // Closing the window must kill every PTY child (and join its reader/emitter threads),
@@ -96,14 +94,7 @@ pub fn run() {
             files::write_text_file,
             files::open_in_external_editor,
             files::reveal_in_file_explorer,
-            diagnostics::run_diagnostics,
-            amber::amber_send_message,
-            amber::amber_cancel,
-            amber::amber_list_conversations,
-            amber::amber_load_conversation,
-            amber::amber_delete_conversation,
-            amber::amber_list_tools,
-            amber::amber_claude_code_status
+            diagnostics::run_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
