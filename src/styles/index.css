@@ -44,7 +44,6 @@
   --accent-editor: #3B82F6;
   --accent-settings: #A78BFA;
   --accent-terminal: #38BDF8;
-  --accent-amber: #FCA44D;
   --accent-info-bright: #69B7FF;
   
   --border: #22262D;
@@ -307,7 +306,6 @@ html[data-theme="nord"] {
   --accent-editor: #81A1C1;
   --accent-settings: #B48EAD;
   --accent-terminal: #88C0D0;
-  --accent-amber: #D08770;
   --accent-info-bright: #88C0D0;
 
   --border: #3F4757;
@@ -362,7 +360,6 @@ html[data-theme="dracula"] {
   --accent-editor: #8BE9FD;
   --accent-settings: #BD93F9;
   --accent-terminal: #8BE9FD;
-  --accent-amber: #FFB86C;
   --accent-info-bright: #8BE9FD;
 
   --border: #383B4C;
@@ -417,7 +414,6 @@ html[data-theme="tokyonight"] {
   --accent-editor: #7AA2F7;
   --accent-settings: #BB9AF7;
   --accent-terminal: #7DCFFF;
-  --accent-amber: #FF9E64;
   --accent-info-bright: #7DCFFF;
 
   --border: #2A2E45;
@@ -473,7 +469,6 @@ html[data-theme="solarized"] {
   --accent-editor: #268BD2;
   --accent-settings: #6C71C4;
   --accent-terminal: #268BD2;
-  --accent-amber: #CB4B16;
   --accent-info-bright: #1F6FA8;
 
   --border: #DDD6C1;
@@ -532,7 +527,6 @@ html[data-theme="latte"] {
   --accent-editor: #1E66F5;
   --accent-settings: #8839EF;
   --accent-terminal: #04A5E5;
-  --accent-amber: #FE640B;
   --accent-info-bright: #1E66F5;
 
   --border: #CCD0DA;
@@ -1032,7 +1026,6 @@ button.text-btn:hover {
 .room-nav-item.accent-memory.active svg { color: var(--accent-memory); }
 .room-nav-item.accent-review.active svg { color: var(--accent-review); }
 .room-nav-item.accent-swarm.active svg { color: var(--accent-swarm); }
-.room-nav-item.accent-amber.active svg { color: var(--accent-amber); }
 
 .sidebar-area.collapsed .sidebar-brand,
 .sidebar-area.collapsed .room-nav-item {
@@ -2210,6 +2203,12 @@ button.text-btn:hover {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Inactive workspaces keep their grid mounted (so switching back never re-creates the
+   panes), but hide it. `display:none` overrides the `.terminal-grid` `display:grid`. */
+.terminal-grid.terminal-grid-hidden {
+  display: none;
 }
 
 .terminal-grid-1 {
@@ -5589,253 +5588,3 @@ button.text-btn:hover {
     filter: drop-shadow(0 0 20px rgba(167, 139, 250, 0.55));
   }
 }
-
-/* ------------------------------------------------------------------ Amber chat room */
-.amber-room {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-  background: var(--bg-app);
-}
-
-.amber-header {
-  margin-bottom: 0;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-surface);
-  align-items: center;
-}
-
-.amber-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.amber-title svg { color: var(--accent-amber); }
-
-.amber-model-chip {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: var(--bg-surface-active);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  padding: 2px 10px;
-  text-transform: lowercase;
-}
-
-.amber-header-actions { display: flex; gap: 4px; }
-.amber-header-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.amber-header-actions button:hover { background: var(--bg-surface-active); color: var(--text-primary); }
-.amber-header-actions button.active { color: var(--accent-amber); border-color: var(--border); }
-
-.amber-layout { display: flex; flex: 1; min-height: 0; }
-
-.amber-history {
-  width: 240px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  background: var(--bg-surface);
-  overflow-y: auto;
-  padding: 8px;
-}
-.amber-history-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  padding: 4px 8px 8px;
-}
-.amber-history-empty { color: var(--text-muted); font-size: 13px; padding: 8px; }
-.amber-history-item { display: flex; align-items: center; border-radius: var(--radius-sm); }
-.amber-history-item.active { background: var(--bg-surface-active); }
-.amber-history-item:hover { background: var(--bg-surface-active); }
-.amber-history-open {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  padding: 8px;
-  cursor: pointer;
-  text-align: left;
-}
-.amber-history-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
-.amber-history-meta { font-size: 11px; color: var(--text-muted); }
-.amber-history-del {
-  background: transparent; border: none; color: var(--text-muted);
-  padding: 6px; cursor: pointer; border-radius: var(--radius-sm);
-}
-.amber-history-del:hover { color: var(--color-danger); }
-
-.amber-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-.amber-keybanner {
-  margin: 12px 16px 0;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-.amber-keybanner button {
-  background: none; border: none; color: var(--accent-amber); cursor: pointer;
-  padding: 0; font: inherit; text-decoration: underline;
-}
-
-.amber-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 16px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.amber-empty {
-  margin: auto;
-  max-width: 440px;
-  text-align: center;
-  color: var(--text-secondary);
-}
-.amber-empty svg { color: var(--accent-amber); }
-.amber-empty h2 { margin: 8px 0 6px; color: var(--text-primary); }
-.amber-empty p { font-size: 14px; line-height: 1.5; }
-
-.amber-msg { display: flex; gap: 12px; align-items: flex-start; }
-.amber-msg-avatar {
-  flex-shrink: 0;
-  width: 30px; height: 30px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-full);
-  font-size: 11px; font-weight: 600;
-  background: var(--bg-surface-active);
-  color: var(--text-secondary);
-}
-.amber-msg-assistant .amber-msg-avatar { color: var(--accent-amber); }
-.amber-msg-body { min-width: 0; flex: 1; padding-top: 4px; }
-.amber-msg-text { white-space: pre-wrap; word-break: break-word; color: var(--text-primary); line-height: 1.55; }
-.amber-msg-body .md-preview { font-size: 14px; }
-
-.amber-cursor {
-  display: inline-block; width: 7px; height: 15px;
-  background: var(--accent-amber); margin-left: 2px; vertical-align: text-bottom;
-  animation: amber-blink 1s steps(2, start) infinite;
-}
-@keyframes amber-blink { to { opacity: 0; } }
-
-.amber-thinking { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; padding-left: 42px; }
-.amber-thinking svg { color: var(--accent-amber); }
-
-.amber-error {
-  border: 1px solid var(--color-danger);
-  background: var(--color-danger-bg);
-  color: var(--color-danger);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  font-size: 13px;
-}
-
-/* Tool call card */
-.amber-tool {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-  overflow: hidden;
-  margin-left: 42px;
-}
-.amber-tool-running { border-color: var(--accent-amber); }
-.amber-tool-error { border-color: var(--color-danger); }
-.amber-tool-header {
-  width: 100%;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px;
-  background: transparent; border: none; cursor: pointer;
-  color: var(--text-primary); font-size: 13px;
-}
-.amber-tool-header:hover { background: var(--bg-surface-active); }
-.amber-tool-header svg { color: var(--text-muted); flex-shrink: 0; }
-.amber-tool-name { font-family: var(--font-mono); font-weight: 600; }
-.amber-tool-status { margin-left: auto; font-size: 11px; color: var(--text-muted); }
-.amber-tool-running .amber-tool-status { color: var(--accent-amber); }
-.amber-tool-error .amber-tool-status { color: var(--color-danger); }
-.amber-tool-body { padding: 4px 12px 12px; border-top: 1px solid var(--border); }
-.amber-tool-label { font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin: 8px 0 4px; }
-.amber-tool-pre {
-  margin: 0;
-  background: var(--bg-surface-active);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow: auto;
-  color: var(--text-primary);
-}
-
-/* Composer */
-.amber-composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-surface);
-}
-.amber-composer textarea {
-  flex: 1;
-  resize: none;
-  max-height: 200px;
-  min-height: 40px;
-  padding: 10px 12px;
-  line-height: 1.4;
-  border-radius: var(--radius-md);
-}
-.amber-send-btn, .amber-stop-btn {
-  flex-shrink: 0;
-  width: 40px; height: 40px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  cursor: pointer;
-}
-.amber-send-btn { background: var(--accent-amber); color: #1a1205; }
-.amber-send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.amber-stop-btn { background: var(--color-danger-bg); color: var(--color-danger); border-color: var(--color-danger); }
-
-/* Settings */
-.amber-settings { padding: 20px 24px; overflow-y: auto; max-width: 560px; }
-.amber-settings-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.amber-settings-head h3 { margin: 0; color: var(--text-primary); }
-.amber-settings-head button { background: none; border: none; color: var(--text-muted); cursor: pointer; }
-.amber-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
-.amber-field > span { font-size: 13px; font-weight: 500; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
-.amber-key-row { display: flex; gap: 8px; }
-.amber-key-row input { flex: 1; }
-.amber-key-row button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
-.amber-key-ok { display: inline-flex; align-items: center; gap: 3px; color: var(--color-success); font-size: 12px; font-weight: 500; }
-.amber-hint { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; }
-.amber-warn { color: var(--color-warning); }
-
