@@ -1,0 +1,85 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.pem
+
+# Logs
+*.log
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+*.local
+
+# Node
+node_modules/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest_tmp/
+.mypy_cache/
+.ruff_cache/
+
+# Rust / Tauri
+target/
+err.log
+
+# Frontend builds
+dist/
+dist-ssr/
+build/
+builds/
+.vite/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+
+# Local app data
+.saple/
+.saple-*.log
+*.sqlite3
+*.wav
+*.webm
+
+# Build artifacts / installers
+*.dmg
+
+# Local Claude settings (machine-specific)
+.claude/settings.local.json
+
+# Per-worktree local Claude context
+CLAUDE.local.md
+
+# Generated MCP configs (written per-project with absolute paths)
+.mcp.json
+mcp_config.json
+
+# Generated knowledge-graph artifacts
+graphify-out/
+.code-review-graph/

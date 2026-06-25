@@ -1,0 +1,28 @@
+# Build / deps (mirror .gitignore — keep Claude from scanning these)
+node_modules/
+target/
+dist/
+build/
+.next/
+out/
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Runtime / app data
+.saple/
+.code-review-graph/
+*.sqlite3
+*.wav
+*.webm
+
+# Archived planning docs (large; open deliberately, don't auto-load)
+docs/archive/
+
+# Generated MCP configs (user-specific absolute paths)
+.mcp.json
+mcp_config.json
+
+# Misc
+screenshots/
+*.dmg

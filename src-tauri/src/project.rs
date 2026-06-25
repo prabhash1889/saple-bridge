@@ -1,0 +1,541 @@
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use serde::{Serialize, Deserialize};
+use crate::process_ext::CommandNoWindow;
+
+pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
+    use std::path::Component;
+
+    let base = Path::new(project_path);
+    let canonical_base = base.canonicalize().map_err(|e| format!("Base path error: {}", e))?;
+
+    // Reject absolute paths and traversal up front. `Path::join` with an absolute path silently
+    // discards the base (e.g. `base.join("C:\\Windows\\x")` -> `C:\Windows\x`), so without this an
+    // absolute or `..`-laden `file_path` would escape the workspace entirely.
+    let rel = Path::new(file_path);
+    if rel.is_absolute() {
+        return Err("Access denied: absolute paths are not allowed".to_string());
+    }
+    for comp in rel.components() {
+        match comp {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err("Access denied: path escapes the project workspace".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let target = canonical_base.join(rel);
+
+    // If the target already exists, canonicalize the *full* path (resolving symlinks) and confirm
+    // containment before handing it back.
+    if target.exists() {
+        let canonical_target = target.canonicalize().map_err(|e| format!("Target path error: {}", e))?;
+        if !canonical_target.starts_with(&canonical_base) {
+            return Err("Access denied: path is outside the project workspace".to_string());
+        }
+        return Ok(canonical_target);
+    }
+
+    // Target doesn't exist yet (a write that will create it). Prove containment by canonicalizing
+    // the nearest existing ancestor *before* creating any directories — so a symlinked parent can't
+    // trick us into create_dir_all outside the workspace.
+    if let Some(parent) = target.parent() {
+        let mut existing = parent;
+        while !existing.exists() {
+            match existing.parent() {
+                Some(p) => existing = p,
+                None => break,
+            }
+        }
+        let canonical_existing = existing
+            .canonicalize()
+            .map_err(|e| format!("Parent path error: {}", e))?;
+        if !canonical_existing.starts_with(&canonical_base) {
+            return Err("Access denied: path is outside the project workspace".to_string());
+        }
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {}", e))?;
+        }
+    }
+
+    Ok(target)
+}
+
+fn default_enable_edit_mode() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceConfig {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub memory_mode: String,
+    pub default_provider: String,
+    pub default_model_by_provider: HashMap<String, String>,
+    pub max_parallel_agents: u32,
+    #[serde(default = "default_enable_edit_mode")]
+    pub enable_edit_mode: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSummary {
+    pub path: String,
+    pub name: String,
+    pub writable: bool,
+    pub is_git_repo: bool,
+    pub branch: Option<String>,
+    pub has_saple_config: bool,
+    pub has_bridge_memory: bool,
+    pub has_mcp_config: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    pub has_mcp_json: bool,
+    pub has_mcp_config_json: bool,
+    pub saple_memory_configured: bool,
+    pub other_servers: Vec<String>,
+}
+
+fn default_model_by_provider() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    m.insert("codex".to_string(), "gpt-4o".to_string());
+    m.insert("claude".to_string(), "claude-sonnet-4-20250514".to_string());
+    m.insert("gemini".to_string(), "gemini-2.5-pro".to_string());
+    m.insert("opencode".to_string(), "default".to_string());
+    m.insert("pi".to_string(), "default".to_string());
+    m
+}
+
+pub(crate) fn now_iso() -> String {
+    // Simple ISO-8601 without external crate dependency
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // Format as ISO date (approximate, good enough for config timestamps)
+    let days = secs / 86400;
+    let time_secs = secs % 86400;
+    let hours = time_secs / 3600;
+    let minutes = (time_secs % 3600) / 60;
+    let seconds = time_secs % 60;
+    
+    // Compute year/month/day from days since epoch (1970-01-01)
+    let mut y = 1970i64;
+    let mut remaining = days as i64;
+    loop {
+        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        if remaining < days_in_year { break; }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let months_days = if is_leap(y) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut m = 1usize;
+    for &md in &months_days {
+        if remaining < md { break; }
+        remaining -= md;
+        m += 1;
+    }
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, remaining + 1, hours, minutes, seconds)
+}
+
+fn is_leap(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+#[tauri::command]
+pub async fn ensure_workspace_dirs(project_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || ensure_workspace_dirs_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn ensure_workspace_dirs_inner(project_path: String) -> Result<(), String> {
+    let dirs = [
+        ".saple",
+        ".saple/agents",
+        ".saple/agents/logs",
+        ".saple/agents/prompts",
+        ".saple/agents/transcripts",
+        ".saple/swarm",
+        ".saple/swarm/mailbox",
+        ".saple/swarm/handoffs",
+        ".saple/swarm/context",
+        ".saple/memory",
+        ".saple/review",
+    ];
+    for dir in &dirs {
+        let path = get_project_file_path(&project_path, dir)?;
+        if !path.exists() {
+            fs::create_dir_all(&path).map_err(|e| format!("Failed to create {}: {}", dir, e))?;
+        }
+    }
+    
+    // Also check memory mode to ensure .bridgememory exists if needed
+    let mode = crate::memory::get_memory_mode(&project_path);
+    if mode == "bridge-compatible" || mode == "both" {
+        let path = get_project_file_path(&project_path, ".bridgememory")?;
+        if !path.exists() {
+            fs::create_dir_all(&path).map_err(|e| format!("Failed to create .bridgememory: {}", e))?;
+        }
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ensure_project_config(project_path: String) -> Result<WorkspaceConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || ensure_project_config_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn ensure_project_config_inner(project_path: String) -> Result<WorkspaceConfig, String> {
+    let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
+
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+    } else {
+        let now = now_iso();
+        let base = Path::new(&project_path);
+        let name = base.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "workspace".to_string());
+        
+        let config = WorkspaceConfig {
+            workspace_id: uuid::Uuid::new_v4().to_string(),
+            workspace_name: name,
+            memory_mode: "saple".to_string(),
+            default_provider: "codex".to_string(),
+            default_model_by_provider: default_model_by_provider(),
+            max_parallel_agents: 12,
+            enable_edit_mode: true,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        
+        let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+        fs::write(&config_path, json).map_err(|e| e.to_string())?;
+        
+        Ok(config)
+    }
+}
+
+#[tauri::command]
+pub async fn read_project_config(project_path: String) -> Result<WorkspaceConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || read_project_config_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub(crate) fn read_project_config_inner(project_path: String) -> Result<WorkspaceConfig, String> {
+    let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
+    if !config_path.exists() {
+        return Err("Config file not found".to_string());
+    }
+    let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+}
+
+#[tauri::command]
+pub async fn write_project_config(project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || write_project_config_inner(project_path, config))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn write_project_config_inner(project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, String> {
+    let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
+    let mut updated = config;
+    updated.updated_at = now_iso();
+    let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
+    crate::fs_lock::atomic_write(&config_path, json.as_bytes())?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn read_project_file(project_path: String, file_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || read_project_file_inner(project_path, file_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn read_project_file_inner(project_path: String, file_path: String) -> Result<String, String> {
+    let full_path = get_project_file_path(&project_path, &file_path)?;
+    if !full_path.exists() {
+        return Err("File not found".to_string());
+    }
+    fs::read_to_string(full_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn write_project_file(project_path: String, file_path: String, content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_project_file_inner(project_path, file_path, content))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn write_project_file_inner(project_path: String, file_path: String, content: String) -> Result<(), String> {
+    let full_path = get_project_file_path(&project_path, &file_path)?;
+    crate::fs_lock::atomic_write(&full_path, content.as_bytes())
+}
+
+#[tauri::command]
+pub async fn get_workspace_summary(project_path: String) -> Result<WorkspaceSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || get_workspace_summary_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn get_workspace_summary_inner(project_path: String) -> Result<WorkspaceSummary, String> {
+    let base = Path::new(&project_path);
+    let canonical_base = base.canonicalize().map_err(|e| format!("Invalid path: {}", e))?;
+    let name = base.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    
+    // Check writable by trying to create a test file
+    let writable = fs::write(canonical_base.join(".saple_write_test"), "test").is_ok();
+    let _ = fs::remove_file(canonical_base.join(".saple_write_test"));
+    
+    // Check git repo
+    let branch = git_current_branch_inner(&project_path).ok();
+    let is_git_repo = branch.is_some();
+    
+    // Check saple config
+    let has_saple_config = canonical_base.join(".saple").join("config.json").exists();
+    
+    // Check bridge memory
+    let has_bridge_memory = canonical_base.join(".bridgememory").exists();
+    
+    // Check MCP config
+    let has_mcp_config = canonical_base.join(".mcp.json").exists() || canonical_base.join("mcp_config.json").exists();
+    
+    Ok(WorkspaceSummary {
+        path: project_path,
+        name,
+        writable,
+        is_git_repo,
+        branch,
+        has_saple_config,
+        has_bridge_memory,
+        has_mcp_config,
+    })
+}
+
+fn git_current_branch_inner(project_path: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(project_path)
+        .no_window()
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() {
+            Err("Not a git repository or no branch".to_string())
+        } else {
+            Ok(branch)
+        }
+    } else {
+        Err("Not a git repository".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn git_current_branch(project_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || git_current_branch_inner(&project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn install_mcp_config(project_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || install_mcp_config_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
+    let binary_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to get binary path: {}", e))?;
+    let binary_str = binary_path.to_string_lossy().to_string();
+    
+    let mcp_config = serde_json::json!({
+        "mcpServers": {
+            "saple-memory": {
+                "command": binary_str,
+                "args": ["mcp", &project_path]
+            }
+        }
+    });
+    
+    let config_str = serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?;
+    
+    // Write .mcp.json preserving other servers
+    let mcp_json_path = get_project_file_path(&project_path, ".mcp.json")?;
+    if mcp_json_path.exists() {
+        let existing = fs::read_to_string(&mcp_json_path).map_err(|e| e.to_string())?;
+        let mut existing_json: serde_json::Value =
+            serde_json::from_str(&existing).map_err(|e| e.to_string())?;
+        if let Some(servers) = existing_json.get_mut("mcpServers") {
+            if let Some(obj) = servers.as_object_mut() {
+                obj.insert("saple-memory".to_string(), mcp_config["mcpServers"]["saple-memory"].clone());
+            }
+        } else {
+            existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
+        }
+        let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
+        fs::write(&mcp_json_path, merged).map_err(|e| e.to_string())?;
+    } else {
+        fs::write(&mcp_json_path, &config_str).map_err(|e| e.to_string())?;
+    }
+    
+    // Also write mcp_config.json (same content)
+    let mcp_config_path = get_project_file_path(&project_path, "mcp_config.json")?;
+    if mcp_config_path.exists() {
+        let existing = fs::read_to_string(&mcp_config_path).map_err(|e| e.to_string())?;
+        let mut existing_json: serde_json::Value =
+            serde_json::from_str(&existing).map_err(|e| e.to_string())?;
+        if let Some(servers) = existing_json.get_mut("mcpServers") {
+            if let Some(obj) = servers.as_object_mut() {
+                obj.insert("saple-memory".to_string(), mcp_config["mcpServers"]["saple-memory"].clone());
+            }
+        } else {
+            existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
+        }
+        let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
+        fs::write(&mcp_config_path, merged).map_err(|e| e.to_string())?;
+    } else {
+        fs::write(&mcp_config_path, &config_str).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(format!("MCP config installed for project at {}", project_path))
+}
+
+#[tauri::command]
+pub async fn check_mcp_status(project_path: String) -> Result<McpStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || check_mcp_status_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
+    let base = Path::new(&project_path);
+
+    let has_mcp_json = base.join(".mcp.json").exists();
+    let has_mcp_config_json = base.join("mcp_config.json").exists();
+    let mut saple_memory_configured = false;
+    let mut other_servers = Vec::new();
+    
+    // Check .mcp.json
+    if has_mcp_json {
+        let content = fs::read_to_string(base.join(".mcp.json")).map_err(|e| e.to_string())?;
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(servers) = val.get("mcpServers").and_then(|s| s.as_object()) {
+                for key in servers.keys() {
+                    if key == "saple-memory" {
+                        saple_memory_configured = true;
+                    } else {
+                        other_servers.push(key.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check mcp_config.json too
+    if has_mcp_config_json {
+        let content = fs::read_to_string(base.join("mcp_config.json")).map_err(|e| e.to_string())?;
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(servers) = val.get("mcpServers").and_then(|s| s.as_object()) {
+                for key in servers.keys() {
+                    if key == "saple-memory" {
+                        saple_memory_configured = true;
+                    } else if !other_servers.contains(key) {
+                        other_servers.push(key.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(McpStatus {
+        has_mcp_json,
+        has_mcp_config_json,
+        saple_memory_configured,
+        other_servers,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_project() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("saple-proj-test-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        // canonicalize so comparisons match what get_project_file_path computes
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn allows_relative_paths_inside_workspace() {
+        let dir = temp_project();
+        let p = get_project_file_path(dir.to_str().unwrap(), ".saple/tasks.json").unwrap();
+        assert!(p.starts_with(&dir));
+        assert!(dir.join(".saple").exists(), "parent dir created");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_parent_dir_traversal() {
+        let dir = temp_project();
+        let err = get_project_file_path(dir.to_str().unwrap(), "../escape.txt").unwrap_err();
+        assert!(err.contains("escapes"), "got: {}", err);
+        let err2 = get_project_file_path(dir.to_str().unwrap(), ".saple/../../escape.txt").unwrap_err();
+        assert!(err2.contains("escapes"), "got: {}", err2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_absolute_paths() {
+        let dir = temp_project();
+        let abs = if cfg!(windows) { "C:\\Windows\\System32\\drivers\\etc\\hosts" } else { "/etc/passwd" };
+        let err = get_project_file_path(dir.to_str().unwrap(), abs).unwrap_err();
+        assert!(err.contains("absolute") || err.contains("escapes"), "got: {}", err);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn does_not_create_dirs_when_path_escapes() {
+        let dir = temp_project();
+        let _ = get_project_file_path(dir.to_str().unwrap(), "../sibling/deep/path.txt");
+        let escaped = dir.parent().unwrap().join("sibling");
+        assert!(!escaped.exists(), "must not create directories outside the workspace");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn allows_long_nested_relative_path() {
+        let dir = temp_project();
+        let long_rel = format!(".saple/{}/note.md", "a/".repeat(40));
+        let p = get_project_file_path(dir.to_str().unwrap(), &long_rel).unwrap();
+        assert!(p.starts_with(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

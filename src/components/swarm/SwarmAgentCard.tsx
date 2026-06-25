@@ -1,0 +1,341 @@
+import React, { memo } from 'react';
+import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText } from 'lucide-react';
+import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
+
+interface SwarmAgentCardProps {
+  agent: SwarmAgent;
+  projectPath: string | null;
+  onViewTerminal: (terminalId: string) => void;
+  onRelaunch: (agentId: string) => void;
+  onForceComplete: (agentId: string) => void;
+  onStop: (agentId: string) => void;
+  mailboxContent?: string;
+  loadingMailbox?: boolean;
+}
+
+const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
+  agent,
+  onViewTerminal,
+  onRelaunch,
+  onForceComplete,
+  onStop,
+  mailboxContent = '',
+  loadingMailbox = false,
+}) => {
+  const getStatusIcon = (status: AgentStatus) => {
+    switch (status) {
+      case 'running':
+        return <RefreshCw size={14} className="spin" style={{ color: 'var(--accent)' }} />;
+      case 'done':
+        return <CheckCircle size={14} style={{ color: 'var(--color-success)' }} />;
+      case 'failed':
+        return <Square size={14} style={{ color: 'var(--color-danger)' }} />;
+      case 'review':
+        return <FileText size={14} style={{ color: 'var(--color-warning)' }} />;
+      default:
+        return <Square size={14} style={{ color: 'var(--text-muted)' }} />;
+    }
+  };
+
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'coordinator': return 'var(--accent)';
+      case 'builder': return 'var(--color-success)';
+      case 'reviewer': return 'var(--color-info)';
+      case 'scout': return 'var(--color-warning)';
+      default: return 'var(--text-secondary)';
+    }
+  };
+
+  return (
+    <div style={cardStyle(agent.status)}>
+      {/* Top Header */}
+      <div style={cardHeaderStyle}>
+        <div>
+          <h4 style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}>
+            {agent.name}
+          </h4>
+          <span style={roleBadgeStyle(getRoleColor(agent.role))}>{agent.role}</span>
+        </div>
+        <div style={statusBadgeStyle(agent.status)}>
+          {getStatusIcon(agent.status)}
+          <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 600 }}>{agent.status}</span>
+        </div>
+      </div>
+
+      {/* Details / System Prompt */}
+      <div style={bodyStyle}>
+        <div style={detailRowStyle}>
+          <span style={labelStyle}>Provider / Model</span>
+          <span style={valueStyle}>{agent.provider || 'codex'} / {agent.model}</span>
+        </div>
+        <div style={detailRowStyle}>
+          <span style={labelStyle}>Dependencies</span>
+          <span style={valueStyle}>{agent.dependencies.join(', ') || 'None'}</span>
+        </div>
+        
+        <div style={promptSectionStyle}>
+          <div style={sectionTitleStyle}>System Instructions</div>
+          <p style={promptTextStyle}>{agent.systemPrompt}</p>
+        </div>
+
+        {/* Mailbox Section */}
+        <div style={mailboxSectionStyle}>
+          <div style={mailboxHeaderStyle}>
+            <div style={sectionTitleStyle}>Mailbox Output</div>
+            {loadingMailbox && <span style={loadingLabelStyle}>syncing...</span>}
+          </div>
+          <div style={mailboxViewerStyle}>
+            {mailboxContent ? (
+              <pre style={mailboxPreStyle}>{mailboxContent}</pre>
+            ) : (
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>No messages written yet.</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer Controls */}
+      <div style={cardFooterStyle}>
+        <div style={actionsGroupStyle}>
+          {agent.terminalId && (
+            <button 
+              onClick={() => onViewTerminal(agent.terminalId!)} 
+              style={btnViewStreamStyle}
+            >
+              <Terminal size={12} />
+              <span>View Terminal</span>
+            </button>
+          )}
+
+          {agent.status === 'running' && (
+            <button 
+              onClick={() => onStop(agent.id)} 
+              className="danger"
+              style={btnControlStyle}
+            >
+              <Square size={12} />
+              <span>Stop</span>
+            </button>
+          )}
+
+          {(agent.status === 'failed' || agent.status === 'stopped' || agent.status === 'blocked') && (
+            <button 
+              onClick={() => onRelaunch(agent.id)} 
+              className="primary"
+              style={btnControlStyle}
+            >
+              <Play size={12} />
+              <span>Relaunch</span>
+            </button>
+          )}
+
+          {agent.status !== 'done' && agent.status !== 'waiting' && agent.status !== 'blocked' && (
+            <button 
+              onClick={() => onForceComplete(agent.id)} 
+              style={btnCompleteStyle}
+            >
+              <CheckCircle size={12} />
+              <span>Force Complete</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const SwarmAgentCard = memo(SwarmAgentCardComponent);
+
+/* --- Styles --- */
+
+const cardStyle = (status: AgentStatus): React.CSSProperties => {
+  let glow = 'none';
+  if (status === 'running') {
+    glow = '0 0 12px rgba(99, 102, 241, 0.15)';
+  }
+  return {
+    backgroundColor: 'var(--bg-surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg)',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    boxShadow: glow,
+    transition: 'box-shadow 0.2s',
+  };
+};
+
+const cardHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+};
+
+const roleBadgeStyle = (color: string): React.CSSProperties => ({
+  fontSize: '9.5px',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  padding: '2px 6px',
+  borderRadius: 'var(--radius-sm)',
+  color,
+  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  border: '1px solid transparent',
+  display: 'inline-block',
+  marginTop: '4px',
+});
+
+const statusBadgeStyle = (status: AgentStatus): React.CSSProperties => {
+  let color = 'var(--text-muted)';
+  if (status === 'running') color = 'var(--accent)';
+  if (status === 'done') color = 'var(--color-success)';
+  if (status === 'review') color = 'var(--color-warning)';
+  if (status === 'failed') color = 'var(--color-danger)';
+
+  return {
+    color,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  };
+};
+
+const bodyStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '10px',
+  flex: 1,
+};
+
+const detailRowStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  fontSize: '11px',
+  borderBottom: '1px solid rgba(255, 255, 255, 0.02)',
+  paddingBottom: '6px',
+};
+
+const labelStyle: React.CSSProperties = {
+  color: 'var(--text-muted)',
+};
+
+const valueStyle: React.CSSProperties = {
+  color: 'var(--text-secondary)',
+  fontWeight: 500,
+};
+
+const promptSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+  fontSize: '10px',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  color: 'var(--text-muted)',
+};
+
+const promptTextStyle: React.CSSProperties = {
+  fontSize: '11.5px',
+  color: 'var(--text-secondary)',
+  lineHeight: '1.45',
+  backgroundColor: 'var(--bg-surface-light)',
+  padding: '8px 10px',
+  borderRadius: 'var(--radius-sm)',
+  border: '1px solid var(--border)',
+  maxHeight: '80px',
+  overflowY: 'auto',
+  margin: 0,
+};
+
+const mailboxSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
+  marginTop: '4px',
+};
+
+const mailboxHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+};
+
+const loadingLabelStyle: React.CSSProperties = {
+  fontSize: '9px',
+  color: 'var(--text-muted)',
+  fontStyle: 'italic',
+};
+
+const mailboxViewerStyle: React.CSSProperties = {
+  backgroundColor: 'var(--bg-deep)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '8px 10px',
+  maxHeight: '150px',
+  overflowY: 'auto',
+};
+
+const mailboxPreStyle: React.CSSProperties = {
+  fontSize: '11px',
+  fontFamily: 'monospace',
+  color: 'var(--text-secondary)',
+  margin: 0,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+};
+
+const cardFooterStyle: React.CSSProperties = {
+  borderTop: '1px solid var(--border)',
+  paddingTop: '12px',
+  marginTop: '4px',
+};
+
+const actionsGroupStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+};
+
+const btnViewStreamStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: '11px',
+  height: '28px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  backgroundColor: 'rgba(99, 102, 241, 0.1)',
+  color: 'var(--accent)',
+  border: '1px solid rgba(99, 102, 241, 0.2)',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
+};
+
+const btnControlStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: '11px',
+  height: '28px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
+};
+
+const btnCompleteStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: '11px',
+  height: '28px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  backgroundColor: 'rgba(34, 197, 94, 0.1)',
+  color: 'var(--color-success)',
+  border: '1px solid rgba(34, 197, 94, 0.2)',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
+};
