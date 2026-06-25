@@ -53,14 +53,22 @@ console.log(`\n→ Building Saple Bridge v${newVersion}\n`);
 // --- run the actual build ------------------------------------------------
 runTauri(args);
 
-// --- collect installers into ./build/v<version>/ -------------------------
+// --- collect installers into ./build/v<version>/<bundle>/ ----------------
 const bundleDir = join(root, 'src-tauri', 'target', 'release', 'bundle');
 const outDir = join(root, 'build', `v${newVersion}`);
 
 // Installer extensions Tauri emits across platforms.
 const installerExt = /\.(exe|msi|dmg|app|deb|rpm|AppImage)$/i;
 
-function collect(dir) {
+// Tauri lays out the bundle dir as <bundleDir>/<bundleType>/<installer>
+// (e.g. bundle/msi/Saple Bridge_1.0.2_x64_en-US.msi, bundle/nsis/...setup.exe).
+// We mirror that one-level <bundleType> folder under build/v<version>/ so each
+// installer kind lands in its own subfolder (msi/, nsis/, ...).
+//
+// The bundle dir accumulates installers from previous builds, so we only copy
+// files whose name contains the version we just built — otherwise older
+// versions' installers would leak into this version's folder.
+function collect(dir, bundleType) {
   let copied = 0;
   let entries;
   try {
@@ -72,11 +80,13 @@ function collect(dir) {
     const full = join(dir, name);
     const st = statSync(full);
     if (st.isDirectory()) {
-      copied += collect(full);
-    } else if (installerExt.test(name)) {
-      mkdirSync(outDir, { recursive: true });
-      copyFileSync(full, join(outDir, basename(full)));
-      console.log(`  • ${name}`);
+      // The first level under bundleDir names the installer kind (msi, nsis, ...).
+      copied += collect(full, bundleType ?? name);
+    } else if (installerExt.test(name) && name.includes(newVersion)) {
+      const destDir = bundleType ? join(outDir, bundleType) : outDir;
+      mkdirSync(destDir, { recursive: true });
+      copyFileSync(full, join(destDir, basename(full)));
+      console.log(`  • ${bundleType ?? '.'}/${name}`);
       copied++;
     }
   }
@@ -84,7 +94,7 @@ function collect(dir) {
 }
 
 console.log(`\n→ Collecting installers into build/v${newVersion}/`);
-const count = collect(bundleDir);
+const count = collect(bundleDir, null);
 if (count === 0) {
   console.log('  (no installers found — check src-tauri/target/release/bundle/)');
 } else {

@@ -99,7 +99,7 @@ interface TerminalState {
   canAddPane: () => boolean;
   updateSession: (paneId: string, updates: Partial<TerminalSession>) => void;
   setAiProvider: (paneId: string, provider: AiProvider) => void;
-  detectCommand: (paneId: string, data: string) => void;
+  recordCommand: (paneId: string, command: string) => void;
   requestReview: (paneId: string) => void;
   resolveReview: (paneId: string) => void;
   clearAll: () => Promise<void>;
@@ -204,10 +204,19 @@ const SIGNAL_REVIEW_RE =
 
 const hasReviewSignal = (tail: string) => SIGNAL_REVIEW_RE.test(tail);
 
-const getSwarmStatusFromOutput = (tail: string) => {
+// Cheap substring pre-filter run before the regex battery: every lifecycle marker contains one
+// of these literals (`[` for the bracketed markers, `#` for `## REVIEW REQUIRED`, or the
+// `Task complete` phrase). Ordinary terminal output has none, so this short-circuits the regex
+// tests for the overwhelmingly common no-marker case on the per-event hot path.
+const mightContainSignal = (tail: string) =>
+  tail.includes('[') || tail.includes('#') || tail.includes('Task complete');
+
+// `reviewMatched` is the already-computed `hasReviewSignal` result, threaded in so the review
+// regex isn't run a second time here (it used to re-test SIGNAL_REVIEW_RE redundantly).
+const getSwarmStatusFromOutput = (tail: string, reviewMatched: boolean) => {
   if (SIGNAL_DONE_RE.test(tail)) return 'done' as const;
   if (SIGNAL_FAILED_RE.test(tail)) return 'failed' as const;
-  if (SIGNAL_REVIEW_RE.test(tail)) return 'review' as const;
+  if (reviewMatched) return 'review' as const;
   return null;
 };
 
@@ -276,9 +285,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
     }
 
     notifyOutputListeners(events);
-    for (const event of events) {
-      get().detectCommand(event.paneId, event.data);
-    }
+    // NOTE: command detection deliberately does NOT run here. It used to parse the OUTPUT stream
+    // every frame and call set() (re-rendering the pane ~60x/sec during plain-text streaming) —
+    // and it logged shell output as "commands" rather than what the user typed. It now runs off
+    // the INPUT path in TerminalPane.onData (see `recordCommand`), firing only when the user
+    // presses Enter, so the hot output path no longer touches reactive state.
   };
 
   // Snapshot a workspace instance's current panes into the persisted layout store (keyed by
@@ -369,20 +380,25 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         get().appendOutput(id, data);
 
         // Detect lifecycle markers against the rolling tail (not the raw chunk) so a
-        // marker split across two PTY bursts is still caught.
+        // marker split across two PTY bursts is still caught. The cheap substring pre-filter
+        // skips the regex battery entirely for ordinary output (the common case).
         const signalTail = appendSignalTail(id, data);
+        if (!mightContainSignal(signalTail)) return;
 
-        if (hasReviewSignal(signalTail)) {
+        const reviewMatched = hasReviewSignal(signalTail);
+        const nextSwarmStatus = getSwarmStatusFromOutput(signalTail, reviewMatched);
+        if (!reviewMatched && !nextSwarmStatus) return;
+
+        const projectPath = useProjectStore.getState().currentProjectPath;
+
+        if (reviewMatched) {
           get().requestReview(id);
-          const projectPath = useProjectStore.getState().currentProjectPath;
           const task = useKanbanStore.getState().tasks.find((t) => t.terminalId === id);
           if (projectPath && task && task.column !== 'review') {
             void useKanbanStore.getState().updateTask(projectPath, task.id, { column: 'review' });
           }
         }
 
-        const projectPath = useProjectStore.getState().currentProjectPath;
-        const nextSwarmStatus = getSwarmStatusFromOutput(signalTail);
         if (projectPath && nextSwarmStatus) {
           swarmStorePromise ??= import('./swarmStore');
           swarmStorePromise
@@ -785,44 +801,36 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       captureLayout(getWorkspaceKeyForPane(get().sessions[paneId]), session.workspacePath);
     },
 
-    detectCommand: (paneId, data) => {
-      const session = get().sessions[paneId];
-      if (!session) return;
+    // Record a command the user actually typed (one full line, committed on Enter — see
+    // TerminalPane.onData). Called rarely (per command, not per output frame), so the single
+    // set() here is cheap and only ever reflects real input, never echoed shell output.
+    recordCommand: (paneId, command) => {
+      const clean = command.trim();
+      if (!clean || clean.length >= 200) return;
+      if (!get().sessions[paneId]) return;
 
-      const trimmed = data.trim();
-      if (!trimmed) return;
-
-      if (trimmed.endsWith('\r') || data.includes('\n')) {
-        const clean = trimmed.replace(/\r$/, '').trim();
-        if (clean && clean.length < 200 && !clean.startsWith('\x1b')) {
-          set((state) => {
-            const currentSession = state.sessions[paneId];
-            if (!currentSession) return {};
-            const blocks = [...(currentSession.commandBlocks || [])].slice(-MAX_COMMAND_BLOCKS);
-            if (blocks.length > 0 && !blocks[blocks.length - 1].endedAt) {
-              blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], endedAt: new Date().toISOString() };
-            }
-
-            return {
-              sessions: {
-                ...state.sessions,
-                [paneId]: {
-                  ...currentSession,
-                  lastCommandInput: clean,
-                  commandBlocks: [
-                    ...blocks,
-                    { id: createId('cmd'), command: clean, startedAt: new Date().toISOString(), outputPreview: '' },
-                  ].slice(-MAX_COMMAND_BLOCKS),
-                },
-              },
-            };
-          });
+      set((state) => {
+        const currentSession = state.sessions[paneId];
+        if (!currentSession) return {};
+        const blocks = [...(currentSession.commandBlocks || [])].slice(-MAX_COMMAND_BLOCKS);
+        if (blocks.length > 0 && !blocks[blocks.length - 1].endedAt) {
+          blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], endedAt: new Date().toISOString() };
         }
-      }
 
-      // NOTE: we deliberately do NOT track a per-frame `outputPreview` here. It used to call set()
-      // on almost every frame of streaming output — re-rendering the pane ~60x/sec — yet the field
-      // is never displayed anywhere, so the work was pure jank for no benefit.
+        return {
+          sessions: {
+            ...state.sessions,
+            [paneId]: {
+              ...currentSession,
+              lastCommandInput: clean,
+              commandBlocks: [
+                ...blocks,
+                { id: createId('cmd'), command: clean, startedAt: new Date().toISOString(), outputPreview: '' },
+              ].slice(-MAX_COMMAND_BLOCKS),
+            },
+          },
+        };
+      });
     },
 
     requestReview: (paneId) => set((state) => (

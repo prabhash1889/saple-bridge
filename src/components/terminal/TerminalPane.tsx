@@ -266,6 +266,12 @@ function getTerminalTheme() {
 // number of WebGL-accelerated panes; panes beyond the cap use the DOM renderer.
 const MAX_WEBGL_CONTEXTS = 8;
 let activeWebglContexts = 0;
+// Panes that currently hold a WebGL context, mapped to their `unloadWebgl` release fn. When the
+// context budget is spent, a newly-focused pane reclaims a context from a non-focused holder via
+// this registry, so the pane the user is actually looking at always gets the GPU renderer even in
+// rooms with more than MAX_WEBGL_CONTEXTS panes. Eviction frees a slot before a new context is
+// acquired, so the hard cap is never exceeded.
+const webglHolders = new Map<string, () => void>();
 
 // On Windows the PTY backend is ConPTY (pty.rs spawns powershell.exe). ConPTY repaints on
 // resize and, when rows grow, pushes the previous rows into the scrollback rather than
@@ -450,6 +456,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   // budget. Idempotent: safe to call from the `active` effect, the context-loss handler,
   // and the unmount cleanup without double-counting.
   const unloadWebgl = useCallback(() => {
+    webglHolders.delete(sessionId);
     if (webglReleaseRef.current) {
       webglReleaseRef.current();
       webglReleaseRef.current = null;
@@ -462,7 +469,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       }
       webglAddonRef.current = null;
     }
-  }, []);
+  }, [sessionId]);
 
   // Attach a WebGL renderer to the live terminal, unless one is already attached or the
   // per-process context budget is spent (then the pane keeps xterm's slower DOM renderer).
@@ -470,14 +477,30 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     const term = terminalRef.current;
     if (!term || webglAddonRef.current) return;
     if (activeWebglContexts >= MAX_WEBGL_CONTEXTS) {
-      console.warn(
-        `[terminal ${sessionId}] WebGL context cap (${MAX_WEBGL_CONTEXTS}) reached; this pane uses the slower DOM renderer.`,
-      );
-      return;
+      // Budget spent. Only the focused/maximized pane (the one actually on screen) may reclaim a
+      // context; any other pane keeps the DOM renderer. Evicting a non-focused holder frees a slot
+      // for the pane the user is looking at.
+      const { focusedPaneId, maximizedPaneId } = useTerminalStore.getState();
+      const isPriority = sessionId === focusedPaneId || sessionId === maximizedPaneId;
+      const victim = isPriority
+        ? Array.from(webglHolders.keys()).find(
+            (id) => id !== sessionId && id !== focusedPaneId && id !== maximizedPaneId,
+          )
+        : undefined;
+      if (!victim) {
+        console.warn(
+          `[terminal ${sessionId}] WebGL context cap (${MAX_WEBGL_CONTEXTS}) reached; this pane uses the slower DOM renderer.`,
+        );
+        return;
+      }
+      // Release the victim's context (drops it back to the DOM renderer), freeing a slot.
+      webglHolders.get(victim)?.();
+      if (activeWebglContexts >= MAX_WEBGL_CONTEXTS) return;
     }
     try {
       const webglAddon = new WebglAddon();
       activeWebglContexts += 1;
+      webglHolders.set(sessionId, unloadWebgl);
       let released = false;
       webglReleaseRef.current = () => {
         if (released) return;
@@ -592,8 +615,39 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // Reconstruct the typed command line from keystrokes so the hover "N cmd" badge reflects what
+    // the user actually ran — not shell output. This runs only on input (rare), so it never
+    // re-renders the pane during output streaming. Escape/CSI sequences (arrows, fn keys) are
+    // skipped, Backspace edits the line, and Enter commits it via `recordCommand`.
+    let pendingCommandLine = '';
+    let inEscape = false;
+    const trackTypedCommand = (input: string) => {
+      for (const ch of input) {
+        if (inEscape) {
+          // A CSI/SS3 sequence ends on its final byte (0x40–0x7E), excluding the `[`/`O`
+          // introducer that immediately follows ESC.
+          if (ch !== '[' && ch !== 'O' && ch >= '@' && ch <= '~') inEscape = false;
+          continue;
+        }
+        if (ch === '\x1b') {
+          inEscape = true;
+        } else if (ch === '\r' || ch === '\n') {
+          const line = pendingCommandLine.trim();
+          pendingCommandLine = '';
+          if (line) useTerminalStore.getState().recordCommand(sessionId, line);
+        } else if (ch === '\x7f' || ch === '\b') {
+          pendingCommandLine = pendingCommandLine.slice(0, -1);
+        } else if (ch >= ' ') {
+          pendingCommandLine += ch;
+        }
+        // Other control chars (Ctrl-C, Tab, …) are ignored for the badge.
+      }
+    };
+
     const dataDisposable = term.onData((data) => {
       if (useTerminalStore.getState().reviewPanes[sessionId]) return;
+
+      trackTypedCommand(data);
 
       invoke('write_pty', { id: sessionId, data }).catch((err) => {
         console.error('Failed to write to PTY:', err);
@@ -763,8 +817,12 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   useEffect(() => {
     if (isFocused && terminalRef.current) {
       terminalRef.current.focus();
+      // If this pane is on the DOM renderer only because the context budget was full when it
+      // mounted, now that it's focused it can reclaim a context from a non-focused pane. No-op if
+      // it already holds one, or if its workspace isn't on screen.
+      if (active) loadWebgl();
     }
-  }, [isFocused]);
+  }, [isFocused, active, loadWebgl]);
 
   const handleContainerClick = () => {
     if (!isFocused) {
