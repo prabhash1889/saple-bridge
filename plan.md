@@ -217,7 +217,18 @@ the rest of the module (read-only, low impact, consistency fix).
 
 ---
 
-## Phase 6 — Verification
+## Phase 6 — Verification — ✅ DONE
+
+> Completed 2026-06-26. Full automated verification re-run at the end of the plan, all green:
+> - `npm run typecheck` → exit 0
+> - `npm run build` (tsc + vite) → built in 3.58s, no errors
+> - `cargo check --manifest-path src-tauri/Cargo.toml` → finished clean (no warnings)
+> - `cd src-tauri; cargo test` → **27 passed; 0 failed** (incl. git-rename, wikilink/code-skip,
+>   snapshot-name, and memory-traversal containment tests added across Phases 1–4)
+>
+> The end-to-end manual checks below require an interactive desktop session (`npm run tauri dev`)
+> and remain operator-driven — they are not runnable headless from CI/agent. Listed here as the
+> smoke matrix for a human pass before release.
 
 Run after each phase and again at the end:
 
