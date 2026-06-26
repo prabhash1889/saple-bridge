@@ -33,6 +33,11 @@ pub struct CliStatus {
     pub version: Option<String>,
 }
 
+/// MCP config presence flags embedded in the diagnostics report.
+///
+/// A lean subset of [`crate::project::McpStatus`] (the Settings → MCP tab type):
+/// it omits `other_servers` because diagnostics only needs to confirm that
+/// `saple-memory` is configured, not enumerate every server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpConfigStatus {

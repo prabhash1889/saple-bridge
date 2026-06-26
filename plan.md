@@ -193,17 +193,27 @@ the rest of the module (read-only, low impact, consistency fix).
 
 ---
 
-## Phase 5 — Dead code & consistency cleanup
+## Phase 5 — Dead code & consistency cleanup — ✅ DONE
 
-- **Remove orphaned `src/types/review.ts`** — superseded by the inline type in `reviewStore.ts`,
-  imported nowhere, and has a field-name mismatch (`decision` vs `status`) that will mislead future
+> Completed 2026-06-26. Verified: `npm run typecheck` exit 0; `cargo check` clean (no warnings);
+> `cargo test` 27/27 pass. Notes:
+> - `git_diff_summary` had no caller after Phase 1, so beyond dropping the Tauri wrapper its
+>   now-orphaned `git_diff_summary_inner` helper **and** the `GitDiffSummary` struct were also
+>   removed (review.rs only uses `git_status_inner`, which is kept). `git_status` likewise: only
+>   the wrapper was removed; `git_status_inner` stays.
+> - The `McpStatus`/`McpConfigStatus` distinction was documented (doc comments cross-referencing
+>   each other) rather than renamed — they live in different modules and `McpStatus` carries an
+>   extra `other_servers` field for the Settings UI, so they are genuinely distinct types.
+
+- **Remove orphaned `src/types/review.ts`** — ✅ superseded by the inline type in `reviewStore.ts`,
+  imported nowhere, and had a field-name mismatch (`decision` vs `status`) that would mislead future
   edits.
-- **Remove unused command wrappers** that have no frontend caller and whose logic is used only
-  internally: `get_app_binary_path` (`lib.rs:28`), and the standalone `git_status` /
-  `git_diff_summary` Tauri wrappers if confirmed unused after Phase 1 (keep the `_inner`
-  functions — review uses them internally). Drop them from the `invoke_handler` list in `lib.rs`.
-- **Reconcile `McpStatus` vs `McpConfigStatus`** (`project.rs`) naming to reduce future confusion —
-  rename or document the distinction.
+- **Remove unused command wrappers** — ✅ `get_app_binary_path` (`lib.rs`) and the standalone
+  `git_status` / `git_diff_summary` Tauri wrappers were dropped from the `invoke_handler` list and
+  deleted (no frontend caller). `git_status_inner` is kept (review uses it internally);
+  `git_diff_summary_inner` + `GitDiffSummary` were removed as genuinely dead.
+- **Reconcile `McpStatus` vs `McpConfigStatus`** (`project.rs` / `diagnostics.rs`) — ✅ documented
+  the distinction with cross-referencing doc comments.
 
 ---
 

@@ -96,6 +96,12 @@ pub struct WorkspaceSummary {
     pub has_mcp_config: bool,
 }
 
+/// Full MCP configuration status for the project Settings → MCP tab.
+///
+/// Returned by [`check_mcp_status`]. Distinct from
+/// [`crate::diagnostics::McpConfigStatus`], which is a leaner subset embedded in
+/// the diagnostics report: this struct additionally surfaces `other_servers`
+/// (non-`saple-memory` servers found in the config) for the Settings UI.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct McpStatus {

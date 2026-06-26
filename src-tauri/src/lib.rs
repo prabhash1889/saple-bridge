@@ -24,13 +24,6 @@ fn select_directory() -> Option<String> {
     folder.map(|path| path.to_string_lossy().to_string())
 }
 
-#[tauri::command]
-fn get_app_binary_path() -> Result<String, String> {
-    std::env::current_exe()
-        .map(|path| path.to_string_lossy().to_string())
-        .map_err(|e| e.to_string())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -46,7 +39,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             select_directory,
-            get_app_binary_path,
             pty::spawn_pty,
             pty::write_pty,
             pty::resize_pty,
@@ -75,8 +67,6 @@ pub fn run() {
             memory::get_unlinked_mentions,
             memory::add_memory_link,
             mcp::test_mcp_tools,
-            git::git_status,
-            git::git_diff_summary,
             git::git_diff_file,
             review::create_review_record,
             review::read_review_record,

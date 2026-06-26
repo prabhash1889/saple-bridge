@@ -19,15 +19,6 @@ pub struct GitFileStatus {
     pub deletions: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitDiffSummary {
-    pub branch: String,
-    pub files: Vec<GitFileStatus>,
-    pub total_insertions: usize,
-    pub total_deletions: usize,
-}
-
 /// Extract the destination path from a porcelain rename status field.
 ///
 /// `git status --porcelain` (v1) emits renames as "ORIG -> DEST". Some tooling
@@ -167,36 +158,6 @@ pub fn git_status_inner(project_path: String) -> Result<Vec<GitFileStatus>, Stri
     Ok(files)
 }
 
-pub fn git_diff_summary_inner(project_path: String) -> Result<GitDiffSummary, String> {
-    let branch_output = run_git_with_timeout(&project_path, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT);
-    
-    let branch = if let Ok(out) = branch_output {
-        if out.status.success() {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        } else {
-            "unknown".to_string()
-        }
-    } else {
-        "unknown".to_string()
-    };
-
-    let files = git_status_inner(project_path)?;
-    let mut total_insertions = 0;
-    let mut total_deletions = 0;
-
-    for f in &files {
-        total_insertions += f.insertions.unwrap_or(0);
-        total_deletions += f.deletions.unwrap_or(0);
-    }
-
-    Ok(GitDiffSummary {
-        branch,
-        files,
-        total_insertions,
-        total_deletions,
-    })
-}
-
 pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<String, String> {
     // Validate path containment first
     let full_path = get_project_file_path(&project_path, &file_path)?;
@@ -247,20 +208,6 @@ pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<St
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
-}
-
-#[tauri::command]
-pub async fn git_status(project_path: String) -> Result<Vec<GitFileStatus>, String> {
-    tauri::async_runtime::spawn_blocking(move || git_status_inner(project_path))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub async fn git_diff_summary(project_path: String) -> Result<GitDiffSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || git_diff_summary_inner(project_path))
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
