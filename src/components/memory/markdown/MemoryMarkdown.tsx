@@ -22,12 +22,18 @@ interface Props {
 
 const ABSOLUTE_URL = /^(https?:|mailto:)/i;
 
-/** Resolve a wikilink target to a node by id, then case-insensitive title. */
+/**
+ * Resolve a wikilink target to a node by id, then case-insensitive title, then case-insensitive
+ * alias. Mirrors the Rust graph's resolution order (memory.rs id/file-stem/alias lookup) so
+ * `[[alias]]` renders as a resolved link in the preview, matching the edges in the graph.
+ */
 function resolveTarget(target: string, nodes: MemoryNode[]): MemoryNode | undefined {
   const byId = nodes.find((n) => n.id === target);
   if (byId) return byId;
   const lower = target.toLowerCase();
-  return nodes.find((n) => n.title.toLowerCase() === lower);
+  const byTitle = nodes.find((n) => n.title.toLowerCase() === lower);
+  if (byTitle) return byTitle;
+  return nodes.find((n) => n.aliases?.some((a) => a.toLowerCase() === lower));
 }
 
 export const MemoryMarkdown: React.FC<Props> = ({ content }) => {

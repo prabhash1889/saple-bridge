@@ -269,23 +269,70 @@ pub fn parse_memory_file(content: &str, relative_path: &str) -> ParsedMemory {
     }
 }
 
-pub fn parse_markdown_memory(content: &str, relative_path: &str) -> (MemoryNode, Vec<String>) {
-    let parsed = parse_memory_file(content, relative_path);
-    
+/// Extract `[[wikilink]]` targets from a markdown body, skipping fenced code blocks (```` ``` ````
+/// / `~~~`) and inline code spans (`` `...` ``). This mirrors the AST-based skip in
+/// `remarkWikilinks.ts`, so a `[[x]]` written inside a code sample doesn't create a spurious graph
+/// edge. `[[target|label]]` keeps only `target` for resolution.
+pub fn extract_wikilinks(body: &str) -> Vec<String> {
     let mut wikilinks = Vec::new();
-    let mut search_str = &parsed.body[..];
-    while let Some(start) = search_str.find("[[") {
-        if let Some(end) = search_str[start..].find("]]") {
-            let link = search_str[start + 2..start + end].trim().to_string();
-            if !link.is_empty() {
-                wikilinks.push(link);
-            }
-            search_str = &search_str[start + end + 2..];
+    let mut fence: Option<char> = None;
+
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        // Toggle fenced code blocks on a ``` / ~~~ delimiter line.
+        let delim = if trimmed.starts_with("```") {
+            Some('`')
+        } else if trimmed.starts_with("~~~") {
+            Some('~')
         } else {
-            break;
+            None
+        };
+        if let Some(marker) = delim {
+            match fence {
+                None => fence = Some(marker),
+                Some(open) if open == marker => fence = None,
+                Some(_) => {}
+            }
+            continue;
+        }
+        if fence.is_some() {
+            continue;
+        }
+
+        // Drop inline code spans before scanning: segments between backticks are code. Splitting on
+        // '`' yields outside-code at even indices and inside-code at odd indices.
+        let scan: String = line
+            .split('`')
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 0)
+            .map(|(_, s)| s)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let mut rest = scan.as_str();
+        while let Some(start) = rest.find("[[") {
+            if let Some(end) = rest[start..].find("]]") {
+                let link = rest[start + 2..start + end].trim();
+                // [[target|label]] — only the target participates in edge resolution.
+                let target = link.split('|').next().unwrap_or(link).trim();
+                if !target.is_empty() {
+                    wikilinks.push(target.to_string());
+                }
+                rest = &rest[start + end + 2..];
+            } else {
+                break;
+            }
         }
     }
-    
+
+    wikilinks
+}
+
+pub fn parse_markdown_memory(content: &str, relative_path: &str) -> (MemoryNode, Vec<String>) {
+    let parsed = parse_memory_file(content, relative_path);
+
+    let wikilinks = extract_wikilinks(&parsed.body);
+
     (
         MemoryNode {
             id: parsed.id,
@@ -1003,6 +1050,39 @@ mod tests {
         let parsed = parse_memory_file(md, "decision/jwt.md");
         assert_eq!(parsed.tags, vec!["auth", "jwt"]);
         assert_eq!(parsed.aliases, vec!["JSON Web Token"]);
+    }
+
+    #[test]
+    fn extract_wikilinks_skips_code_and_strips_labels() {
+        let body = "\
+See [[real-note]] and [[other|Other label]].
+
+```
+let x = \"[[fenced-code]]\";
+```
+
+Inline `[[inline-code]]` should not count either.
+
+~~~
+[[tilde-fence]]
+~~~
+";
+        let links = extract_wikilinks(body);
+        // Real links resolve; the `|label` part is dropped from the target.
+        assert!(links.contains(&"real-note".to_string()));
+        assert!(links.contains(&"other".to_string()));
+        // Links inside fenced / inline code must not produce edges.
+        assert!(!links.contains(&"fenced-code".to_string()));
+        assert!(!links.contains(&"inline-code".to_string()));
+        assert!(!links.contains(&"tilde-fence".to_string()));
+        assert_eq!(links.len(), 2);
+    }
+
+    #[test]
+    fn extract_wikilinks_fenced_block_only_yields_no_edge() {
+        // Mirrors the plan's required case: a single `[[x]]` inside a fenced block → no edge.
+        let body = "```\n[[x]]\n```\n";
+        assert!(extract_wikilinks(body).is_empty());
     }
 
     #[test]
