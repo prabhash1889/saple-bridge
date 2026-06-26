@@ -28,6 +28,22 @@ pub struct GitDiffSummary {
     pub total_deletions: usize,
 }
 
+/// Extract the destination path from a porcelain rename status field.
+///
+/// `git status --porcelain` (v1) emits renames as "ORIG -> DEST". Some tooling
+/// surfaces the two paths tab-separated instead; handle that as a fallback. In
+/// both encodings the destination is the trailing path, which is what the
+/// downstream `git diff HEAD -- <path>` needs to resolve.
+fn parse_rename_dest(field: &str) -> String {
+    if let Some(pos) = field.find(" -> ") {
+        field[pos + 4..].trim().to_string()
+    } else if let Some(pos) = field.rfind('\t') {
+        field[pos + 1..].trim().to_string()
+    } else {
+        field.trim().to_string()
+    }
+}
+
 fn run_git_with_timeout(project_path: &str, args: &[&str], timeout: Duration) -> Result<Output, String> {
     let mut child = Command::new("git")
         .args(args)
@@ -78,14 +94,10 @@ pub fn git_status_inner(project_path: String) -> Result<Vec<GitFileStatus>, Stri
         }
         let (status_chars, file_path_raw) = line.split_at(3);
         let file_path = file_path_raw.trim().to_string();
-        
-        // Git rename shows as "R  old -> new", parse it
+
+        // Git renames show the destination path so the downstream `git diff` resolves.
         let file_path = if status_chars.contains('R') {
-            if let Some(pos) = file_path.find(" -> ") {
-                file_path[pos + 4..].to_string()
-            } else {
-                file_path
-            }
+            parse_rename_dest(&file_path)
         } else {
             file_path
         };
@@ -256,4 +268,26 @@ pub async fn git_diff_file(project_path: String, file_path: String) -> Result<St
     tauri::async_runtime::spawn_blocking(move || git_diff_file_inner(project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_porcelain_arrow_rename() {
+        // The path field after stripping the 3-char "R  " XY-status prefix.
+        assert_eq!(parse_rename_dest("old.txt -> new.txt"), "new.txt");
+        assert_eq!(parse_rename_dest("src/a.rs -> src/b.rs"), "src/b.rs");
+    }
+
+    #[test]
+    fn parses_tab_separated_rename() {
+        assert_eq!(parse_rename_dest("old.txt\tnew.txt"), "new.txt");
+    }
+
+    #[test]
+    fn passes_through_plain_path() {
+        assert_eq!(parse_rename_dest("plain.txt"), "plain.txt");
+    }
 }
