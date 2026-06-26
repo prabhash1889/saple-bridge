@@ -73,7 +73,9 @@ function App() {
     const timeoutId = window.setTimeout(() => {
       if (cancelled) return;
       void loadTasks(currentProjectPath);
-      void loadSwarmState(currentProjectPath);
+      // force: re-read disk state on every project open (persisted loadedProjectPath
+      // would otherwise short-circuit and keep stale localStorage swarm state).
+      void loadSwarmState(currentProjectPath, true);
       void loadAgentSessions(currentProjectPath);
       void refreshWorkspace();
     }, 0);

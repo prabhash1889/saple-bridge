@@ -46,7 +46,7 @@ interface SwarmState {
   swarmActive: boolean;
   activeTemplateId: string | null;
 
-  loadSwarmState: (projectPath: string) => Promise<void>;
+  loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
   saveSwarmState: (projectPath: string) => Promise<void>;
   startSwarm: (projectPath: string, templateId: string, mission: string, customAgents?: SwarmAgent[]) => Promise<void>;
   startSwarmFromWizard: (input: WizardLaunchInput) => Promise<void>;
@@ -315,8 +315,11 @@ export const useSwarmStore = create<SwarmState>()(
       swarmActive: false,
       activeTemplateId: null,
 
-      loadSwarmState: async (projectPath) => {
-        if (get().loadedProjectPath === projectPath) return;
+      loadSwarmState: async (projectPath, force = false) => {
+        // loadedProjectPath is rehydrated from localStorage (persist), so without `force`
+        // reopening a project would skip re-reading .saple/swarm/state.json and discard
+        // external/MCP edits. The project-open flow passes force=true to always re-read disk.
+        if (!force && get().loadedProjectPath === projectPath) return;
         try {
           const content = await invoke<string>('read_swarm_state', { projectPath });
           const parsed = JSON.parse(content);
