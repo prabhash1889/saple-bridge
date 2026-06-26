@@ -155,31 +155,40 @@ launch path that already exists in `terminalStore.addPane(..., customCommand)`.
 
 ---
 
-## Phase 4 — Security & defense-in-depth hardening
+## Phase 4 — Security & defense-in-depth hardening — ✅ DONE
 
-**4.1 Validate snapshot restore name.** `src-tauri/src/memory.rs:424` `restore_memory_snapshot_inner`
-accepts `name` raw. Apply the same `[a-zA-Z0-9\-_]` validation used by
-`create_memory_snapshot_inner` (`memory.rs:384-386`) before building the path.
+> Completed 2026-06-26. Commit: `008427e`. Verified: `npm run typecheck` exit 0;
+> `npm run build` OK; `cargo test` 27/27 pass (+2 new memory-traversal tests). Notes:
+> - 4.2: containment is checked against each `dir.canonicalize()` per write-dir (memory mode can
+>   resolve to multiple dirs), not a single base, so the check holds in `both`/`bridge-compatible`
+>   modes too.
+> - 4.4: implemented part (a) — trust-boundary doc comments on `run_verification_command_inner`
+>   (`review.rs`) and `handleRunVerification` (`ReviewWorkspace.tsx`). Part (b) (opt-in
+>   confirmation) was deferred as a "consider"; the command stays operator-initiated and is shown
+>   in the editable input before running.
 
-**4.2 Contain memory file ops to the memory dir.** `delete_memory_file_inner` /
-`read_memory_file_inner` (`memory.rs:529-558`) canonicalize-check against the **project root**,
-allowing a crafted `filePath` to touch any project file. Change the canonical base to the resolved
-memory dir (the same `get_memory_dir(project_path)` the rest of `memory.rs` uses). Add traversal
-unit tests mirroring the existing `project.rs:486-541` containment tests.
+**4.1 Validate snapshot restore name.** ✅ `src-tauri/src/memory.rs` `restore_memory_snapshot_inner`
+accepted `name` raw. Applied the same `[a-zA-Z0-9\-_]` validation used by
+`create_memory_snapshot_inner` before building the path.
 
-**4.3 Atomic writes for config/user files.** Route `install_mcp_config_inner`'s four writes
-(`project.rs:403,406,423,425`) and `write_text_file_inner` (`files.rs:193`) through the existing
+**4.2 Contain memory file ops to the memory dir.** ✅ `delete_memory_file_inner` /
+`read_memory_file_inner` canonicalize-checked against the **project root**,
+allowing a crafted `filePath` to touch any project file. Changed the canonical base to the resolved
+memory dir (per write-dir `canonicalize()`). Added traversal unit tests mirroring the existing
+`project.rs` containment tests.
+
+**4.3 Atomic writes for config/user files.** ✅ Routed `install_mcp_config_inner`'s four writes
+and `write_text_file_inner` (`files.rs`) through the existing
 `crate::fs_lock::atomic_write` (`src-tauri/src/fs_lock.rs:36`) to avoid torn reads during
 concurrent access, matching how tasks/config are already written.
 
-**4.4 Constrain / acknowledge verification commands.** `run_verification_command`
-(`review.rs:261`) is unconstrained shell execution by design. Keep the capability but (a) document
-the trust boundary in `review.rs` and the review UI, and (b) consider an opt-in confirmation
-before first run per workspace. No allowlist (would break the dev-tool use case); this is a
-documented, contained risk.
+**4.4 Constrain / acknowledge verification commands.** ✅ `run_verification_command`
+(`review.rs`) is unconstrained shell execution by design. Kept the capability and (a) documented
+the trust boundary in `review.rs` and the review UI. (b) opt-in confirmation deferred as a
+"consider". No allowlist (would break the dev-tool use case); this is a documented, contained risk.
 
-**4.5 Path-validate `check_mcp_status`.** `project.rs:438` builds the path with bare
-`Path::new(&project_path).join(...)`. Route through `get_project_file_path` for consistency with
+**4.5 Path-validate `check_mcp_status`.** ✅ `check_mcp_status_inner` built the path with bare
+`Path::new(&project_path).join(...)`. Routed through `get_project_file_path` for consistency with
 the rest of the module (read-only, low impact, consistency fix).
 
 ---
