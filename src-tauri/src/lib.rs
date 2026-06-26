@@ -94,7 +94,9 @@ pub fn run() {
             files::write_text_file,
             files::open_in_external_editor,
             files::reveal_in_file_explorer,
-            diagnostics::run_diagnostics
+            diagnostics::run_diagnostics,
+            diagnostics::check_provider_cli,
+            diagnostics::check_provider_signin
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -60,6 +60,9 @@ interface SwarmState {
   addCustomAgent: (agent: SwarmAgent) => void;
   removeAgent: (agentId: string) => void;
   saveTemplatePreset: (template: SwarmTemplate) => void;
+  writeMailbox: (projectPath: string, agentId: string, content: string) => Promise<void>;
+  readHandoff: (projectPath: string, fromAgent: string, toAgent: string) => Promise<string | null>;
+  writeHandoff: (projectPath: string, fromAgent: string, toAgent: string, content: string) => Promise<void>;
 }
 
 const DEFAULT_TEMPLATES: SwarmTemplate[] = [
@@ -639,6 +642,32 @@ export const useSwarmStore = create<SwarmState>()(
           }
           return { templates: newTemplates };
         });
+      },
+
+      // Operator-posted message into an agent's mailbox. Agents read their own mailbox via
+      // their FS tools; this lets a human inject guidance mid-run. Path-contained by the
+      // `write_mailbox_file` command. Serialized per project so it can't race the scheduler.
+      writeMailbox: async (projectPath, agentId, content) => {
+        await enqueueWrite(`mailbox:${projectPath}:${agentId}`, () =>
+          invoke('write_mailbox_file', { projectPath, agentId, content })
+        );
+      },
+
+      // Read a from→to handoff file. Returns null when the file doesn't exist yet (the
+      // command errors in that case), so callers can poll candidate pairs without spamming
+      // the console for handoffs that simply haven't been written.
+      readHandoff: async (projectPath, fromAgent, toAgent) => {
+        try {
+          return await invoke<string>('read_handoff_file', { projectPath, fromAgent, toAgent });
+        } catch {
+          return null;
+        }
+      },
+
+      writeHandoff: async (projectPath, fromAgent, toAgent, content) => {
+        await enqueueWrite(`handoff:${projectPath}:${fromAgent}:${toAgent}`, () =>
+          invoke('write_handoff_file', { projectPath, fromAgent, toAgent, content })
+        );
       }
     }),
     {

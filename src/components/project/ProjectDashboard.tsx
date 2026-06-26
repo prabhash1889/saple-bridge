@@ -346,15 +346,21 @@ export const ProjectDashboard: React.FC = () => {
             <span>Provider Readiness</span>
           </div>
           <div className="provider-checklist">
-            {providers.filter((p) => p.provider !== 'custom').map((p) => (
-              <span key={p.provider}>
-                <span className={`status-dot ${p.authenticated === true ? 'ready' : p.authenticated === false ? 'missing' : 'pending'}`} />
-                {p.label}
-                {p.authenticated === true && ' - key saved'}
-                {p.authenticated === false && ' - auth needed'}
-                {p.authenticated === null && ' - checking...'}
-              </span>
-            ))}
+            {providers.filter((p) => p.provider !== 'custom').map((p) => {
+              const signed = p.signedIn === true;
+              const ready = p.authenticated === true || signed;
+              const pending = p.authenticated === null && !signed;
+              return (
+                <span key={p.provider}>
+                  <span className={`status-dot ${ready ? 'ready' : pending ? 'pending' : 'missing'}`} />
+                  {p.label}
+                  {p.authenticated === true && ' - key saved'}
+                  {p.authenticated !== true && signed && ' - signed in'}
+                  {!ready && !pending && ' - auth needed'}
+                  {pending && ' - checking...'}
+                </span>
+              );
+            })}
           </div>
         </section>
 
@@ -389,7 +395,7 @@ export const ProjectDashboard: React.FC = () => {
         </div>
 
         <div className="saple-start-copy">
-          <h1>Build the future.</h1>
+          <h1>PowerUp your work.</h1>
           <p>Choose how you want to work.</p>
         </div>
 

@@ -26,6 +26,7 @@ portable-pty = "0.9.0"
 uuid = { version = "1", features = ["v4"] }
 rfd = "0.15.0"
 keyring = "2.1"
+which = "6"
 
 [target.'cfg(windows)'.dependencies]
 # PTY process-tree cleanup: each shell is placed in a Job Object so closing a pane kills the

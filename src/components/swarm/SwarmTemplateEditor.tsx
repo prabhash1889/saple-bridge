@@ -215,7 +215,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
                       onChange={e => handleUpdateAgent(agent.id, { provider: e.target.value as AgentProvider })}
                       style={selectStyle}
                     >
-                      {[...PROVIDER_ORDER, 'pi' as AgentProvider, 'custom' as AgentProvider].map(p => (
+                      {[...PROVIDER_ORDER, 'custom' as AgentProvider].map(p => (
                         <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
                       ))}
                     </select>

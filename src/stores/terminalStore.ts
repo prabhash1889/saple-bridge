@@ -9,7 +9,7 @@ import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
 import type { AgentProvider } from '../types/provider';
 
-export type AiProvider = Extract<AgentProvider, 'bridgecode' | 'codex' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'custom'>;
+export type AiProvider = Extract<AgentProvider, 'codex' | 'claude' | 'gemini' | 'openrouter' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'custom'>;
 
 export interface CommandBlock {
   id: string;
@@ -222,8 +222,6 @@ const getSwarmStatusFromOutput = (tail: string, reviewMatched: boolean) => {
 
 const providerLabel = (provider?: AiProvider) => {
   switch (provider) {
-    case 'bridgecode':
-      return 'BridgeCode Agent';
     case 'claude':
       return 'Claude Agent';
     case 'opencode':
@@ -232,6 +230,8 @@ const providerLabel = (provider?: AiProvider) => {
       return 'Codex Agent';
     case 'gemini':
       return 'Gemini Agent';
+    case 'openrouter':
+      return 'OpenRouter Agent';
     case 'cursor':
       return 'Cursor Agent';
     case 'droid':

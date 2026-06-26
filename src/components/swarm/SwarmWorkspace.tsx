@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle } from 'lucide-react';
+import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { SwarmGraph } from './SwarmGraph';
-import { SwarmAgentCard } from './SwarmAgentCard';
+import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';
 import { SwarmTemplateEditor } from './SwarmTemplateEditor';
 import { SwarmWizard } from './wizard/SwarmWizard';
+
+const handoffKey = (from: string, to: string) => `${from}->${to}`;
 
 export const SwarmWorkspace: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -24,6 +26,8 @@ export const SwarmWorkspace: React.FC = () => {
   const updateAgentStatus = useSwarmStore((state) => state.updateAgentStatus);
   const relaunchAgent = useSwarmStore((state) => state.relaunchAgent);
   const forceCompleteAgent = useSwarmStore((state) => state.forceCompleteAgent);
+  const writeMailbox = useSwarmStore((state) => state.writeMailbox);
+  const readHandoff = useSwarmStore((state) => state.readHandoff);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const [selectedTemplateId, setSelectedTemplateId] = useState('full_stack');
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
@@ -32,6 +36,10 @@ export const SwarmWorkspace: React.FC = () => {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [mailboxContents, setMailboxContents] = useState<Record<string, string>>({});
   const [loadingMailboxIds, setLoadingMailboxIds] = useState<Set<string>>(() => new Set());
+  // Handoff bodies keyed by `${from}->${to}`. Polled on the same timer as mailboxes.
+  const [handoffContents, setHandoffContents] = useState<Record<string, string>>({});
+  const [composeText, setComposeText] = useState('');
+  const [sendingMailbox, setSendingMailbox] = useState(false);
 
   useEffect(() => {
     if (currentProjectPath) {
@@ -45,6 +53,12 @@ export const SwarmWorkspace: React.FC = () => {
       setSelectedAgentId(activeAgents[0].id);
     }
   }, [swarmActive, activeAgents, selectedAgentId]);
+
+  // Drop any in-progress mailbox draft when the inspected agent changes so a message
+  // typed for one agent isn't accidentally sent to another.
+  useEffect(() => {
+    setComposeText('');
+  }, [selectedAgentId]);
 
   const handleStop = async () => {
     if (!currentProjectPath) return;
@@ -90,24 +104,58 @@ export const SwarmWorkspace: React.FC = () => {
 
   const polledAgentKey = polledAgentIds.join('|');
 
+  // Handoff candidate pairs are the edges of the dependency graph: a dependency D "hands off"
+  // to each agent A that depends on it (D->A). Agents are instructed to write
+  // .saple/swarm/handoffs/<from>-to-<to>.json, so these are the only files that can exist.
+  const handoffPairs = useMemo(() => {
+    const pairs: { from: string; to: string }[] = [];
+    const seen = new Set<string>();
+    for (const agent of activeAgents) {
+      for (const dep of agent.dependencies) {
+        const key = handoffKey(dep, agent.id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pairs.push({ from: dep, to: agent.id });
+      }
+    }
+    return pairs;
+  }, [activeAgents]);
+
+  // Only poll handoffs touching a currently-visible agent (mirrors the mailbox polled-set).
+  const polledHandoffPairs = useMemo(() => {
+    const visible = new Set(polledAgentIds);
+    return handoffPairs.filter((p) => visible.has(p.from) || visible.has(p.to));
+  }, [handoffPairs, polledAgentIds]);
+
+  const polledHandoffKey = polledHandoffPairs.map((p) => handoffKey(p.from, p.to)).join('|');
+
   const fetchVisibleMailboxes = useCallback(async () => {
     if (!currentProjectPath || polledAgentIds.length === 0) return;
 
     setLoadingMailboxIds(new Set(polledAgentIds));
-    const entries = await Promise.all(
-      polledAgentIds.map(async (agentId) => {
-        try {
-          const content = await invoke<string>('read_mailbox_file', {
-            projectPath: currentProjectPath,
-            agentId,
-          });
-          return [agentId, content] as const;
-        } catch (err) {
-          console.error(`Failed to read mailbox for agent ${agentId}:`, err);
-          return [agentId, null] as const;
-        }
-      })
-    );
+    const [entries, handoffEntries] = await Promise.all([
+      Promise.all(
+        polledAgentIds.map(async (agentId) => {
+          try {
+            const content = await invoke<string>('read_mailbox_file', {
+              projectPath: currentProjectPath,
+              agentId,
+            });
+            return [agentId, content] as const;
+          } catch (err) {
+            console.error(`Failed to read mailbox for agent ${agentId}:`, err);
+            return [agentId, null] as const;
+          }
+        })
+      ),
+      Promise.all(
+        polledHandoffPairs.map(async ({ from, to }) => {
+          // readHandoff returns null for not-yet-written handoffs (the common case).
+          const content = await readHandoff(currentProjectPath, from, to);
+          return [handoffKey(from, to), content] as const;
+        })
+      ),
+    ]);
 
     setMailboxContents((previous) => {
       let changed = false;
@@ -121,8 +169,20 @@ export const SwarmWorkspace: React.FC = () => {
       }
       return changed ? next : previous;
     });
+    setHandoffContents((previous) => {
+      let changed = false;
+      const next = { ...previous };
+      for (const [key, content] of handoffEntries) {
+        if (content === null) continue;
+        if (next[key] !== content) {
+          next[key] = content;
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
     setLoadingMailboxIds(new Set());
-  }, [currentProjectPath, polledAgentIds]);
+  }, [currentProjectPath, polledAgentIds, polledHandoffPairs, readHandoff]);
 
   // Keep the latest fetch callback in a ref so the polling interval below can call it
   // without listing it as a dependency. fetchVisibleMailboxes changes identity whenever
@@ -143,9 +203,41 @@ export const SwarmWorkspace: React.FC = () => {
     }, 5000);
 
     return () => window.clearInterval(interval);
-    // Only re-run when the actual set of polled agents (polledAgentKey) or the project
-    // changes — not on every render that leaves the polled set identical.
-  }, [currentProjectPath, polledAgentKey]);
+    // Only re-run when the actual set of polled agents (polledAgentKey), the set of polled
+    // handoff pairs (polledHandoffKey), or the project changes — not on every render that
+    // leaves the polled sets identical.
+  }, [currentProjectPath, polledAgentKey, polledHandoffKey]);
+
+  // Resolved (content-present) handoffs grouped per agent, split by direction.
+  const handoffsByAgent = useMemo(() => {
+    const map: Record<string, AgentHandoff[]> = {};
+    for (const { from, to } of handoffPairs) {
+      const content = handoffContents[handoffKey(from, to)];
+      if (!content) continue;
+      (map[to] ??= []).push({ from, to, direction: 'in', content });
+      (map[from] ??= []).push({ from, to, direction: 'out', content });
+    }
+    return map;
+  }, [handoffPairs, handoffContents]);
+
+  const handleSendMailbox = async () => {
+    if (!currentProjectPath || !selectedAgentId || !composeText.trim()) return;
+    setSendingMailbox(true);
+    try {
+      // Append the operator note beneath any existing mailbox content so a posted message
+      // doesn't clobber what the agent already wrote.
+      const existing = mailboxContents[selectedAgentId] ?? '';
+      const stamp = `\n\n---\n**Operator message:**\n\n${composeText.trim()}\n`;
+      const next = existing ? `${existing.replace(/\s+$/, '')}${stamp}` : stamp.trimStart();
+      await writeMailbox(currentProjectPath, selectedAgentId, next);
+      setMailboxContents((prev) => ({ ...prev, [selectedAgentId]: next }));
+      setComposeText('');
+    } catch (err) {
+      console.error('Failed to post mailbox message:', err);
+    } finally {
+      setSendingMailbox(false);
+    }
+  };
 
   const getSwarmStatusBadge = (swarmStatus: typeof status) => {
     switch (swarmStatus) {
@@ -322,6 +414,7 @@ export const SwarmWorkspace: React.FC = () => {
                           onStop={handleAgentStop}
                           mailboxContent={mailboxContents[agent.id]}
                           loadingMailbox={loadingMailboxIds.has(agent.id)}
+                          handoffs={handoffsByAgent[agent.id]}
                         />
                       </div>
                     ))}
@@ -346,7 +439,34 @@ export const SwarmWorkspace: React.FC = () => {
                       onStop={handleAgentStop}
                       mailboxContent={mailboxContents[selectedAgent.id]}
                       loadingMailbox={loadingMailboxIds.has(selectedAgent.id)}
+                      handoffs={handoffsByAgent[selectedAgent.id]}
                     />
+
+                    {/* Operator → agent mailbox compose. Posts a message the agent can read
+                        from its mailbox file mid-run. */}
+                    <div style={composeBoxStyle}>
+                      <div style={rightPanelTitleStyle}>
+                        <Edit size={13} style={{ color: 'var(--text-muted)' }} />
+                        <span>Post to {selectedAgent.name}'s mailbox</span>
+                      </div>
+                      <textarea
+                        value={composeText}
+                        onChange={(e) => setComposeText(e.target.value)}
+                        placeholder="Send guidance or context to this agent…"
+                        rows={3}
+                        style={composeTextareaStyle}
+                        disabled={!currentProjectPath}
+                      />
+                      <button
+                        onClick={handleSendMailbox}
+                        className="primary"
+                        style={composeSendBtnStyle}
+                        disabled={!currentProjectPath || !composeText.trim() || sendingMailbox}
+                      >
+                        <Send size={12} />
+                        <span>{sendingMailbox ? 'Sending…' : 'Send to mailbox'}</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div style={emptyInspectStyle}>
@@ -574,6 +694,38 @@ const rightPanelTitleStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: '6px',
   marginBottom: '8px',
+};
+
+const composeBoxStyle: React.CSSProperties = {
+  marginTop: '16px',
+  paddingTop: '16px',
+  borderTop: '1px solid var(--border)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+};
+
+const composeTextareaStyle: React.CSSProperties = {
+  width: '100%',
+  resize: 'vertical',
+  background: 'var(--bg-deep)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '8px 10px',
+  color: 'var(--text-primary)',
+  fontSize: '12px',
+  fontFamily: 'inherit',
+  outline: 'none',
+};
+
+const composeSendBtnStyle: React.CSSProperties = {
+  alignSelf: 'flex-end',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  height: '30px',
+  padding: '0 12px',
+  fontSize: '12px',
 };
 
 const emptyInspectStyle: React.CSSProperties = {

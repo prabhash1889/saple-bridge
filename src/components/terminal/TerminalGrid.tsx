@@ -18,11 +18,19 @@ import { TerminalPane } from './TerminalPane';
 const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
   { value: 'codex', label: 'Codex', icon: 'C' },
   { value: 'claude', label: 'Claude', icon: 'Cl' },
+  { value: 'gemini', label: 'Gemini', icon: 'G' },
+  { value: 'openrouter', label: 'OpenRouter', icon: 'Or' },
+  { value: 'cursor', label: 'Cursor', icon: 'Cr' },
+  { value: 'copilot', label: 'Copilot', icon: 'Co' },
   { value: 'droid', label: 'Droid', icon: 'D' },
   { value: 'pi', label: 'Pi', icon: 'Pi' },
   { value: 'opencode', label: 'OpenCode', icon: 'O' },
   { value: 'custom', label: 'Custom', icon: 'Cu' },
 ];
+
+// How many provider rows the agent picker shows before "Show more". Keeps the initial
+// list compact now that the full provider set is longer.
+const COLLAPSED_PROVIDER_COUNT = 4;
 
 type TerminalProviderOption = AiProvider;
 type SetupStep = 'start' | 'layout' | 'agents';
@@ -89,13 +97,16 @@ const WorkspaceTerminalGrid = memo(WorkspaceTerminalGridComponent);
 interface TerminalGridProps {}
 
 const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
-  const [selectedProvider] = useState<TerminalProviderOption>('codex');
+  const [selectedProvider, setSelectedProvider] = useState<TerminalProviderOption>('codex');
   const [setupStep, setSetupStep] = useState<SetupStep>('start');
   const [selectedLayoutCount, setSelectedLayoutCount] = useState(4);
   const [agentCounts, setAgentCounts] = useState<Record<string, number>>({});
   const [setupComplete, setSetupComplete] = useState(false);
   const [customCommand, setCustomCommand] = useState('');
   const [customCommandCount, setCustomCommandCount] = useState(0);
+  // Whether the agent picker shows every provider or just the first few (toggled by the
+  // "Show more / Show less" control under the provider grid).
+  const [providersExpanded, setProvidersExpanded] = useState(false);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const currentProjectName = useProjectStore((state) => state.currentProjectName);
@@ -137,6 +148,7 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
       setAgentCounts({});
       setCustomCommandCount(0);
       setCustomCommand('');
+      setProvidersExpanded(false);
     }
   }, [setupStep]);
 
@@ -148,6 +160,15 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
       addPane(currentProjectPath, selectedProvider, undefined, undefined, selectedProvider === 'custom' ? customCommand : undefined);
     }
   }, [currentProjectPath, selectedProvider, customCommand, addPane, canAddPane]);
+
+  // "+ Add custom command": immediately launch a pane running the entered custom command
+  // (the same custom-command launch path addPane already supports). Closes the setup wizard
+  // once the first pane exists.
+  const handleAddCustomCommand = useCallback(() => {
+    const command = customCommand.trim();
+    if (!currentProjectPath || !command || !canAddPane()) return;
+    addPane(currentProjectPath, 'custom', undefined, undefined, command);
+  }, [currentProjectPath, customCommand, addPane, canAddPane]);
 
 
   const handleOpenWorkspace = useCallback(async () => {
@@ -170,6 +191,15 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
   const totalAssigned = useMemo(() => {
     return Object.values(agentCounts).reduce((a, b) => a + b, 0) + customCommandCount;
   }, [agentCounts, customCommandCount]);
+
+  // Providers shown in the agent picker. `custom` has its own dedicated section below the
+  // grid, so it's excluded here. When collapsed, only the first few rows are shown.
+  const allSelectableProviders = useMemo(() => AI_PROVIDERS.filter((p) => p.value !== 'custom'), []);
+  const selectableProviders = useMemo(
+    () => (providersExpanded ? allSelectableProviders : allSelectableProviders.slice(0, COLLAPSED_PROVIDER_COUNT)),
+    [providersExpanded, allSelectableProviders],
+  );
+  const hasMoreProviders = allSelectableProviders.length > COLLAPSED_PROVIDER_COUNT;
 
   const handleAgentCountChange = useCallback((provider: string, delta: number) => {
     setAgentCounts(prev => {
@@ -322,10 +352,31 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
                 <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>
                   Create up to {maxLimit} panes for parallel terminal or agent sessions
                 </p>
-                <button onClick={handleAddPane} className="primary" style={{ marginTop: '16px' }}>
-                  <Plus size={16} />
-                  <span>New Pane</span>
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
+                  <select
+                    value={selectedProvider}
+                    onChange={(e) => setSelectedProvider(e.target.value as TerminalProviderOption)}
+                    aria-label="AI provider for new pane"
+                    style={{
+                      height: '34px',
+                      background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      color: 'var(--text-primary)',
+                      padding: '0 10px',
+                    }}
+                  >
+                    {AI_PROVIDERS.map((provider) => (
+                      <option key={provider.value} value={provider.value}>
+                        {provider.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button onClick={handleAddPane} className="primary">
+                    <Plus size={16} />
+                    <span>New Pane</span>
+                  </button>
+                </div>
                 {savedPaneCount > 0 && (
                   <button
                     onClick={() => currentProjectPath && restoreWorkspacePanes(currentProjectPath)}
@@ -491,7 +542,7 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
               </div>
 
               <div className="agent-picker-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
-                {AI_PROVIDERS.filter(p => p.value !== 'custom').map((provider) => {
+                {selectableProviders.map((provider) => {
                   const count = agentCounts[provider.value] || 0;
                   const isChecked = count > 0;
                   return (
@@ -520,9 +571,16 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
                 })}
               </div>
 
-              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-                <button style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer', fontWeight: 600 }}>SHOW LESS</button>
-              </div>
+              {hasMoreProviders && (
+                <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                  <button
+                    onClick={() => setProvidersExpanded((prev) => !prev)}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '12px', letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    {providersExpanded ? 'SHOW LESS' : `SHOW MORE (${allSelectableProviders.length - COLLAPSED_PROVIDER_COUNT})`}
+                  </button>
+                </div>
+              )}
 
               <div className="custom-command-section" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '20px', border: customCommandCount > 0 ? '1px solid var(--text-primary)' : '1px solid transparent' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: '16px' }}>
@@ -546,7 +604,11 @@ const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
               </div>
 
               <div style={{ marginTop: '20px', paddingBottom: '20px' }}>
-                <button style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 500 }}>
+                <button
+                  onClick={handleAddCustomCommand}
+                  disabled={!currentProjectPath || !customCommand.trim() || !canAddPane()}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: customCommand.trim() ? 'pointer' : 'not-allowed', opacity: customCommand.trim() ? 1 : 0.5, fontWeight: 500 }}
+                >
                   <Plus size={14} /> ADD CUSTOM COMMAND
                 </button>
               </div>

@@ -2795,34 +2795,6 @@ button.text-btn:hover {
   font-family: var(--font-mono);
 }
 
-/* Command block indicator */
-.terminal-command-indicator {
-  position: absolute;
-  bottom: 4px;
-  left: 4px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  font-size: 9.5px;
-  color: var(--text-muted);
-  background: rgba(11, 12, 14, 0.8);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  max-width: calc(100% - 8px);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  z-index: 4;
-  pointer-events: none;
-}
-
-.terminal-command-last {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* Terminal toolbar button active state */
 .terminal-toolbar-button.active {
   background: var(--accent-light);

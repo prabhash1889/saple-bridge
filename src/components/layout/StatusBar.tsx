@@ -22,9 +22,10 @@ export const StatusBar: React.FC = () => {
 
   const readinessInfo = useMemo(() => {
     const enabled = providers.filter(p => p.enabled && p.provider !== 'custom');
-    const ready = enabled.filter(p => p.authenticated === true);
-    const authNeeded = enabled.filter(p => p.authenticated === false);
-    const unknown = enabled.filter(p => p.authenticated === null);
+    // A provider is ready with either a stored API key or an active CLI sign-in.
+    const ready = enabled.filter(p => p.authenticated === true || p.signedIn === true);
+    const authNeeded = enabled.filter(p => p.authenticated === false && p.signedIn !== true);
+    const unknown = enabled.filter(p => p.authenticated === null && p.signedIn !== true);
     return { ready: ready.length, authNeeded: authNeeded.length, unknown: unknown.length, total: enabled.length };
   }, [providers]);
 

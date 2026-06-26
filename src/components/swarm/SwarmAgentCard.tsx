@@ -1,6 +1,16 @@
 import React, { memo } from 'react';
-import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText } from 'lucide-react';
+import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
+import { MarkdownPreview } from '../editor/MarkdownPreview';
+
+// A resolved handoff file involving this agent. `direction` is relative to the agent the
+// card renders: `in` = another agent handed off to this one, `out` = this one handed off.
+export interface AgentHandoff {
+  from: string;
+  to: string;
+  direction: 'in' | 'out';
+  content: string;
+}
 
 interface SwarmAgentCardProps {
   agent: SwarmAgent;
@@ -11,7 +21,15 @@ interface SwarmAgentCardProps {
   onStop: (agentId: string) => void;
   mailboxContent?: string;
   loadingMailbox?: boolean;
+  handoffs?: AgentHandoff[];
 }
+
+// Handoff files are JSON; wrap in a fenced block so the markdown viewer renders them as a
+// code block rather than mangling the braces into a paragraph.
+const asMarkdown = (content: string) => {
+  const trimmed = content.trim();
+  return '```json\n' + trimmed + '\n```';
+};
 
 const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   agent,
@@ -21,6 +39,7 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   onStop,
   mailboxContent = '',
   loadingMailbox = false,
+  handoffs = [],
 }) => {
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
@@ -93,6 +112,30 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
             )}
           </div>
         </div>
+
+        {/* Handoffs Section — JSON files this agent sent/received from its dependency edges. */}
+        {handoffs.length > 0 && (
+          <div style={mailboxSectionStyle}>
+            <div style={mailboxHeaderStyle}>
+              <div style={sectionTitleStyle}>Handoffs</div>
+            </div>
+            <div style={handoffListStyle}>
+              {handoffs.map((h) => (
+                <div key={`${h.from}->${h.to}`} style={handoffItemStyle}>
+                  <div style={handoffLabelStyle}>
+                    <ArrowRightLeft size={11} style={{ color: 'var(--accent)' }} />
+                    <span>
+                      {h.direction === 'in' ? `${h.from} → this` : `this → ${h.to}`}
+                    </span>
+                  </div>
+                  <div style={handoffViewerStyle}>
+                    <MarkdownPreview content={asMarkdown(h.content)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer Controls */}
@@ -287,6 +330,37 @@ const mailboxPreStyle: React.CSSProperties = {
   margin: 0,
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-all',
+};
+
+const handoffListStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+};
+
+const handoffItemStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
+};
+
+const handoffLabelStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  fontSize: '10.5px',
+  fontWeight: 600,
+  color: 'var(--text-secondary)',
+};
+
+const handoffViewerStyle: React.CSSProperties = {
+  backgroundColor: 'var(--bg-deep)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '8px 10px',
+  maxHeight: '160px',
+  overflowY: 'auto',
+  fontSize: '11px',
 };
 
 const cardFooterStyle: React.CSSProperties = {

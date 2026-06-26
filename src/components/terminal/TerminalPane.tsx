@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -10,7 +10,6 @@ import {
   Minimize2,
   X,
   XCircle,
-  Terminal as TerminalIcon,
 } from 'lucide-react';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
@@ -378,7 +377,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const webglAddonRef = useRef<WebglAddon | null>(null);
   const webglReleaseRef = useRef<(() => void) | null>(null);
-  const [showBlockInfo, setShowBlockInfo] = useState(false);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const setActiveView = useProjectStore((state) => state.setActiveView);
@@ -448,8 +446,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   }, [fontId, sessionId]);
 
   const isFocused = focusedPaneId === sessionId;
-  const commandBlocks = sessionInfo?.commandBlocks || [];
-  const lastCommand = sessionInfo?.lastCommandInput || '';
   const canCreatePane = Boolean(currentProjectPath && canAddPane());
 
   // Drop this pane's WebGL renderer (if any) and free its slot in the global context
@@ -839,7 +835,9 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const handleAddPane = () => {
     const cwd = sessionInfo?.workspacePath || sessionInfo?.cwd || currentProjectPath;
     if (!cwd || !canAddPane()) return;
-    void addPane(cwd, sessionInfo?.aiProvider, undefined, undefined, sessionInfo?.customCommand);
+    // Inherit the parent's model too (matches splitPane's inheritance) — passing undefined
+    // here dropped the model and relaunched the provider's default.
+    void addPane(cwd, sessionInfo?.aiProvider, sessionInfo?.model, undefined, sessionInfo?.customCommand);
   };
 
   const handleRemovePane = () => {
@@ -910,8 +908,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         '--terminal-pane-color': paneColor,
       } as React.CSSProperties}
       data-focused={isFocused ? 'true' : 'false'}
-      onMouseEnter={() => setShowBlockInfo(true)}
-      onMouseLeave={() => setShowBlockInfo(false)}
     >
       <div className="terminal-pane-titlebar">
         <div className="terminal-pane-title" title={paneTitle}>
@@ -950,14 +946,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         ref={containerRef}
         className="terminal-xterm-container"
       />
-
-      {showBlockInfo && commandBlocks.length > 0 && (
-        <div className="terminal-command-indicator">
-          <TerminalIcon size={10} />
-          <span>{commandBlocks.length} cmd</span>
-          {lastCommand && <span className="terminal-command-last" title={lastCommand}>: {lastCommand.slice(0, 40)}</span>}
-        </div>
-      )}
 
       {isWaitingReview && linkedTask && (
         <div className="terminal-review-overlay">
