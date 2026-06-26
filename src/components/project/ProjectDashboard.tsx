@@ -92,6 +92,7 @@ export const ProjectDashboard: React.FC = () => {
     workspaceHistory,
     clearWorkspaceHistory,
     openWorkspace,
+    addWorkspace,
     setActiveView,
     workspaceSummary,
     workspaceLoading,
@@ -124,7 +125,9 @@ export const ProjectDashboard: React.FC = () => {
     try {
       const selectedPath = await invoke<string | null>('select_directory');
       if (selectedPath) {
-        await openWorkspace(selectedPath);
+        // Always add a new instance, so the same folder can be opened multiple
+        // times (numbered in the sidebar), matching the sidebar "+" button.
+        await addWorkspace(selectedPath);
         setActiveView(targetView);
       }
     } catch (error) {

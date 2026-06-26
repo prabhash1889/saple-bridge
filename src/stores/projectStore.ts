@@ -31,7 +31,8 @@ export interface WorkspaceSummary {
 // A workspace instance is a single sidebar entry. The same folder can be opened
 // multiple times: each opening is a distinct instance with its own `id` (used to
 // key independent terminal sets) while sharing the on-disk `.saple/*` state that is
-// keyed by `path`. Duplicate openings get a numeric suffix in `name`.
+// keyed by `path`. Duplicate openings get a parenthesized suffix in `name` (e.g.
+// "myrepo", "myrepo (2)", "myrepo (3)").
 export interface WorkspaceInstance {
   id: string;
   path: string;
@@ -53,14 +54,15 @@ const basename = (path: string) => {
 };
 
 // Display name for a new instance of `path`: the bare basename when it's the first
-// opening, otherwise the basename suffixed with the lowest free number (1, 2, ...).
+// opening, otherwise the basename with the lowest free parenthesized number
+// ("base (2)", "base (3)", ...).
 const makeWorkspaceName = (path: string, existing: WorkspaceInstance[]) => {
   const base = basename(path);
   const taken = new Set(existing.filter((w) => w.path === path).map((w) => w.name));
   if (!taken.has(base)) return base;
-  let n = 1;
-  while (taken.has(`${base} ${n}`)) n += 1;
-  return `${base} ${n}`;
+  let n = 2;
+  while (taken.has(`${base} (${n})`)) n += 1;
+  return `${base} (${n})`;
 };
 
 interface ProjectState {
