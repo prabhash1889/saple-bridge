@@ -2,10 +2,12 @@ import React from 'react';
 import { X, Play, Terminal, CheckCircle2, Shield, FileText, CheckSquare, Edit, AlertCircle } from 'lucide-react';
 import { Task, useKanbanStore } from '../../stores/kanbanStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
+import { useReviewStore } from '../../stores/reviewStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
 import { formatShortDateTime } from '../../lib/date';
+import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
 
@@ -19,7 +21,7 @@ interface TaskDetailDrawerProps {
 export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen, onClose, onEdit }) => {
   const { currentProjectPath } = useProjectStore();
   const { updateTask } = useKanbanStore();
-  const { sessions: agentSessions, setSessionStatus } = useAgentSessionStore();
+  const { sessions: agentSessions } = useAgentSessionStore();
   const { sessions: terminalSessions, addPane, setFocusedPane } = useTerminalStore();
 
   if (!isOpen || !task) return null;
@@ -69,44 +71,30 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
     return { color, backgroundColor: bg };
   };
 
+  // Both buttons route through the same flow ReviewWorkspace uses: submit_review_decision
+  // atomically records the decision in .saple/review/<taskId>.json and updates the task +
+  // session, then we re-read tasks so the board reflects the moved card.
   const handleApprove = async () => {
     if (!currentProjectPath) return;
     try {
-      // 1. Move task to Done
-      await updateTask(currentProjectPath, task.id, {
-        column: 'done'
-      });
-
-      // 2. Set Agent Session status to done
-      if (task.sessionId) {
-        setSessionStatus(task.sessionId, 'done');
-        await useAgentSessionStore.getState().saveSessions(currentProjectPath);
-      }
-
+      await useReviewStore.getState().submitReviewDecision(currentProjectPath, task.id, 'approve');
+      await useKanbanStore.getState().loadTasks(currentProjectPath, true);
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Approve failed:', err);
+      useNotificationStore.getState().error(`Approve failed: ${err.toString()}`);
     }
   };
 
   const handleReject = async () => {
     if (!currentProjectPath) return;
     try {
-      // 1. Move task back to Progress
-      await updateTask(currentProjectPath, task.id, {
-        column: 'progress'
-      });
-
-      // 2. Set Agent Session status back to starting / running or stopped?
-      // Rejections put it back to progress to let the agent work again or allow user adjustments
-      if (task.sessionId) {
-        setSessionStatus(task.sessionId, 'failed');
-        await useAgentSessionStore.getState().saveSessions(currentProjectPath);
-      }
-
+      await useReviewStore.getState().submitReviewDecision(currentProjectPath, task.id, 'reject');
+      await useKanbanStore.getState().loadTasks(currentProjectPath, true);
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Reject failed:', err);
+      useNotificationStore.getState().error(`Reject failed: ${err.toString()}`);
     }
   };
 
@@ -130,7 +118,7 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
     }
 
     try {
-      const sessionId = task.sessionId || Math.random().toString(36).substr(2, 9);
+      const sessionId = task.sessionId || createId('agent');
       const promptPath = `.saple/agents/prompts/${sessionId}.md`;
 
       const systemPrompt = task.agentConfig?.systemPrompt || 'You are an autonomous coding builder.';
