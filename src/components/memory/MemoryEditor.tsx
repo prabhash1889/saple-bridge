@@ -8,7 +8,10 @@ import { useNotificationStore } from '../../stores/notificationStore';
 import { MemoryMarkdown } from './markdown/MemoryMarkdown';
 
 export const MemoryEditor: React.FC = () => {
-  const { currentProjectPath } = useProjectStore();
+  const { currentProjectPath, workspaceConfig } = useProjectStore();
+  // The on-disk memory dir depends on the workspace's memory mode (see get_memory_dir in
+  // memory.rs): bridge-compatible stores under `.bridgememory/`, otherwise `.saple/memory/`.
+  const memoryPathPrefix = workspaceConfig?.memoryMode === 'bridge-compatible' ? '.bridgememory/' : '.saple/memory/';
   const { files, loadFiles } = useFileStore();
   const {
     activeNote,
@@ -330,7 +333,7 @@ export const MemoryEditor: React.FC = () => {
           <div>
             <label style={sidebarLabelStyle}>File Path</label>
             <div style={filePathBoxStyle}>
-              {activeNote.filePath ? `.saple/memory/${activeNote.filePath}` : 'Not saved yet'}
+              {activeNote.filePath ? `${memoryPathPrefix}${activeNote.filePath}` : 'Not saved yet'}
             </div>
           </div>
 
