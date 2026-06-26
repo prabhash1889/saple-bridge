@@ -306,6 +306,16 @@ fn truncate_output(mut output: String) -> String {
     output
 }
 
+/// TRUST BOUNDARY: `command_str` is executed verbatim in the operator's shell
+/// (`run_shell_with_timeout`) within `project_path`. This is *intentional* — review verification
+/// runs the user's own build/test commands (e.g. `npm test`, `cargo check`), so an allowlist would
+/// break the core dev-tool use case. There is no sandbox here.
+///
+/// The contained risk: a malicious project could ship a tasks/review record whose suggested
+/// verification command runs arbitrary code if the operator clicks "Run". Mitigations: the command
+/// is operator-initiated (never auto-run), the working dir is the project, and execution is
+/// time-boxed (`VERIFICATION_TIMEOUT`) with truncated output. The review UI surfaces the exact
+/// command before it runs so the operator can inspect it — keep that affordance.
 fn run_verification_command_inner(
     project_path: String,
     task_id: String,

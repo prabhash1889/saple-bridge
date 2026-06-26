@@ -366,6 +366,11 @@ export const ReviewWorkspace: React.FC = () => {
     }
   };
 
+  // TRUST BOUNDARY: `verificationCmd` is executed verbatim in the operator's shell by the Rust
+  // `run_verification_command` (see review.rs). This is intentional — it runs the user's own
+  // build/test commands — but it is unsandboxed. The command is shown in the editable input and
+  // the test-output header below before it runs, so the operator can inspect it first. Keep that
+  // visibility; never auto-run a command sourced from project files.
   const handleRunVerification = async () => {
     if (!currentProjectPath || !activeTaskId) return;
     setRunningVerification(true);

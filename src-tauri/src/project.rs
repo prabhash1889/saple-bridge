@@ -400,9 +400,9 @@ fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
             existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
         }
         let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
-        fs::write(&mcp_json_path, merged).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&mcp_json_path, merged.as_bytes())?;
     } else {
-        fs::write(&mcp_json_path, &config_str).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&mcp_json_path, config_str.as_bytes())?;
     }
     
     // Also write mcp_config.json (same content)
@@ -419,9 +419,9 @@ fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
             existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
         }
         let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
-        fs::write(&mcp_config_path, merged).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&mcp_config_path, merged.as_bytes())?;
     } else {
-        fs::write(&mcp_config_path, &config_str).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&mcp_config_path, config_str.as_bytes())?;
     }
     
     Ok(format!("MCP config installed for project at {}", project_path))
@@ -435,16 +435,19 @@ pub async fn check_mcp_status(project_path: String) -> Result<McpStatus, String>
 }
 
 fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
-    let base = Path::new(&project_path);
+    // Route both paths through `get_project_file_path` for containment parity with the rest of
+    // the module, rather than joining onto the raw project path.
+    let mcp_json_path = get_project_file_path(&project_path, ".mcp.json")?;
+    let mcp_config_path = get_project_file_path(&project_path, "mcp_config.json")?;
 
-    let has_mcp_json = base.join(".mcp.json").exists();
-    let has_mcp_config_json = base.join("mcp_config.json").exists();
+    let has_mcp_json = mcp_json_path.exists();
+    let has_mcp_config_json = mcp_config_path.exists();
     let mut saple_memory_configured = false;
     let mut other_servers = Vec::new();
-    
+
     // Check .mcp.json
     if has_mcp_json {
-        let content = fs::read_to_string(base.join(".mcp.json")).map_err(|e| e.to_string())?;
+        let content = fs::read_to_string(&mcp_json_path).map_err(|e| e.to_string())?;
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(servers) = val.get("mcpServers").and_then(|s| s.as_object()) {
                 for key in servers.keys() {
@@ -460,7 +463,7 @@ fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
     
     // Check mcp_config.json too
     if has_mcp_config_json {
-        let content = fs::read_to_string(base.join("mcp_config.json")).map_err(|e| e.to_string())?;
+        let content = fs::read_to_string(&mcp_config_path).map_err(|e| e.to_string())?;
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(servers) = val.get("mcpServers").and_then(|s| s.as_object()) {
                 for key in servers.keys() {

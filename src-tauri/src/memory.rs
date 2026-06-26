@@ -469,6 +469,12 @@ pub async fn restore_memory_snapshot(project_path: String, name: String) -> Resu
 }
 
 fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(), String> {
+    // Validate the name the same way `create_memory_snapshot_inner` does so a crafted `name`
+    // (e.g. `../../etc`) can't make the join escape the snapshots dir.
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Err("Snapshot name must contain only alphanumeric characters, dashes, or underscores".to_string());
+    }
+
     let snapshot_dir = Path::new(&project_path).join(".saple").join("snapshots").join(&name);
     if !snapshot_dir.exists() {
         return Err(format!("Snapshot {} not found", name));
@@ -568,14 +574,15 @@ pub(crate) fn delete_memory_file_inner(project_path: String, file_path: String) 
         vec![Path::new(&project_path).join(".saple").join("memory")]
     };
     
-    let canonical_base = Path::new(&project_path).canonicalize().map_err(|e| e.to_string())?;
-    
     for dir in delete_dirs {
         let full_path = dir.join(&file_path);
         if full_path.exists() {
+            // Contain to the *memory dir* (not the project root): a crafted `file_path` like
+            // `../tasks.json` must not be able to delete other project files.
+            let canonical_base = dir.canonicalize().map_err(|e| e.to_string())?;
             let canonical_target = full_path.canonicalize().map_err(|e| e.to_string())?;
             if !canonical_target.starts_with(&canonical_base) {
-                return Err("Access denied: path is outside the project workspace".to_string());
+                return Err("Access denied: path is outside the memory directory".to_string());
             }
             fs::remove_file(full_path).map_err(|e| e.to_string())?;
         }
@@ -593,13 +600,14 @@ pub async fn read_memory_file(project_path: String, file_path: String) -> Result
 fn read_memory_file_inner(project_path: String, file_path: String) -> Result<String, String> {
     let memory_dir = get_memory_dir(&project_path);
     let full_path = memory_dir.join(&file_path);
-    
-    let canonical_base = Path::new(&project_path).canonicalize().map_err(|e| e.to_string())?;
-    
+
     if full_path.exists() {
+        // Contain to the *memory dir* (not the project root): a crafted `file_path` like
+        // `../tasks.json` must not be able to read other project files.
+        let canonical_base = memory_dir.canonicalize().map_err(|e| e.to_string())?;
         let canonical_target = full_path.canonicalize().map_err(|e| e.to_string())?;
         if !canonical_target.starts_with(&canonical_base) {
-            return Err("Access denied: path is outside the project workspace".to_string());
+            return Err("Access denied: path is outside the memory directory".to_string());
         }
         fs::read_to_string(full_path).map_err(|e| e.to_string())
     } else {
@@ -1093,6 +1101,44 @@ Inline `[[inline-code]]` should not count either.
         assert!(!masked.contains("jwt"));
         assert!(masked.contains("see"));
         assert!(masked.contains("here"));
+    }
+
+    #[test]
+    fn read_memory_file_rejects_traversal_outside_memory_dir() {
+        let dir = std::env::temp_dir().join(format!("saple-mem-trav-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        let project = dir.canonicalize().unwrap_or(dir.clone());
+        fs::create_dir_all(project.join(".saple").join("memory")).unwrap();
+        // A secret living at the project root, *outside* the memory dir.
+        fs::write(project.join("secret.txt"), "top secret").unwrap();
+
+        let err = read_memory_file_inner(
+            project.to_string_lossy().to_string(),
+            "../../secret.txt".to_string(),
+        )
+        .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {}", err);
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn delete_memory_file_rejects_traversal_outside_memory_dir() {
+        let dir = std::env::temp_dir().join(format!("saple-mem-deltrav-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        let project = dir.canonicalize().unwrap_or(dir.clone());
+        fs::create_dir_all(project.join(".saple").join("memory")).unwrap();
+        let secret = project.join("secret.txt");
+        fs::write(&secret, "top secret").unwrap();
+
+        let err = delete_memory_file_inner(
+            project.to_string_lossy().to_string(),
+            "../../secret.txt".to_string(),
+        )
+        .unwrap_err();
+        assert!(err.contains("Access denied"), "got: {}", err);
+        // The file outside the memory dir must survive.
+        assert!(secret.exists(), "traversal delete must not remove files outside the memory dir");
+
+        let _ = fs::remove_dir_all(&project);
     }
 
     #[test]

@@ -190,7 +190,7 @@ fn write_text_file_inner(
     }
     
     let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
-    fs::write(full_path, content).map_err(|e| e.to_string())
+    crate::fs_lock::atomic_write(&full_path, content.as_bytes())
 }
 
 fn open_in_external_editor_inner(project_path: String, file_path: String) -> Result<(), String> {
