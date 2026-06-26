@@ -238,7 +238,14 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
     }
   },
 
-  setActiveNote: (note) => set({ activeNote: note, activeNoteContent: note ? get().activeNoteContent : '' }),
+  // Keep the loaded body only when selecting an existing, saved note. For a blank
+  // new note (no filePath/id) or a cleared selection, reset the editor so it doesn't
+  // pre-fill with the previously open note's content.
+  setActiveNote: (note) =>
+    set({
+      activeNote: note,
+      activeNoteContent: note && (note.filePath || note.id) ? get().activeNoteContent : '',
+    }),
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSelectedCategory: (category) => set({ selectedCategory: category }),
 }));
