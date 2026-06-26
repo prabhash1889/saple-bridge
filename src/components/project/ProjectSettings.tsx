@@ -17,6 +17,7 @@ import {
   X,
   Play,
   FileText,
+  LogIn,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../stores/projectStore';
@@ -47,6 +48,20 @@ interface McpStatus {
 }
 
 const KEYCHAIN_SERVICE_PREFIX = 'saple_provider_';
+
+// The Keychain tab's "OpenAI API Key (for Codex)" slot writes the SAME keychain entry the Codex
+// provider card uses (`saple_provider_codex_api_key`), so a key saved in either place reflects in
+// both. Previously this tab used the legacy `openai_api_key` service, which silently diverged from
+// the provider cards.
+const CODEX_KEY_SERVICE = `${KEYCHAIN_SERVICE_PREFIX}codex_api_key`;
+
+// Providers that support subscription "Sign In" via their CLI's interactive login,
+// instead of (or in addition to) an API key. The value is the command launched in a
+// terminal pane so the user can complete the browser/OAuth flow with their paid plan.
+const SIGN_IN_COMMANDS: Partial<Record<string, string>> = {
+  claude: 'claude',
+  codex: 'codex login',
+};
 
 const mcpToolsListStyle: React.CSSProperties = {
   maxHeight: '240px',
@@ -159,7 +174,7 @@ export const ProjectSettings: React.FC = () => {
 
   const checkApiKeyPresence = async () => {
     try {
-      const saved = await invoke<boolean>('has_api_key', { service: 'openai_api_key' });
+      const saved = await invoke<boolean>('has_api_key', { service: CODEX_KEY_SERVICE });
       if (saved) {
         setIsKeySaved(true);
         setApiKey('•'.repeat(32));
@@ -181,10 +196,12 @@ export const ProjectSettings: React.FC = () => {
     setKeySaveStatus('idle');
     setKeyErrorMessage('');
     try {
-      await invoke('set_api_key', { service: 'openai_api_key', key: apiKey });
+      await invoke('set_api_key', { service: CODEX_KEY_SERVICE, key: apiKey });
       setKeySaveStatus('success');
       setIsKeySaved(true);
       setApiKey('•'.repeat(32));
+      // Reflect the new key in the provider cards' readiness/"Key saved" badge immediately.
+      refreshReadiness();
       setTimeout(() => setKeySaveStatus('idle'), 3000);
     } catch (err: any) {
       setKeySaveStatus('error');
@@ -197,9 +214,10 @@ export const ProjectSettings: React.FC = () => {
   const handleKeyDelete = async () => {
     setKeyLoading(true);
     try {
-      await invoke('delete_api_key', { service: 'openai_api_key' });
+      await invoke('delete_api_key', { service: CODEX_KEY_SERVICE });
       setIsKeySaved(false);
       setApiKey('');
+      refreshReadiness();
     } catch {
       // ignore
     } finally {
@@ -236,6 +254,24 @@ export const ProjectSettings: React.FC = () => {
       // ignore
     } finally {
       setProviderKeySaving(prev => ({ ...prev, [provider]: false }));
+    }
+  };
+
+  const handleProviderSignIn = async (provider: string) => {
+    const command = SIGN_IN_COMMANDS[provider];
+    if (!command) return;
+    if (!currentProjectPath) {
+      errorNotification('Open a workspace first', 'Sign-in runs in a terminal inside a workspace.');
+      return;
+    }
+    try {
+      // Launch the CLI's interactive login as a custom-command terminal, then jump to it so the
+      // user can complete the subscription/OAuth flow. No API key is injected for this pane.
+      await useTerminalStore.getState().addPane(currentProjectPath, 'custom', undefined, undefined, command);
+      useProjectStore.getState().setActiveView('terminals');
+      successNotification(`Launching ${provider} sign-in`, 'Complete the login in the new terminal.');
+    } catch (err: any) {
+      errorNotification('Failed to start sign-in', err?.toString?.());
     }
   };
 
@@ -325,7 +361,7 @@ export const ProjectSettings: React.FC = () => {
               <span className="section-title">OS Keychain Storage</span>
             </div>
             <p className="section-desc">
-              API keys are stored in your OS native credential manager (Windows Credential Manager / macOS Keychain). Never stored in plaintext files.
+              API keys are stored in your OS native credential manager (Windows Credential Manager / macOS Keychain). Never stored in plaintext files. This is the same key slot as the <strong>Codex</strong> card under the Providers tab — saving here updates both.
             </p>
             <form onSubmit={handleKeySave} className="settings-form">
               <div className="input-group">
@@ -372,26 +408,47 @@ export const ProjectSettings: React.FC = () => {
             </p>
             <div className="provider-grid">
               {providers.map((p) => (
-                <div key={p.provider} className={`provider-card ${p.authenticated === true ? 'provider-ready' : ''}`}>
+                <div key={p.provider} className={`provider-card ${p.authenticated === true || p.signedIn === true ? 'provider-ready' : ''}`}>
                   <div className="provider-card-header">
                     <div className="provider-card-title">
                       <strong>{p.label}</strong>
                       <code className="provider-cli">{p.cliCommand || 'No CLI command'}</code>
                     </div>
-                    <span className={`provider-status-dot ${p.authenticated === true ? 'ready' : p.authenticated === false ? 'missing' : 'pending'}`} />
+                    <span className={`provider-status-dot ${p.authenticated === true || p.signedIn === true ? 'ready' : p.authenticated === false ? 'missing' : 'pending'}`} />
                   </div>
 
                   <div className="provider-card-body">
+                    {SIGN_IN_COMMANDS[p.provider] && (
+                      <div className="provider-signin-note" style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: 1.4 }}>
+                        On a paid {p.label} subscription? Use <strong>Sign In</strong> to log in with your plan — no API key required. An API key below is optional and only needed for pay-as-you-go billing.
+                      </div>
+                    )}
                     <div className="provider-detail-row">
                       <span className="provider-detail-label">Auth</span>
                       {p.authenticated === true ? (
                         <span className="status-ok"><CheckCircle size={12} /> Key saved</span>
+                      ) : p.signedIn === true ? (
+                        <span className="status-ok"><CheckCircle size={12} /> Signed in</span>
                       ) : p.authenticated === false ? (
                         <span className="status-error"><XCircle size={12} /> No key</span>
                       ) : (
                         <span className="provider-detail-pending">Checking...</span>
                       )}
                     </div>
+                    {p.cliCommand && (
+                      <div className="provider-detail-row">
+                        <span className="provider-detail-label">Installed</span>
+                        {p.installed === true ? (
+                          <span className="status-ok" title={p.version || undefined}>
+                            <CheckCircle size={12} /> Installed{p.version ? ` (${p.version})` : ''}
+                          </span>
+                        ) : p.installed === false ? (
+                          <span className="status-error"><XCircle size={12} /> Not found</span>
+                        ) : (
+                          <span className="provider-detail-pending">Checking...</span>
+                        )}
+                      </div>
+                    )}
                     <div className="provider-detail-row">
                       <span className="provider-detail-label">Default model</span>
                       <span className="provider-detail-value">{p.defaultModel || '—'}</span>
@@ -449,10 +506,20 @@ export const ProjectSettings: React.FC = () => {
                         <RefreshCw size={13} />
                         <span>{testRunning[p.provider] ? 'Testing...' : 'Test'}</span>
                       </button>
+                      {SIGN_IN_COMMANDS[p.provider] && (
+                        <button
+                          onClick={() => handleProviderSignIn(p.provider)}
+                          className="provider-action-btn"
+                          title={`Sign in to ${p.label} with your subscription`}
+                        >
+                          <LogIn size={13} />
+                          <span>Sign In</span>
+                        </button>
+                      )}
                     </div>
                     {providerKeyStatus[p.provider] === 'success' && <span className="status-ok"><CheckCircle size={12} /> Key saved</span>}
                     {testResults[p.provider] === 'success' && <span className="status-ok"><CheckCircle size={12} /> Connection OK</span>}
-                    {testResults[p.provider] === 'error' && <span className="status-error"><AlertCircle size={12} /> Connection failed</span>}
+                    {testResults[p.provider] === 'error' && <span className="status-error"><AlertCircle size={12} /> No API key or sign-in found</span>}
                   </div>
                 </div>
               ))}
@@ -496,6 +563,7 @@ export const ProjectSettings: React.FC = () => {
                     <option value="codex">Codex</option>
                     <option value="claude">Claude</option>
                     <option value="gemini">Gemini</option>
+                    <option value="openrouter">OpenRouter</option>
                     <option value="pi">Pi</option>
                     <option value="opencode">OpenCode</option>
                     <option value="custom">Custom</option>
@@ -923,18 +991,27 @@ export const ProjectSettings: React.FC = () => {
 
                 <div style={{ marginTop: '16px' }}>
                   <h4 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
-                    Provider Keychain Status
+                    OS Keychain Backend
                   </h4>
+                  <p className="section-desc" style={{ marginTop: 0, marginBottom: '8px' }}>
+                    A single probe of the OS credential store. This reflects the keychain backend's
+                    availability — not whether any individual provider key is saved. For per-provider
+                    key presence, see the &quot;Key saved&quot; badge on each Providers card.
+                  </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
-                    {diagResult.keychains.map((k: any) => (
-                      <div key={k.provider} className="diag-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg-surface-light)', borderRadius: 'var(--radius-sm)' }}>
-                        <span style={{ textTransform: 'capitalize' }}>{k.provider} Keychain</span>
-                        <span className={k.status === 'ok' ? 'status-ok' : 'status-error'} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {k.status === 'ok' ? <CheckCircle size={12} /> : <XCircle size={12} />}
-                          <span>{k.status === 'ok' ? 'Ready' : `Error: ${k.status}`}</span>
-                        </span>
-                      </div>
-                    ))}
+                    {(() => {
+                      const status: string = diagResult.keychains?.[0]?.status ?? 'unknown';
+                      const ok = status === 'ok';
+                      return (
+                        <div className="diag-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg-surface-light)', borderRadius: 'var(--radius-sm)' }}>
+                          <span>Keychain backend</span>
+                          <span className={ok ? 'status-ok' : 'status-error'} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {ok ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                            <span>{ok ? 'Ready' : `Error: ${status}`}</span>
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
