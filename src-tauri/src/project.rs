@@ -109,6 +109,10 @@ pub struct McpStatus {
     pub has_mcp_config_json: bool,
     pub saple_memory_configured: bool,
     pub other_servers: Vec<String>,
+    /// True when a `saple-memory` entry exists but still points at the old embedded server
+    /// (`command` is the Bridge binary, or `args` begins with the retired `"mcp"` subcommand).
+    /// Such configs launch the GUI instead of the MCP server now — the UI should prompt a reinstall.
+    pub legacy_config: bool,
 }
 
 fn default_model_by_provider() -> HashMap<String, String> {
@@ -376,16 +380,44 @@ pub async fn install_mcp_config(project_path: String) -> Result<String, String> 
         .map_err(|e| e.to_string())?
 }
 
+/// Absolute path to the bundled `saple-mcp` sidecar binary.
+///
+/// The MCP server now lives in the standalone `saple-mcp` crate and ships as a Tauri sidecar.
+/// External clients (Claude Code) launch it directly from `.mcp.json`, so this must be a concrete
+/// on-disk path, not a Tauri Command handle.
+///   * **dev** — the triple-suffixed staging file under `src-tauri/binaries/` that
+///     `scripts/prepare-sidecar.mjs` produces (TARGET_TRIPLE / SAPLE_BRIDGE_MANIFEST_DIR are baked
+///     in by build.rs).
+///   * **release** — `saple-mcp[.exe]` alongside the app binary (Tauri strips the triple at bundle
+///     time; on macOS this is `…app/Contents/MacOS/`).
+fn sidecar_binary_path() -> Result<PathBuf, String> {
+    let ext = if cfg!(windows) { ".exe" } else { "" };
+
+    #[cfg(debug_assertions)]
+    {
+        let triple = env!("TARGET_TRIPLE");
+        let manifest_dir = env!("SAPLE_BRIDGE_MANIFEST_DIR"); // = src-tauri/
+        let name = format!("saple-mcp-{}{}", triple, ext);
+        Ok(Path::new(manifest_dir).join("binaries").join(name))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let mut dir = std::env::current_exe()
+            .map_err(|e| format!("Failed to get binary path: {}", e))?;
+        dir.pop(); // strip the app binary file name -> its directory
+        Ok(dir.join(format!("saple-mcp{}", ext)))
+    }
+}
+
 fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
-    let binary_path = std::env::current_exe()
-        .map_err(|e| format!("Failed to get binary path: {}", e))?;
+    let binary_path = sidecar_binary_path()?;
     let binary_str = binary_path.to_string_lossy().to_string();
-    
+
     let mcp_config = serde_json::json!({
         "mcpServers": {
             "saple-memory": {
                 "command": binary_str,
-                "args": ["mcp", &project_path]
+                "args": [&project_path]
             }
         }
     });
@@ -433,11 +465,93 @@ fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
     Ok(format!("MCP config installed for project at {}", project_path))
 }
 
+/// Preview the sidecar's tool catalog (Settings → MCP). The MCP server is no longer in-process, so
+/// spawn `saple-mcp`, send one `tools/list` request, and return its `result`. Keeps Bridge ignorant
+/// of the catalog contents (no drift). `.no_window()` suppresses the console flash on Windows.
+#[tauri::command]
+pub async fn test_mcp_tools(project_path: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::{BufRead, Write};
+        use std::process::Stdio;
+
+        let bin = sidecar_binary_path()?;
+        if !bin.exists() {
+            return Err(format!(
+                "saple-mcp sidecar not found at {}. Run `npm run prepare-sidecar`.",
+                bin.display()
+            ));
+        }
+
+        let mut child = Command::new(&bin)
+            .arg(&project_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .no_window()
+            .spawn()
+            .map_err(|e| format!("Failed to spawn saple-mcp: {}", e))?;
+
+        // `tools/list` needs no prior `initialize` in this server, so skip the handshake.
+        let req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
+        child.stdin.take()
+            .ok_or("Failed to open saple-mcp stdin")?
+            .write_all(req.as_bytes())
+            .map_err(|e| e.to_string())?;
+
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().ok_or("Failed to open saple-mcp stdout")?)
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let resp: serde_json::Value = serde_json::from_str(line.trim())
+            .map_err(|e| format!("Invalid response from saple-mcp: {}", e))?;
+        resp.get("result").cloned().ok_or_else(|| {
+            resp["error"]["message"].as_str().unwrap_or("No result in response").to_string()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn check_mcp_status(project_path: String) -> Result<McpStatus, String> {
     tauri::async_runtime::spawn_blocking(move || check_mcp_status_inner(project_path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Whether a parsed MCP config's `saple-memory` entry is a pre-sidecar (legacy) one: its `command`
+/// resolves to the Bridge binary, or its `args` still lead with the retired `"mcp"` subcommand.
+/// Those configs now launch the GUI instead of the MCP server, so they need a reinstall.
+fn saple_memory_is_legacy(config: &serde_json::Value) -> bool {
+    let entry = match config.get("mcpServers").and_then(|s| s.get("saple-memory")) {
+        Some(e) => e,
+        None => return false,
+    };
+
+    // Old args began with the "mcp" subcommand: ["mcp", "<project>"]. New args are ["<project>"].
+    if entry.get("args").and_then(|a| a.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_str()) == Some("mcp")
+    {
+        return true;
+    }
+
+    // Old command was the Bridge executable itself (re-invoked in "mcp" mode).
+    if let Some(cmd) = entry.get("command").and_then(|c| c.as_str()) {
+        let stem = std::path::Path::new(cmd)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if stem.contains("saple-bridge") || stem.contains("saple_bridge") {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
@@ -450,6 +564,7 @@ fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
     let has_mcp_config_json = mcp_config_path.exists();
     let mut saple_memory_configured = false;
     let mut other_servers = Vec::new();
+    let mut legacy_config = false;
 
     // Check .mcp.json
     if has_mcp_json {
@@ -464,9 +579,10 @@ fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
                     }
                 }
             }
+            legacy_config |= saple_memory_is_legacy(&val);
         }
     }
-    
+
     // Check mcp_config.json too
     if has_mcp_config_json {
         let content = fs::read_to_string(&mcp_config_path).map_err(|e| e.to_string())?;
@@ -480,14 +596,16 @@ fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
                     }
                 }
             }
+            legacy_config |= saple_memory_is_legacy(&val);
         }
     }
-    
+
     Ok(McpStatus {
         has_mcp_json,
         has_mcp_config_json,
         saple_memory_configured,
         other_servers,
+        legacy_config,
     })
 }
 
@@ -546,5 +664,33 @@ mod tests {
         let p = get_project_file_path(dir.to_str().unwrap(), &long_rel).unwrap();
         assert!(p.starts_with(&dir));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detects_legacy_mcp_command_and_args() {
+        // Old config: command is the Bridge binary, args lead with the "mcp" subcommand.
+        let legacy_cmd = serde_json::json!({
+            "mcpServers": { "saple-memory": {
+                "command": "C:\\Program Files\\Saple Bridge\\saple-bridge.exe",
+                "args": ["mcp", "C:\\proj"]
+            }}
+        });
+        assert!(saple_memory_is_legacy(&legacy_cmd), "bridge-binary command should be legacy");
+
+        // Even with a renamed command, a leading "mcp" arg marks it legacy.
+        let legacy_args = serde_json::json!({
+            "mcpServers": { "saple-memory": { "command": "saple-mcp", "args": ["mcp", "/proj"] }}
+        });
+        assert!(saple_memory_is_legacy(&legacy_args), "leading mcp arg should be legacy");
+
+        // New config: standalone sidecar, args are just the project path.
+        let current = serde_json::json!({
+            "mcpServers": { "saple-memory": { "command": "/opt/app/saple-mcp", "args": ["/proj"] }}
+        });
+        assert!(!saple_memory_is_legacy(&current), "sidecar config must not be flagged");
+
+        // No saple-memory entry at all.
+        let none = serde_json::json!({ "mcpServers": { "other": { "command": "x", "args": [] }}});
+        assert!(!saple_memory_is_legacy(&none));
     }
 }

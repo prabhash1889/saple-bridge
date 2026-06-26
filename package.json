@@ -1,13 +1,14 @@
 {
   "name": "saple-bridge",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
     "tauri": "node scripts/tauri.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "node scripts/tauri.mjs build"

@@ -2,7 +2,6 @@ mod pty;
 mod project;
 mod keychain;
 mod memory;
-mod mcp;
 mod git;
 mod review;
 mod swarm;
@@ -10,10 +9,6 @@ mod files;
 mod diagnostics;
 mod process_ext;
 mod fs_lock;
-
-pub fn run_mcp(project_path: String) {
-    mcp::run_mcp_server(project_path);
-}
 
 #[tauri::command]
 fn select_directory() -> Option<String> {
@@ -53,6 +48,7 @@ pub fn run() {
             project::get_workspace_summary,
             project::install_mcp_config,
             project::check_mcp_status,
+            project::test_mcp_tools,
             keychain::set_api_key,
             keychain::has_api_key,
             keychain::delete_api_key,
@@ -66,7 +62,6 @@ pub fn run() {
             memory::save_memory_node,
             memory::get_unlinked_mentions,
             memory::add_memory_link,
-            mcp::test_mcp_tools,
             git::git_diff_file,
             review::create_review_record,
             review::read_review_record,

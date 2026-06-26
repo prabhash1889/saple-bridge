@@ -1,9 +1,9 @@
 //! Atomic, serialized file writes for `.saple/*` project state.
 //!
 //! Two writers can target the same project file at once: the renderer (Kanban/swarm saves) and
-//! the stdio MCP server (running as a separate `saple-bridge mcp <path>` process) while an agent
-//! edits tasks. A naive `fs::write` can interleave or expose a half-written file, silently
-//! corrupting `tasks.json` / `state.json`.
+//! the stdio MCP server (the standalone `saple-mcp <path>` sidecar) while an agent edits tasks. A
+//! naive `fs::write` can interleave or expose a half-written file, silently corrupting
+//! `tasks.json` / `state.json`.
 //!
 //! `atomic_write` fixes both failure modes:
 //!   * **Per-path mutex** — serializes concurrent writers to the same file *within this process*

@@ -13,9 +13,13 @@ and **macOS 11+** — the PTY layer uses `powershell.exe` on Windows and the use
 
 ```powershell
 npm install
-npm run tauri dev                 # Tauri dev
+npm run tauri dev                 # Tauri dev (auto-builds+stages the saple-mcp sidecar first)
 npm run build                     # tsc + vite
-npm run tauri build               # installer
+npm run tauri build               # installer (auto-builds+stages the saple-mcp sidecar first)
+npm run prepare-sidecar           # (manual) rebuild+stage the saple-mcp sidecar on its own
+
+# Bare `cargo check`/`cargo test` on src-tauri need the sidecar staged once (externalBin check):
+#   npm run prepare-sidecar
 
 cargo check --manifest-path src-tauri/Cargo.toml
 cd src-tauri; cargo test
@@ -30,14 +34,16 @@ cd src-tauri; cargo test
 3. Kanban reads/writes `.saple/tasks.json`; Memory reads/writes `.saple/memory/**/*.md`.
 4. Swarm reads/writes `.saple/swarm/state.json`.
 5. API keys in OS keychain (`keychain.rs` via `keyring`).
-6. Bridge exposes the `saple-memory` stdio MCP server (`mcp.rs`, registered via
-   `mcp_config.json` / `.mcp.json`): memory-graph tools, Kanban task tools, read-only swarm
-   status, plus MCP `prompts` (onboarding) and `resources` (notes as `saple-memory://<id>`).
+6. The `saple-memory` MCP server lives in the standalone **`../saple-mcp`** repo and ships as a
+   Tauri **sidecar** (`bundle.externalBin`). Bridge stages it with `scripts/prepare-sidecar.mjs`,
+   resolves its path via `sidecar_binary_path()` in `project.rs`, and writes `.mcp.json` /
+   `mcp_config.json` so external clients launch it directly (memory-graph + Kanban task + read-only
+   swarm tools, plus MCP `prompts`/`resources`). Bridge itself no longer hosts the server.
 7. Theme (light/dark/system) lives in `themeStore.ts`; a `data-theme` attribute switches CSS
    variables, with a pre-paint script in `index.html` to avoid FOUC.
 Key files: `src/App.tsx`, `src/components/layout/Sidebar.tsx`,
 `src/stores/{projectStore,terminalStore,kanbanStore,memoryStore,swarmStore,themeStore}.ts`,
-`src-tauri/src/{lib,pty,project,memory,mcp,keychain}.rs`.
+`src-tauri/src/{lib,pty,project,memory,keychain}.rs`. The MCP server is in `../saple-mcp`.
 
 ## Rules
 
@@ -72,7 +78,7 @@ Key files: `src/App.tsx`, `src/components/layout/Sidebar.tsx`,
 Before modifying code, read the local `AGENTS.md`:
 - `src/AGENTS.md` — AI workspace frontend (views, Zustand stores).
 - `src/components/AGENTS.md` — View + widget layer.
-- `src-tauri/src/AGENTS.md` — PTY sessions, filesystem, keychain, MCP server.
+- `src-tauri/src/AGENTS.md` — PTY sessions, filesystem, keychain, MCP sidecar wiring.
 
-> Split out of the Saple monorepo (`apps/saple-bridge`). This repo owns the `saple-memory` MCP
-> server consumed by Bridge itself.
+> The `saple-memory` MCP server lives in the sibling `../saple-mcp` repo and is consumed by Bridge
+> as a bundled Tauri sidecar.

@@ -45,6 +45,8 @@ interface McpStatus {
   hasMcpConfigJson: boolean;
   sapleMemoryConfigured: boolean;
   otherServers: string[];
+  /** saple-memory entry still points at the old embedded server — needs a reinstall. */
+  legacyConfig: boolean;
 }
 
 const KEYCHAIN_SERVICE_PREFIX = 'saple_provider_';
@@ -637,6 +639,22 @@ export const ProjectSettings: React.FC = () => {
                         <span>Other servers preserved: {mcpStatus.otherServers.join(', ')}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {mcpStatus?.legacyConfig && (
+                  <div className="mcp-legacy-warning" role="alert" style={{
+                    display: 'flex', gap: '8px', alignItems: 'flex-start',
+                    padding: '10px 12px', marginBottom: '12px', borderRadius: '8px',
+                    border: '1px solid var(--warning, #b58900)',
+                    background: 'color-mix(in srgb, var(--warning, #b58900) 12%, transparent)',
+                  }}>
+                    <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '1px', color: 'var(--warning, #b58900)' }} />
+                    <span style={{ fontSize: '12px', lineHeight: 1.5 }}>
+                      This project's MCP config points at the <strong>old embedded server</strong>, which no longer
+                      runs (it now launches the Bridge window instead). Click <strong>Install Saple MCP Config</strong>
+                      below to update it to the standalone <strong>saple-mcp</strong> server.
+                    </span>
                   </div>
                 )}
 
