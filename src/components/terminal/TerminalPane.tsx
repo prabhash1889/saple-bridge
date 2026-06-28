@@ -356,6 +356,64 @@ const copyTextToClipboard = async (text: string) => {
   }
 };
 
+// Inert zeroed dimensions used while the terminal has no attached renderer (see
+// guardRenderServiceDimensions). Shape mirrors xterm's IRenderDimensions so any consumer
+// (Viewport._sync reads css.canvas.height / css.cell.height) gets harmless zeros instead
+// of dereferencing a missing renderer.
+const EMPTY_RENDER_DIMENSIONS = {
+  css: { canvas: { width: 0, height: 0 }, cell: { width: 0, height: 0 } },
+  device: {
+    canvas: { width: 0, height: 0 },
+    cell: { width: 0, height: 0 },
+    char: { width: 0, height: 0, left: 0, top: 0 },
+  },
+};
+
+// Root-cause fix for the intermittent terminal render artifacts (blank bands / dropped rows).
+//
+// xterm v6's RenderService.dimensions getter is the one renderer accessor that uses a
+// non-null assertion (`this._renderer.value!.dimensions`) instead of guarding like every
+// other method in that class. Viewport._sync() — queued on every scroll via an animation-
+// frame refresh callback — reads that getter after only checking the *service* exists, not
+// that a *renderer* is attached. When the queued _sync fires during a renderer teardown/swap
+// (pane dispose, focus/visibility change, WebGL load/unload), `_renderer.value` is undefined
+// and the getter throws. The throw propagates out of RenderDebouncer._innerRefresh, aborting
+// the remaining refresh callbacks for that frame — so the actual row painting never runs and
+// the viewport is left with unpainted (blank) bands until the next successful frame.
+//
+// We can't change xterm's bundled source, so we harden the getter on our own terminal
+// instance: wrap it so a missing renderer yields inert zeroed dimensions instead of throwing.
+// Uses only `_core._renderService`, the same internal contract the official WebGL addon relies
+// on, and degrades to a no-op if xterm ever changes that shape.
+const guardRenderServiceDimensions = (terminal: Terminal) => {
+  try {
+    const renderService = (terminal as unknown as {
+      _core?: { _renderService?: object };
+    })._core?._renderService;
+    if (!renderService) return;
+
+    const proto = Object.getPrototypeOf(renderService);
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'dimensions');
+    const originalGet = descriptor?.get;
+    if (!originalGet) return;
+
+    Object.defineProperty(renderService, 'dimensions', {
+      configurable: true,
+      get() {
+        try {
+          return originalGet.call(this);
+        } catch {
+          // No renderer attached (mid teardown/swap) — hand back inert dimensions so the
+          // in-flight refresh callback completes instead of throwing and aborting the paint.
+          return EMPTY_RENDER_DIMENSIONS;
+        }
+      },
+    });
+  } catch {
+    // Internal shape changed — leave xterm untouched (we simply lose the hardening).
+  }
+};
+
 interface TerminalScrollSnapshot {
   viewportY: number;
   wasAtBottom: boolean;
@@ -606,6 +664,11 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
 
     term.open(containerRef.current);
 
+    // open() attaches the renderer; harden its dimensions getter so a later renderer
+    // teardown/swap can't make a queued Viewport._sync() throw mid-refresh (see
+    // guardRenderServiceDimensions) — the cause of the intermittent blank-band artifacts.
+    guardRenderServiceDimensions(term);
+
     // The WebGL renderer is acquired lazily and only while this pane's workspace is the one
     // on screen (see the `active` effect below). Loading it here at mount — for every pane in
     // every open workspace — would exhaust the browser's hard WebGL context cap and thrash the
@@ -697,21 +760,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     const titleDisposable = term.onTitleChange((title) => {
       const clean = title.trim();
       useTerminalStore.getState().updateSession(sessionId, { dynamicTitle: clean || undefined });
-    });
-
-    // Force a full repaint after the viewport scrolls. Both the WebGL and DOM renderers
-    // track dirty rows and, on a scroll, occasionally mark rows clean that actually moved —
-    // leaving blank bands and stale ghost glyphs that only clear on the next unrelated paint
-    // (the intermittent "scroll artifacts"). Repainting every row after a scroll closes that
-    // gap. Coalesced to one repaint per frame so continuous wheel scrolling doesn't queue a
-    // refresh per event; a queued frame is cancelled on dispose.
-    let scrollRefreshRaf: number | null = null;
-    const scrollDisposable = term.onScroll(() => {
-      if (scrollRefreshRaf !== null) return;
-      scrollRefreshRaf = window.requestAnimationFrame(() => {
-        scrollRefreshRaf = null;
-        terminalRef.current?.refresh(0, term.rows - 1);
-      });
     });
 
     const terminalState = useTerminalStore.getState();
@@ -835,10 +883,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         window.clearTimeout(settleTimeoutRef.current);
       }
       resizeObserver.disconnect();
-      if (scrollRefreshRaf !== null) {
-        window.cancelAnimationFrame(scrollRefreshRaf);
-      }
-      scrollDisposable.dispose();
       dataDisposable.dispose();
       titleDisposable.dispose();
       unsubscribeOutput();
