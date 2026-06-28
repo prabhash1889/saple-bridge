@@ -699,6 +699,21 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       useTerminalStore.getState().updateSession(sessionId, { dynamicTitle: clean || undefined });
     });
 
+    // Force a full repaint after the viewport scrolls. Both the WebGL and DOM renderers
+    // track dirty rows and, on a scroll, occasionally mark rows clean that actually moved —
+    // leaving blank bands and stale ghost glyphs that only clear on the next unrelated paint
+    // (the intermittent "scroll artifacts"). Repainting every row after a scroll closes that
+    // gap. Coalesced to one repaint per frame so continuous wheel scrolling doesn't queue a
+    // refresh per event; a queued frame is cancelled on dispose.
+    let scrollRefreshRaf: number | null = null;
+    const scrollDisposable = term.onScroll(() => {
+      if (scrollRefreshRaf !== null) return;
+      scrollRefreshRaf = window.requestAnimationFrame(() => {
+        scrollRefreshRaf = null;
+        terminalRef.current?.refresh(0, term.rows - 1);
+      });
+    });
+
     const terminalState = useTerminalStore.getState();
     const bufferedOutput = terminalState.getBufferedOutput(sessionId);
     let lastOutputSequence = terminalState.getLatestSequence(sessionId);
@@ -820,6 +835,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         window.clearTimeout(settleTimeoutRef.current);
       }
       resizeObserver.disconnect();
+      if (scrollRefreshRaf !== null) {
+        window.cancelAnimationFrame(scrollRefreshRaf);
+      }
+      scrollDisposable.dispose();
       dataDisposable.dispose();
       titleDisposable.dispose();
       unsubscribeOutput();
