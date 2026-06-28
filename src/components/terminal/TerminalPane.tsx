@@ -265,6 +265,25 @@ function getTerminalTheme() {
 // number of WebGL-accelerated panes; panes beyond the cap use the DOM renderer.
 const MAX_WEBGL_CONTEXTS = 8;
 let activeWebglContexts = 0;
+
+// --- TEMP WebGL artifact diagnostics -------------------------------------------------
+// Instrumentation to correlate the intermittent terminal render artifacts with WebGL
+// context churn (acquire / release / evict / context-loss / DOM fallback). When you see
+// an artifact, note the time and check the console: a `context-loss` or `evict` event
+// immediately before it confirms the GPU-context juggling is the cause. Remove this block
+// (and the webglDiag() calls below) once diagnosed.
+const WEBGL_DIAG = true;
+const webglDiag = (event: string, sessionId: string, extra?: Record<string, unknown>) => {
+  if (!WEBGL_DIAG) return;
+  // performance.now() is monotonic and avoids the Date.now() restrictions elsewhere.
+  const t = Math.round(performance.now());
+  // eslint-disable-next-line no-console
+  console.log(
+    `[webgl-diag +${t}ms] ${event} pane=${sessionId} active=${activeWebglContexts}/${MAX_WEBGL_CONTEXTS} holders=${webglHolders.size}`,
+    extra ?? '',
+  );
+};
+// -------------------------------------------------------------------------------------
 // Panes that currently hold a WebGL context, mapped to their `unloadWebgl` release fn. When the
 // context budget is spent, a newly-focused pane reclaims a context from a non-focused holder via
 // this registry, so the pane the user is actually looking at always gets the GPU renderer even in
@@ -452,6 +471,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   // budget. Idempotent: safe to call from the `active` effect, the context-loss handler,
   // and the unmount cleanup without double-counting.
   const unloadWebgl = useCallback(() => {
+    const held = webglHolders.has(sessionId) || webglAddonRef.current !== null;
     webglHolders.delete(sessionId);
     if (webglReleaseRef.current) {
       webglReleaseRef.current();
@@ -465,6 +485,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       }
       webglAddonRef.current = null;
     }
+    if (held) webglDiag('release', sessionId);
   }, [sessionId]);
 
   // Attach a WebGL renderer to the live terminal, unless one is already attached or the
@@ -484,12 +505,14 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
           )
         : undefined;
       if (!victim) {
+        webglDiag('cap-reached-dom-fallback', sessionId, { isPriority });
         console.warn(
           `[terminal ${sessionId}] WebGL context cap (${MAX_WEBGL_CONTEXTS}) reached; this pane uses the slower DOM renderer.`,
         );
         return;
       }
       // Release the victim's context (drops it back to the DOM renderer), freeing a slot.
+      webglDiag('evict', sessionId, { victim });
       webglHolders.get(victim)?.();
       if (activeWebglContexts >= MAX_WEBGL_CONTEXTS) return;
     }
@@ -508,13 +531,16 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         // The browser reclaimed the GL context (e.g. the process-wide cap was hit). Drop the
         // addon and free the slot so the pane falls back to the DOM renderer instead of
         // sitting on a dead, frozen canvas.
+        webglDiag('context-loss', sessionId);
         unloadWebgl();
       });
       term.loadAddon(webglAddon);
       term.refresh(0, term.rows - 1);
+      webglDiag('acquire', sessionId);
     } catch {
       // WebGL not supported / failed to init — fall back to the DOM renderer.
       unloadWebgl();
+      webglDiag('init-failed-dom-fallback', sessionId);
       console.warn(
         `[terminal ${sessionId}] WebGL renderer unavailable; using the slower DOM renderer.`,
       );
