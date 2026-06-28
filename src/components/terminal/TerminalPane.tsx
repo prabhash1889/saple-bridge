@@ -273,6 +273,18 @@ let activeWebglContexts = 0;
 // immediately before it confirms the GPU-context juggling is the cause. Remove this block
 // (and the webglDiag() calls below) once diagnosed.
 const WEBGL_DIAG = true;
+// Decisive A/B test: force every pane onto xterm's DOM renderer (skip WebGL entirely).
+// Toggle live from the DevTools console WITHOUT a rebuild, then reload the window:
+//   localStorage.setItem('saple-disable-webgl', '1')  // DOM renderer everywhere
+//   localStorage.removeItem('saple-disable-webgl')     // back to WebGL
+// If the artifacts disappear with WebGL disabled, the GPU-context juggling is the cause.
+const isWebglDisabled = () => {
+  try {
+    return localStorage.getItem('saple-disable-webgl') === '1';
+  } catch {
+    return false;
+  }
+};
 const webglDiag = (event: string, sessionId: string, extra?: Record<string, unknown>) => {
   if (!WEBGL_DIAG) return;
   // performance.now() is monotonic and avoids the Date.now() restrictions elsewhere.
@@ -493,6 +505,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const loadWebgl = useCallback(() => {
     const term = terminalRef.current;
     if (!term || webglAddonRef.current) return;
+    if (isWebglDisabled()) {
+      webglDiag('disabled-dom-renderer', sessionId);
+      return;
+    }
     if (activeWebglContexts >= MAX_WEBGL_CONTEXTS) {
       // Budget spent. Only the focused/maximized pane (the one actually on screen) may reclaim a
       // context; any other pane keeps the DOM renderer. Evicting a non-focused holder frees a slot
