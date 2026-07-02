@@ -701,7 +701,16 @@ export const useSwarmStore = create<SwarmState>()(
       }
     }),
     {
-      name: 'saple-bridge-swarm-store-v2'
+      name: 'saple-bridge-swarm-store-v2',
+      // Persist only what localStorage is the source of truth for: user template presets and
+      // the last template choice. Run state (agents, mission, status) is re-read from
+      // .saple/swarm/state.json on every project open (loadSwarmState force=true), and
+      // persisting it all — long system prompts included — risks QuotaExceededError, which
+      // silently breaks persistence entirely.
+      partialize: (state) => ({
+        templates: state.templates,
+        activeTemplateId: state.activeTemplateId,
+      }),
     }
   )
 );

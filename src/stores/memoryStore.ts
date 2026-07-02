@@ -54,6 +54,11 @@ interface MemoryState {
   setSelectedCategory: (category: string) => void;
 }
 
+// Currency token for loadNote: rapid note clicks fire overlapping reads, and without this an
+// older (slower) response could land after a newer one and overwrite the editor with stale
+// content. Only the latest request may commit its result.
+let loadNoteSeq = 0;
+
 export const useMemoryStore = create<MemoryState>((set, get) => ({
   nodes: [],
   edges: [],
@@ -84,13 +89,15 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   },
 
   loadNote: async (projectPath, node) => {
+    const requestId = ++loadNoteSeq;
     set({ loading: true, error: null });
     try {
       const content = await invoke<string>('read_memory_file', {
         projectPath,
         filePath: node.filePath,
       });
-      
+      if (requestId !== loadNoteSeq) return; // a newer loadNote superseded this one
+
       // Strip off YAML frontmatter to get clean editing content
       let cleanContent = content;
       if (content.startsWith('---')) {
@@ -118,6 +125,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
         get().loadUnlinkedMentions(projectPath, node.id);
       }
     } catch (err: any) {
+      if (requestId !== loadNoteSeq) return;
       set({ error: `Failed to load note: ${err.toString()}`, loading: false });
     }
   },

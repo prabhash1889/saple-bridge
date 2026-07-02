@@ -30,6 +30,10 @@ interface NotificationState {
   error: (message: string, description?: string, opts?: Partial<AppNotification>) => string;
 }
 
+// Persistent notifications (errors) are never auto-dismissed, so without a cap a long session
+// with a failing background poll accumulates entries without bound. Keep only the newest.
+const MAX_NOTIFICATIONS = 50;
+
 export const useNotificationStore = create<NotificationState>((set, get) => ({
   notifications: [],
   addNotification: (notification) => {
@@ -40,7 +44,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       createdAt: new Date().toISOString(),
     };
     set((state) => ({
-      notifications: [...state.notifications, newNotification],
+      notifications: [...state.notifications, newNotification].slice(-MAX_NOTIFICATIONS),
     }));
     return id;
   },

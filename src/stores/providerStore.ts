@@ -54,6 +54,10 @@ const DEFAULT_PROVIDERS: ProviderEntry[] = [
   { provider: 'custom', label: 'Custom', cliCommand: '', defaultModel: '', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
 ];
 
+// Currency token: overlapping refreshes (e.g. settings open + a save triggering another pass)
+// resolve in arbitrary order; only the latest may commit, or an older snapshot wins.
+let refreshSeq = 0;
+
 export const useProviderStore = create<ProviderState>()(
   (set, get) => ({
     providers: DEFAULT_PROVIDERS.map(p => ({ ...p })),
@@ -61,6 +65,7 @@ export const useProviderStore = create<ProviderState>()(
     testResults: {},
 
     refreshReadiness: async () => {
+      const requestId = ++refreshSeq;
       const providers = get().providers.map(async (p) => {
         // Providers with no dedicated CLI (openrouter is API-key/env only; custom is
         // user-supplied) skip CLI detection and report `installed: null` (N/A) so they aren't
@@ -85,6 +90,7 @@ export const useProviderStore = create<ProviderState>()(
       });
 
       const resolved = await Promise.all(providers);
+      if (requestId !== refreshSeq) return; // superseded by a newer refresh
       set({ providers: resolved });
     },
 

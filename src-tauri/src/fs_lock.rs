@@ -26,9 +26,32 @@ fn locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
     LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Two spellings of the same file (relative vs absolute, `..` segments, Windows case) must share
+/// one mutex, so key on the canonical path. The target may not exist yet — canonicalize the
+/// parent and re-attach the file name; fall back to the raw path if even that fails.
+fn lock_key(path: &Path) -> String {
+    let canonical = path.canonicalize().or_else(|_| match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => parent.canonicalize().map(|p| p.join(name)),
+        _ => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no parent")),
+    });
+    canonical
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Above this size, unheld locks are pruned on the next lookup so the registry cannot grow
+/// without bound over a long session (one entry per distinct file ever written).
+const LOCK_MAP_PRUNE_THRESHOLD: usize = 256;
+
 fn lock_for(path: &Path) -> Arc<Mutex<()>> {
-    let key = path.to_string_lossy().to_string();
+    let key = lock_key(path);
     let mut map = locks().lock().unwrap();
+    if map.len() > LOCK_MAP_PRUNE_THRESHOLD {
+        // strong_count == 1 means only the map itself holds the lock — no writer is using it.
+        // A writer that grabbed a clone before this prune keeps its Arc alive and is retained.
+        map.retain(|_, lock| Arc::strong_count(lock) > 1);
+    }
     map.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
 }
 

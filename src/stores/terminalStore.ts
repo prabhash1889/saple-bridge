@@ -643,6 +643,9 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         paneOutputLengths.delete(paneId);
         paneLatestSequence.delete(paneId);
         paneSignalTails.delete(paneId);
+        // Normally emptied by subscribers' unsubscribe cleanup, but an error-boundary unmount
+        // can skip that — drop the pane's listener set here so it can't leak.
+        outputListeners.delete(paneId);
 
         const nextFocus = resolveFocusedPane(newPanes, state.workspaceFocusedPaneIds[workspaceKey]);
         const nextMaximized = state.workspaceMaximizedPaneIds[workspaceKey] === paneId
@@ -720,6 +723,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           paneOutputLengths.delete(paneId);
           paneLatestSequence.delete(paneId);
           paneSignalTails.delete(paneId);
+          outputListeners.delete(paneId);
         }
 
         const newWorkspacePanes = { ...current.workspacePanes };
