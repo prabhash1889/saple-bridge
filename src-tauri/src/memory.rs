@@ -632,6 +632,25 @@ pub async fn save_memory_node(
     .map_err(|e| e.to_string())?
 }
 
+/// Category and id become single path components of the note file. Reject anything that could
+/// traverse out of the memory dir (separators, `..`, drive colons) instead of trying to
+/// sanitize it away — `clean_*` only normalizes spaces/case, it is not a security boundary.
+fn validate_note_path_component(value: &str, what: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains("..")
+        || value.contains(':')
+        || value.contains('\0')
+    {
+        return Err(format!(
+            "Invalid {} '{}': must not be empty or contain path separators / traversal sequences",
+            what, value
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn save_memory_node_inner(
     project_path: String,
     id: String,
@@ -642,9 +661,11 @@ pub(crate) fn save_memory_node_inner(
     content: String,
 ) -> Result<MemoryNode, String> {
     let mode = get_memory_mode(&project_path);
-    
+
     let clean_category = category.trim().to_lowercase().replace(' ', "-");
     let clean_id = id.trim().to_lowercase().replace(' ', "-");
+    validate_note_path_component(&clean_category, "category")?;
+    validate_note_path_component(&clean_id, "id")?;
     let relative_path = format!("{}/{}.md", clean_category, clean_id);
     
     let read_dir = if mode == "bridge-compatible" {
@@ -713,24 +734,33 @@ pub(crate) fn save_memory_node_inner(
         vec![Path::new(&project_path).join(".saple").join("memory")]
     };
     
-    let canonical_base = Path::new(&project_path).canonicalize().map_err(|e| e.to_string())?;
-    
     for dir in &write_dirs {
+        // Contain to the *memory dir* (not the project root), mirroring the delete/read paths.
+        // The component validation above already blocks traversal; the canonicalize check stays
+        // as defense-in-depth (e.g. against symlinked category dirs).
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let canonical_dir = dir.canonicalize().map_err(|e| e.to_string())?;
         let full_path = dir.join(&relative_path);
         if let Some(parent) = full_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             let canonical_parent = parent.canonicalize().map_err(|e| e.to_string())?;
-            if !canonical_parent.starts_with(&canonical_base) {
-                return Err("Access denied: path is outside the project workspace".to_string());
+            if !canonical_parent.starts_with(&canonical_dir) {
+                return Err("Access denied: path is outside the memory directory".to_string());
             }
         }
         crate::fs_lock::atomic_write(&full_path, full_content.as_bytes())?;
     }
-    
+
     if let Some(old_rel) = old_relative_path {
-        if old_rel != relative_path {
+        // `old_rel`'s category component comes from the old file's frontmatter — validate it too
+        // so a crafted note can't steer the cleanup `remove_file` outside the memory dir.
+        if old_rel != relative_path
+            && old_rel
+                .split('/')
+                .all(|part| validate_note_path_component(part, "path").is_ok())
+        {
             for dir in &write_dirs {
                 let old_path = dir.join(&old_rel);
                 if old_path.exists() {
@@ -1137,6 +1167,47 @@ Inline `[[inline-code]]` should not count either.
         assert!(err.contains("Access denied"), "got: {}", err);
         // The file outside the memory dir must survive.
         assert!(secret.exists(), "traversal delete must not remove files outside the memory dir");
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn save_memory_node_rejects_traversal_in_category_and_id() {
+        let dir = std::env::temp_dir().join(format!("saple-mem-savetrav-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join(".saple").join("memory")).unwrap();
+        let project = dir.canonicalize().unwrap();
+        let save = |category: &str, id: &str| {
+            save_memory_node_inner(
+                project.to_string_lossy().to_string(),
+                id.to_string(),
+                "Title".to_string(),
+                category.to_string(),
+                vec![],
+                vec![],
+                "body".to_string(),
+            )
+        };
+
+        for (category, id) in [
+            ("a/../../.saple", "x"),      // escapes memory dir, stays inside project
+            ("../../outside", "x"),        // escapes project entirely
+            ("..", "x"),
+            ("general", "../tasks"),
+            ("gen\\eral", "x"),
+            ("c:evil", "x"),
+            ("", "x"),
+            ("general", ""),
+        ] {
+            let err = save(category, id).err().expect("save should be rejected");
+            assert!(err.contains("Invalid"), "({category:?}, {id:?}) got: {err}");
+        }
+
+        // A normal save still works and lands inside the memory dir.
+        let node = save("General Notes", "My Note").unwrap();
+        assert_eq!(node.file_path, "general-notes/my-note.md");
+        assert!(project.join(".saple/memory/general-notes/my-note.md").is_file());
+        // Nothing was created outside the memory dir by the rejected attempts.
+        assert!(!project.join(".saple/a").exists());
 
         let _ = fs::remove_dir_all(&project);
     }
