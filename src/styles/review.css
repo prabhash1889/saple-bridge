@@ -1,0 +1,388 @@
+/* Review Room Styles */
+/* Column template lives in the earlier .review-layout rule so the responsive
+   media queries (which collapse to a single column) win on narrow widths. */
+.review-layout {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.review-room-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.review-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  max-height: calc(100% - 40px);
+}
+
+.review-queue-item {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.review-queue-item:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--text-muted);
+}
+
+.review-queue-item.active {
+  background: rgba(93, 95, 239, 0.1);
+  border-color: var(--accent);
+}
+
+.review-detail-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  gap: 16px;
+}
+
+.review-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.review-tabs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.review-tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.file-list-container {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+
+.file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.file-stage-checkbox {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Stage-and-commit bar under the changed-files list in the Review room. */
+.review-commit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.review-commit-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.review-commit-input:focus {
+  border-color: var(--accent);
+}
+
+.review-commit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.review-commit-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.file-item:last-child {
+  border-bottom: none;
+}
+
+.file-item:hover {
+  background: var(--bg-surface-hover);
+}
+
+.file-item.active {
+  background: rgba(93, 95, 239, 0.08);
+}
+
+.file-path {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.file-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-ins {
+  color: var(--color-success);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.badge-del {
+  color: var(--color-danger);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.diff-viewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  padding: 12px;
+}
+
+/* Diff / Full-file sub-tab toggle */
+.diff-subtab-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.diff-subtab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--bg-surface-active);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.diff-subtab-btn:hover {
+  color: var(--text-primary);
+}
+
+.diff-subtab-btn.active {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Acceptance-criteria marker (informational, not a completion state) */
+.criteria-marker {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* Sticky action footer in the review side panel */
+.review-side-footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  background: var(--bg-surface);
+}
+
+.diff-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.diff-line-added {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-success);
+  display: block;
+}
+
+.diff-line-deleted {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+  display: block;
+}
+
+.diff-line-meta {
+  color: var(--color-info);
+  font-weight: bold;
+  display: block;
+}
+
+.diff-line-normal {
+  color: var(--text-secondary);
+  display: block;
+}
+
+.test-output-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.test-output-terminal {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-y: auto;
+}
+
+.verification-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.verification-input-row input {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.side-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.review-criteria-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.review-criteria-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.rejection-notes-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.rejection-notes-box textarea {
+  width: 100%;
+  height: 80px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  resize: none;
+}
+
+.review-action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.warning-banner {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--color-warning);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

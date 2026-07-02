@@ -1,0 +1,253 @@
+/* ============================================================
+   Swarm Room
+   Interactive elements use real CSS classes so :hover glow
+   works (inline styles can't). Themed around --accent-swarm
+   (A78BFA → rgb 167, 139, 250).
+   ============================================================ */
+
+/* The components mark spinners with className="spin" but only
+   .spinning was defined — alias it so swarm activity icons spin. */
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* --- Template cards (left rail "options") --- */
+.swarm-template-card {
+  padding: 12px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-surface-light);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.18s ease, background-color 0.18s ease,
+    box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+/* Accent strip that wipes in on hover/selection */
+.swarm-template-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent-swarm);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.swarm-template-card:hover:not(.is-disabled) {
+  border-color: rgba(167, 139, 250, 0.55);
+  background: var(--bg-surface-active);
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.18),
+    0 6px 20px rgba(167, 139, 250, 0.12);
+  transform: translateY(-1px);
+}
+
+.swarm-template-card:hover:not(.is-disabled)::before {
+  opacity: 0.7;
+  transform: scaleY(1);
+}
+
+.swarm-template-card.is-selected {
+  border-color: var(--accent-swarm);
+  background: rgba(167, 139, 250, 0.08);
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.3),
+    0 0 22px rgba(167, 139, 250, 0.14);
+}
+
+.swarm-template-card.is-selected::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.swarm-template-card.is-disabled {
+  cursor: not-allowed;
+}
+
+.swarm-template-card.is-disabled:not(.is-selected) {
+  opacity: 0.5;
+}
+
+.swarm-template-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.swarm-template-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* --- Ghost / secondary buttons in the rail --- */
+.swarm-ghost-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-top: 4px;
+  transition: border-color 0.16s ease, color 0.16s ease,
+    background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.swarm-ghost-btn:hover {
+  border-color: rgba(167, 139, 250, 0.5);
+  color: var(--text-primary);
+  background: rgba(167, 139, 250, 0.06);
+  box-shadow: 0 0 14px rgba(167, 139, 250, 0.1);
+}
+
+/* --- View tabs (Dependency Graph / Agent Cards Grid) --- */
+.swarm-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 0.16s ease, background-color 0.16s ease,
+    border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.swarm-tab:hover:not(.is-active) {
+  color: var(--text-secondary);
+  background: rgba(167, 139, 250, 0.06);
+  border-color: rgba(167, 139, 250, 0.25);
+}
+
+.swarm-tab.is-active {
+  background: rgba(167, 139, 250, 0.12);
+  border-color: rgba(167, 139, 250, 0.4);
+  color: var(--text-primary);
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.12);
+}
+
+.swarm-tab.is-active svg {
+  color: var(--accent-swarm);
+}
+
+/* --- Graph node cards --- */
+/* --node-border carries the per-status color via inline style. */
+.swarm-node-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--node-border, var(--border));
+  border-radius: var(--radius-md);
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.16s ease, transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.swarm-node-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--node-border, var(--accent-swarm)) 80%, white 0%);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35),
+    0 0 16px color-mix(in srgb, var(--node-border, var(--accent-swarm)) 35%, transparent);
+}
+
+.swarm-node-card.is-selected {
+  border-color: var(--accent-swarm);
+  border-width: 2px;
+  padding: 11px;
+  transform: scale(1.02);
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.25),
+    0 0 22px rgba(167, 139, 250, 0.18);
+}
+
+/* --- Grid view card wrapper --- */
+.swarm-grid-card {
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.swarm-grid-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32),
+    0 0 16px rgba(167, 139, 250, 0.14);
+}
+
+.swarm-grid-card.is-selected {
+  transform: scale(1.01);
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.3),
+    0 0 20px rgba(167, 139, 250, 0.16);
+}
+
+/* --- Relaunch button on failed nodes --- */
+.swarm-node-relaunch {
+  padding: 2px 6px;
+  font-size: 9px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.swarm-node-relaunch:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.45);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+/* --- Primary CTA glow (Create Swarm) --- */
+.swarm-cta {
+  box-shadow: 0 4px 16px rgba(93, 95, 239, 0.22);
+  transition: background-color 0.16s ease, border-color 0.16s ease,
+    box-shadow 0.18s ease, transform 0.16s ease;
+}
+
+.swarm-cta:hover:not(:disabled) {
+  box-shadow: 0 6px 24px rgba(93, 95, 239, 0.4),
+    0 0 18px rgba(93, 95, 239, 0.28);
+  transform: translateY(-1px);
+}
+
+.swarm-cta:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* --- Empty-state hero icon glow --- */
+.swarm-hero-icon {
+  color: var(--accent-swarm);
+  filter: drop-shadow(0 0 14px rgba(167, 139, 250, 0.45));
+  animation: swarm-hero-float 3.6s ease-in-out infinite;
+}
+
+@keyframes swarm-hero-float {
+  0%, 100% {
+    transform: translateY(0);
+    filter: drop-shadow(0 0 12px rgba(167, 139, 250, 0.35));
+  }
+  50% {
+    transform: translateY(-6px);
+    filter: drop-shadow(0 0 20px rgba(167, 139, 250, 0.55));
+  }
+}

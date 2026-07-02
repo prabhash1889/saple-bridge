@@ -1,0 +1,111 @@
+.task-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+  backdrop-filter: blur(4px);
+}
+
+.task-dialog-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.task-dialog-header,
+.task-dialog-footer {
+  padding: 16px 20px;
+  background: var(--bg-surface-light);
+  display: flex;
+  align-items: center;
+}
+
+.task-dialog-header {
+  border-bottom: 1px solid var(--border);
+  justify-content: space-between;
+}
+
+.task-dialog-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.task-dialog-form {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+}
+
+.task-dialog-fields {
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.task-dialog-field {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-dialog-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.task-dialog-field input,
+.task-dialog-field select,
+.task-dialog-field textarea {
+  width: 100%;
+}
+
+.task-dialog-field input,
+.task-dialog-field select {
+  height: 32px;
+}
+
+.task-dialog-field textarea {
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.task-dialog-row {
+  display: flex;
+  gap: 16px;
+}
+
+.task-dialog-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 0;
+}
+
+.task-dialog-footer {
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.task-dialog-footer button {
+  padding: 6px 16px;
+  font-size: 13px;
+}

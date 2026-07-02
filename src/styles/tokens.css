@@ -1,0 +1,469 @@
+/* Design System for Saple Bridge */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@font-face {
+  font-family: 'JetBrains Mono Nerd';
+  src: url('https://cdn.jsdelivr.net/gh/Nick2bad4u/nerd-fonts-woff2@v1.0.0/fonts/woff2/JetBrainsMono/JetBrainsMonoNerdFont-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Nerd';
+  src: url('https://cdn.jsdelivr.net/gh/Nick2bad4u/nerd-fonts-woff2@v1.0.0/fonts/woff2/JetBrainsMono/JetBrainsMonoNerdFont-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  /* Color Palette (Premium Dark Mode) */
+  --bg-app: #0B0C0E;
+  --bg-surface: #121417;
+  --bg-surface-light: #1A1D22;
+  --bg-surface-active: #22262C;
+  --bg-overlay: rgba(11, 12, 14, 0.85);
+  --bg-deep: #07090D;
+  --bg-terminal: #050607;
+
+  --text-primary: #F3F4F6;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+  
+  --accent: #5D5FEF;
+  --accent-hover: #4F46E5;
+  --accent-light: rgba(93, 95, 239, 0.15);
+  --accent-command: #38BDF8;
+  --accent-tasks: #F59E0B;
+  --accent-memory: #34D399;
+  --accent-review: #F472B6;
+  --accent-swarm: #A78BFA;
+  --accent-home: #22C55E;
+  --accent-editor: #3B82F6;
+  --accent-settings: #A78BFA;
+  --accent-terminal: #38BDF8;
+  --accent-info-bright: #69B7FF;
+  
+  --border: #22262D;
+  --border-hover: #374151;
+  --border-focus: #5D5FEF;
+
+  /* Status Colors */
+  --color-success: #10B981;
+  --color-success-bg: rgba(16, 25, 20, 0.2);
+  --color-danger: #EF4444;
+  --color-danger-bg: rgba(239, 68, 68, 0.1);
+  --color-warning: #F59E0B;
+  --color-warning-bg: rgba(245, 158, 11, 0.1);
+  --color-info: #3B82F6;
+  --color-info-bg: rgba(59, 130, 246, 0.1);
+
+  /* Memory Category Colors */
+  --mem-decision: #A855F7;
+  --mem-decision-bg: rgba(168, 85, 247, 0.15);
+  --mem-architecture: #10B981;
+  --mem-architecture-bg: rgba(16, 185, 129, 0.15);
+  --mem-pattern: #3B82F6;
+  --mem-pattern-bg: rgba(59, 130, 246, 0.15);
+  --mem-bug: #EF4444;
+  --mem-bug-bg: rgba(239, 68, 68, 0.15);
+
+  /* Layout Spacing */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+  --topbar-height: 48px;
+  --statusbar-height: 28px;
+
+  /* Elevation (Shadows) */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
+
+  /* Border Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Font Families */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --font-mono: 'JetBrains Mono Nerd', 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* Light theme — overrides the dark defaults above. Applied via <html data-theme="light">. */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #E9EBEF;
+  --bg-surface: #F4F5F7;
+  --bg-surface-light: #ECEEF2;
+  --bg-surface-active: #DFE2E8;
+  --bg-overlay: rgba(233, 235, 239, 0.85);
+  --bg-deep: #DEE1E7;
+  --bg-terminal: #F4F5F7;
+
+  --text-primary: #1A1D22;
+  --text-secondary: #4B5563;
+  --text-muted: #6B7280;
+
+  --accent: #5D5FEF;
+  --accent-hover: #4F46E5;
+  --accent-light: rgba(93, 95, 239, 0.12);
+  --accent-info-bright: #2563EB;
+
+  --border: #D4D8DF;
+  --border-hover: #BFC5CF;
+  --border-focus: #5D5FEF;
+
+  --color-success-bg: rgba(16, 185, 129, 0.12);
+  --color-danger-bg: rgba(239, 68, 68, 0.10);
+  --color-warning-bg: rgba(245, 158, 11, 0.12);
+  --color-info-bg: rgba(59, 130, 246, 0.10);
+
+  --mem-decision-bg: rgba(168, 85, 247, 0.12);
+  --mem-architecture-bg: rgba(16, 185, 129, 0.12);
+  --mem-pattern-bg: rgba(59, 130, 246, 0.12);
+  --mem-bug-bg: rgba(239, 68, 68, 0.12);
+
+  --shadow-sm: 0 1px 2px 0 rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(16, 24, 40, 0.08), 0 2px 4px -1px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(16, 24, 40, 0.10), 0 4px 6px -2px rgba(16, 24, 40, 0.06);
+}
+
+/* Ember theme — warm near-black with an orange/amber primary accent (BridgeMind-style).
+   Inherits dark defaults from :root; overrides only backgrounds, text, accent, and borders.
+   Semantic per-view + status colors stay inherited and read fine on warm-dark. */
+html[data-theme="ember"] {
+  color-scheme: dark;
+
+  --bg-app: #0C0A09;
+  --bg-surface: #16130F;
+  --bg-surface-light: #1F1A15;
+  --bg-surface-active: #2A231B;
+  --bg-overlay: rgba(12, 10, 9, 0.85);
+  --bg-deep: #080605;
+  --bg-terminal: #1A150F;
+
+  --text-primary: #F6F2EC;
+  --text-secondary: #A8A095;
+  --text-muted: #756C60;
+
+  --accent: #F5853F;
+  --accent-hover: #E8742B;
+  --accent-light: rgba(245, 133, 63, 0.15);
+  --accent-home: #F5853F;
+
+  --border: #2A2520;
+  --border-hover: #43392E;
+  --border-focus: #F5853F;
+}
+
+/* Mocha theme — warm mid-tone taupe/brown surfaces (lighter than Ember) with an
+   orange accent. A dark-family variant, so it inherits dark defaults from :root and
+   overrides backgrounds, text, accent, and borders to the warm taupe range. */
+html[data-theme="mocha"] {
+  color-scheme: dark;
+
+  --bg-app: #322E29;
+  --bg-surface: #3C3833;
+  --bg-surface-light: #46413B;
+  --bg-surface-active: #514B43;
+  --bg-overlay: rgba(38, 35, 31, 0.85);
+  --bg-deep: #2A2722;
+  --bg-terminal: #383430;
+
+  --text-primary: #ECE6DC;
+  --text-secondary: #B6AE9F;
+  --text-muted: #8A8273;
+
+  --accent: #E8833A;
+  --accent-hover: #D9722B;
+  --accent-light: rgba(232, 131, 58, 0.16);
+  --accent-home: #E8833A;
+
+  --border: #4D473F;
+  --border-hover: #5E574D;
+  --border-focus: #E8833A;
+}
+
+/* Nord theme — cool arctic "Polar Night" surfaces with a Frost-cyan accent and the
+   Aurora palette for status/semantic colors. A dark-family variant: inherits dark
+   defaults from :root and overrides the full palette to the Nord colors. */
+html[data-theme="nord"] {
+  color-scheme: dark;
+
+  --bg-app: #2E3440;
+  --bg-surface: #3B4252;
+  --bg-surface-light: #434C5E;
+  --bg-surface-active: #4C566A;
+  --bg-overlay: rgba(46, 52, 64, 0.85);
+  --bg-deep: #272C36;
+  --bg-terminal: #2E3440;
+
+  --text-primary: #ECEFF4;
+  --text-secondary: #D8DEE9;
+  --text-muted: #8893A8;
+
+  --accent: #88C0D0;
+  --accent-hover: #79B0C2;
+  --accent-light: rgba(136, 192, 208, 0.15);
+  --accent-command: #88C0D0;
+  --accent-tasks: #EBCB8B;
+  --accent-memory: #A3BE8C;
+  --accent-review: #B48EAD;
+  --accent-swarm: #81A1C1;
+  --accent-home: #88C0D0;
+  --accent-editor: #81A1C1;
+  --accent-settings: #B48EAD;
+  --accent-terminal: #88C0D0;
+  --accent-info-bright: #88C0D0;
+
+  --border: #3F4757;
+  --border-hover: #4C566A;
+  --border-focus: #88C0D0;
+
+  --color-success: #A3BE8C;
+  --color-success-bg: rgba(163, 190, 140, 0.15);
+  --color-danger: #BF616A;
+  --color-danger-bg: rgba(191, 97, 106, 0.15);
+  --color-warning: #EBCB8B;
+  --color-warning-bg: rgba(235, 203, 139, 0.15);
+  --color-info: #81A1C1;
+  --color-info-bg: rgba(129, 161, 193, 0.15);
+
+  --mem-decision: #B48EAD;
+  --mem-decision-bg: rgba(180, 142, 173, 0.15);
+  --mem-architecture: #A3BE8C;
+  --mem-architecture-bg: rgba(163, 190, 140, 0.15);
+  --mem-pattern: #81A1C1;
+  --mem-pattern-bg: rgba(129, 161, 193, 0.15);
+  --mem-bug: #BF616A;
+  --mem-bug-bg: rgba(191, 97, 106, 0.15);
+}
+
+/* Dracula theme — the iconic deep slate background with a purple accent and the
+   vivid Dracula ANSI family for status/semantic colors. Dark-family variant. */
+html[data-theme="dracula"] {
+  color-scheme: dark;
+
+  --bg-app: #282A36;
+  --bg-surface: #343746;
+  --bg-surface-light: #3C3F51;
+  --bg-surface-active: #44475A;
+  --bg-overlay: rgba(40, 42, 54, 0.85);
+  --bg-deep: #1E1F29;
+  --bg-terminal: #282A36;
+
+  --text-primary: #F8F8F2;
+  --text-secondary: #C5C7D6;
+  --text-muted: #6272A4;
+
+  --accent: #BD93F9;
+  --accent-hover: #A77BE8;
+  --accent-light: rgba(189, 147, 249, 0.15);
+  --accent-command: #8BE9FD;
+  --accent-tasks: #FFB86C;
+  --accent-memory: #50FA7B;
+  --accent-review: #FF79C6;
+  --accent-swarm: #BD93F9;
+  --accent-home: #BD93F9;
+  --accent-editor: #8BE9FD;
+  --accent-settings: #BD93F9;
+  --accent-terminal: #8BE9FD;
+  --accent-info-bright: #8BE9FD;
+
+  --border: #383B4C;
+  --border-hover: #44475A;
+  --border-focus: #BD93F9;
+
+  --color-success: #50FA7B;
+  --color-success-bg: rgba(80, 250, 123, 0.13);
+  --color-danger: #FF5555;
+  --color-danger-bg: rgba(255, 85, 85, 0.13);
+  --color-warning: #F1FA8C;
+  --color-warning-bg: rgba(241, 250, 140, 0.13);
+  --color-info: #8BE9FD;
+  --color-info-bg: rgba(139, 233, 253, 0.13);
+
+  --mem-decision: #BD93F9;
+  --mem-decision-bg: rgba(189, 147, 249, 0.15);
+  --mem-architecture: #50FA7B;
+  --mem-architecture-bg: rgba(80, 250, 123, 0.15);
+  --mem-pattern: #8BE9FD;
+  --mem-pattern-bg: rgba(139, 233, 253, 0.15);
+  --mem-bug: #FF5555;
+  --mem-bug-bg: rgba(255, 85, 85, 0.15);
+}
+
+/* Tokyo Night theme — deep indigo "night" surfaces with a soft blue accent and the
+   Tokyo Night palette for status/semantic colors. Dark-family variant. */
+html[data-theme="tokyonight"] {
+  color-scheme: dark;
+
+  --bg-app: #1A1B26;
+  --bg-surface: #1F2030;
+  --bg-surface-light: #262A40;
+  --bg-surface-active: #292E42;
+  --bg-overlay: rgba(26, 27, 38, 0.85);
+  --bg-deep: #16161E;
+  --bg-terminal: #1A1B26;
+
+  --text-primary: #C0CAF5;
+  --text-secondary: #A9B1D6;
+  --text-muted: #565F89;
+
+  --accent: #7AA2F7;
+  --accent-hover: #6A92E7;
+  --accent-light: rgba(122, 162, 247, 0.15);
+  --accent-command: #7DCFFF;
+  --accent-tasks: #E0AF68;
+  --accent-memory: #9ECE6A;
+  --accent-review: #BB9AF7;
+  --accent-swarm: #BB9AF7;
+  --accent-home: #7AA2F7;
+  --accent-editor: #7AA2F7;
+  --accent-settings: #BB9AF7;
+  --accent-terminal: #7DCFFF;
+  --accent-info-bright: #7DCFFF;
+
+  --border: #2A2E45;
+  --border-hover: #3B4261;
+  --border-focus: #7AA2F7;
+
+  --color-success: #9ECE6A;
+  --color-success-bg: rgba(158, 206, 106, 0.14);
+  --color-danger: #F7768E;
+  --color-danger-bg: rgba(247, 118, 142, 0.14);
+  --color-warning: #E0AF68;
+  --color-warning-bg: rgba(224, 175, 104, 0.14);
+  --color-info: #7DCFFF;
+  --color-info-bg: rgba(125, 207, 255, 0.14);
+
+  --mem-decision: #BB9AF7;
+  --mem-decision-bg: rgba(187, 154, 247, 0.15);
+  --mem-architecture: #9ECE6A;
+  --mem-architecture-bg: rgba(158, 206, 106, 0.15);
+  --mem-pattern: #7AA2F7;
+  --mem-pattern-bg: rgba(122, 162, 247, 0.15);
+  --mem-bug: #F7768E;
+  --mem-bug-bg: rgba(247, 118, 142, 0.15);
+}
+
+/* Solarized Light theme — Ethan Schoonover's warm cream "base3" surfaces with a blue
+   accent and the Solarized accent family. A light-family variant: like the built-in
+   light theme it also flips color-scheme, status/mem backgrounds, and shadows. */
+html[data-theme="solarized"] {
+  color-scheme: light;
+
+  --bg-app: #EEE8D5;
+  --bg-surface: #FDF6E3;
+  --bg-surface-light: #F5EFDC;
+  --bg-surface-active: #E6DFC8;
+  --bg-overlay: rgba(253, 246, 227, 0.85);
+  --bg-deep: #E3DCC6;
+  --bg-terminal: #FDF6E3;
+
+  --text-primary: #586E75;
+  --text-secondary: #657B83;
+  --text-muted: #93A1A1;
+
+  --accent: #268BD2;
+  --accent-hover: #1F6FA8;
+  --accent-light: rgba(38, 139, 210, 0.14);
+  --accent-command: #268BD2;
+  --accent-tasks: #B58900;
+  --accent-memory: #859900;
+  --accent-review: #D33682;
+  --accent-swarm: #6C71C4;
+  --accent-home: #268BD2;
+  --accent-editor: #268BD2;
+  --accent-settings: #6C71C4;
+  --accent-terminal: #268BD2;
+  --accent-info-bright: #1F6FA8;
+
+  --border: #DDD6C1;
+  --border-hover: #C9C2AC;
+  --border-focus: #268BD2;
+
+  --color-success: #859900;
+  --color-success-bg: rgba(133, 153, 0, 0.12);
+  --color-danger: #DC322F;
+  --color-danger-bg: rgba(220, 50, 47, 0.10);
+  --color-warning: #B58900;
+  --color-warning-bg: rgba(181, 137, 0, 0.12);
+  --color-info: #268BD2;
+  --color-info-bg: rgba(38, 139, 210, 0.10);
+
+  --mem-decision: #6C71C4;
+  --mem-decision-bg: rgba(108, 113, 196, 0.12);
+  --mem-architecture: #859900;
+  --mem-architecture-bg: rgba(133, 153, 0, 0.12);
+  --mem-pattern: #268BD2;
+  --mem-pattern-bg: rgba(38, 139, 210, 0.12);
+  --mem-bug: #DC322F;
+  --mem-bug-bg: rgba(220, 50, 47, 0.12);
+
+  --shadow-sm: 0 1px 2px 0 rgba(88, 110, 117, 0.10);
+  --shadow-md: 0 4px 6px -1px rgba(88, 110, 117, 0.12), 0 2px 4px -1px rgba(88, 110, 117, 0.08);
+  --shadow-lg: 0 10px 15px -3px rgba(88, 110, 117, 0.14), 0 4px 6px -2px rgba(88, 110, 117, 0.10);
+}
+
+/* Catppuccin Latte theme — the soft pastel "Latte" light palette with a mauve accent.
+   A light-family variant: flips color-scheme, status/mem backgrounds, and shadows. */
+html[data-theme="latte"] {
+  color-scheme: light;
+
+  --bg-app: #E6E9EF;
+  --bg-surface: #EFF1F5;
+  --bg-surface-light: #E2E5EC;
+  --bg-surface-active: #CCD0DA;
+  --bg-overlay: rgba(239, 241, 245, 0.85);
+  --bg-deep: #DCE0E8;
+  --bg-terminal: #EFF1F5;
+
+  --text-primary: #4C4F69;
+  --text-secondary: #5C5F77;
+  --text-muted: #8C8FA1;
+
+  --accent: #8839EF;
+  --accent-hover: #7A2BE0;
+  --accent-light: rgba(136, 57, 239, 0.12);
+  --accent-command: #04A5E5;
+  --accent-tasks: #DF8E1D;
+  --accent-memory: #40A02B;
+  --accent-review: #EA76CB;
+  --accent-swarm: #8839EF;
+  --accent-home: #8839EF;
+  --accent-editor: #1E66F5;
+  --accent-settings: #8839EF;
+  --accent-terminal: #04A5E5;
+  --accent-info-bright: #1E66F5;
+
+  --border: #CCD0DA;
+  --border-hover: #BCC0CC;
+  --border-focus: #8839EF;
+
+  --color-success: #40A02B;
+  --color-success-bg: rgba(64, 160, 43, 0.12);
+  --color-danger: #D20F39;
+  --color-danger-bg: rgba(210, 15, 57, 0.10);
+  --color-warning: #DF8E1D;
+  --color-warning-bg: rgba(223, 142, 29, 0.12);
+  --color-info: #1E66F5;
+  --color-info-bg: rgba(30, 102, 245, 0.10);
+
+  --mem-decision: #8839EF;
+  --mem-decision-bg: rgba(136, 57, 239, 0.12);
+  --mem-architecture: #40A02B;
+  --mem-architecture-bg: rgba(64, 160, 43, 0.12);
+  --mem-pattern: #1E66F5;
+  --mem-pattern-bg: rgba(30, 102, 245, 0.12);
+  --mem-bug: #D20F39;
+  --mem-bug-bg: rgba(210, 15, 57, 0.12);
+
+  --shadow-sm: 0 1px 2px 0 rgba(76, 79, 105, 0.08);
+  --shadow-md: 0 4px 6px -1px rgba(76, 79, 105, 0.10), 0 2px 4px -1px rgba(76, 79, 105, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(76, 79, 105, 0.12), 0 4px 6px -2px rgba(76, 79, 105, 0.08);
+}
