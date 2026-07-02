@@ -160,7 +160,11 @@ export const ReviewWorkspace: React.FC = () => {
     }
   }, [activeTaskId, reviewTasks, setActiveTaskId]);
 
-  // Load review record when active task changes
+  // Load review record when active task changes. Depend on the task's primitive fields, not
+  // the `activeTask` object: background loadTasks polls rebuild the tasks array with fresh
+  // object identities, and an object dep would re-run this effect — wiping the reviewer's
+  // notes/selection below — even though nothing actually changed.
+  const activeTaskSessionId = activeTask?.sessionId;
   useEffect(() => {
     if (!currentProjectPath || !activeTaskId) return;
 
@@ -171,9 +175,9 @@ export const ReviewWorkspace: React.FC = () => {
         .catch(async () => {
           if (cancelled) return;
           // If not found, attempt to auto-create review record from session
-          if (activeTask && activeTask.sessionId) {
+          if (activeTaskSessionId) {
             try {
-              await createReviewRecord(currentProjectPath, activeTaskId, activeTask.sessionId);
+              await createReviewRecord(currentProjectPath, activeTaskId, activeTaskSessionId);
             } catch (err) {
               console.error("Failed to auto-create review record:", err);
             }
@@ -197,7 +201,7 @@ export const ReviewWorkspace: React.FC = () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [activeTaskId, currentProjectPath, activeTask, loadReviewRecord, createReviewRecord]);
+  }, [activeTaskId, currentProjectPath, activeTaskSessionId, loadReviewRecord, createReviewRecord]);
 
   // Set default file when files list loads
   useEffect(() => {

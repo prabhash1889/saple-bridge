@@ -157,14 +157,14 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
             <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent)" />
           </marker>
         </defs>
-        {connections.map((conn, idx) => {
+        {connections.map((conn) => {
           const fromAgent = agents.find(a => a.id === conn.from);
           const toAgent = agents.find(a => a.id === conn.to);
           const isActive = fromAgent?.status === 'done' && (toAgent?.status === 'running' || toAgent?.status === 'starting');
 
           return (
             <path
-              key={idx}
+              key={`${conn.from}-${conn.to}`}
               d={conn.d}
               fill="none"
               stroke={isActive ? 'var(--accent)' : 'var(--border)'}

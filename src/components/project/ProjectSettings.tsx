@@ -87,8 +87,22 @@ const mcpToolCardStyle: React.CSSProperties = {
   flexDirection: 'column',
 };
 
+const isSettingsTab = (tab: string): tab is SettingsTab =>
+  tabs.some((t) => t.id === tab);
+
 export const ProjectSettings: React.FC = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('keychain');
+  const pendingSettingsTab = useProjectStore((state) => state.pendingSettingsTab);
+  // Honor a one-shot tab request (e.g. command palette "Run diagnostics") and clear it so a
+  // later plain visit to Settings doesn't re-apply it.
+  useEffect(() => {
+    if (pendingSettingsTab && isSettingsTab(pendingSettingsTab)) {
+      setActiveTab(pendingSettingsTab);
+    }
+    if (pendingSettingsTab) {
+      useProjectStore.getState().setPendingSettingsTab(null);
+    }
+  }, [pendingSettingsTab]);
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
   const updateWorkspaceConfig = useProjectStore((state) => state.updateWorkspaceConfig);

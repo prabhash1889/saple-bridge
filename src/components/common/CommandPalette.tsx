@@ -9,6 +9,7 @@ import { useTerminalStore } from '../../stores/terminalStore';
 import { useKanbanStore, Task } from '../../stores/kanbanStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { invoke } from '@tauri-apps/api/core';
+import { createId } from '../../lib/id';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -117,12 +118,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
   const handleRunDiagnostics = () => {
     onClose();
+    // Store-driven tab selection: ProjectSettings consumes pendingSettingsTab on mount, so this
+    // works regardless of how long the lazy-loaded settings view takes to appear (the old
+    // setTimeout+querySelector approach silently no-oped on slow loads).
+    useProjectStore.getState().setPendingSettingsTab('diagnostics');
     setActiveView('settings');
-    // We will select diagnostics tab when rendering settings
-    setTimeout(() => {
-      const diagTabBtn = document.querySelector('[data-tab-id="diagnostics"]') as HTMLButtonElement;
-      diagTabBtn?.click();
-    }, 100);
   };
 
   const handleLaunchTask = async (task: Task) => {
@@ -139,7 +139,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     }
 
     try {
-      const sessionId = 'agent_' + Math.random().toString(36).substring(2, 11);
+      const sessionId = createId('agent');
       const promptPath = `.saple/agents/prompts/${sessionId}.md`;
       const systemPrompt = task.agentConfig?.systemPrompt || 'You are an autonomous coding builder.';
       const model = task.agentConfig?.model || 'default';

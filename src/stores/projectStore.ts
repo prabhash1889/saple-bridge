@@ -77,9 +77,13 @@ interface ProjectState {
   workspaceSummary: WorkspaceSummary | null;
   workspaceLoading: boolean;
   workspaceError: string | null;
+  // One-shot request for which Settings tab to open on next render (e.g. the command palette's
+  // "Run diagnostics"). ProjectSettings consumes and clears it on mount/change.
+  pendingSettingsTab: string | null;
 
   setProjectPath: (path: string | null) => void;
   setActiveView: (view: ViewType) => void;
+  setPendingSettingsTab: (tab: string | null) => void;
   addRecentProject: (path: string) => void;
   clearRecentProjects: () => void;
   clearWorkspaceHistory: () => void;
@@ -131,6 +135,9 @@ export const useProjectStore = create<ProjectState>()(
         workspaceSummary: null,
         workspaceLoading: false,
         workspaceError: null,
+        pendingSettingsTab: null,
+
+        setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
 
         setProjectPath: (path) => set((state) => {
           if (!path) {
