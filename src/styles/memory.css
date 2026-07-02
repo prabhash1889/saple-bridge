@@ -5,6 +5,10 @@
   overflow: hidden;
 }
 
+.resizable-memory-layout {
+  display: grid;
+}
+
 .memory-empty-card {
   background: var(--bg-surface);
   border: 1px solid var(--border);

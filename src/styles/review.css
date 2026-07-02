@@ -8,6 +8,21 @@
   align-items: stretch;
 }
 
+.resizable-review-layout {
+  display: grid;
+  gap: 0;
+}
+
+@media (max-width: 1100px) {
+  .resizable-review-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .resizable-review-layout .pane-splitter {
+    display: none;
+  }
+}
+
 .review-room-container {
   display: flex;
   flex-direction: column;

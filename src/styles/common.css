@@ -1507,3 +1507,30 @@ button.text-btn:hover {
 .extracted-style-277 {
   padding-left: 8px;
 }
+
+.pane-splitter {
+  width: 6px;
+  min-width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+
+.pane-splitter::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 2px;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  opacity: 0.75;
+}
+
+.pane-splitter:hover::after,
+.pane-splitter:focus-visible::after {
+  background: var(--accent);
+  opacity: 1;
+}

@@ -11,12 +11,18 @@ import { useNotificationStore } from '../../stores/notificationStore';
 import { VirtualizedTextViewer } from './VirtualizedTextViewer';
 import { ReviewFileList } from './ReviewFileList';
 import { ReviewActionsPanel } from './ReviewActionsPanel';
+import { PANE_WIDTH_LIMITS, useWorkspacePaneLayoutStore } from '../../stores/workspacePaneLayoutStore';
 
 const statusPillClass = (status?: string) => {
   if (status === 'approved') return 'success';
   if (status === 'rejected') return 'danger';
   return 'review';
 };
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, Math.round(value)));
+
+const KEYBOARD_RESIZE_STEP = 24;
 
 export const ReviewWorkspace: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -59,6 +65,10 @@ export const ReviewWorkspace: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [commitMessage, setCommitMessage] = useState('');
   const [committing, setCommitting] = useState(false);
+  const paneLayout = useWorkspacePaneLayoutStore((state) =>
+    currentProjectPath ? state.getLayout(currentProjectPath) : state.getLayout('__default__')
+  );
+  const setPaneLayout = useWorkspacePaneLayoutStore((state) => state.setLayout);
 
   const reviewTasks = useMemo(() => tasks.filter((task) => task.column === 'review'), [tasks]);
   const activeTask = tasks.find((task) => task.id === activeTaskId);
@@ -392,6 +402,78 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
 
   const unrelatedFiles = getUnrelatedFiles();
 
+  const handleReviewQueueResizeStart = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!currentProjectPath) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = paneLayout.reviewQueueWidth;
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      setPaneLayout(currentProjectPath, {
+        reviewQueueWidth: clamp(
+          startWidth + moveEvent.clientX - startX,
+          PANE_WIDTH_LIMITS.reviewQueue.min,
+          PANE_WIDTH_LIMITS.reviewQueue.max,
+        ),
+      });
+    };
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleReviewActionsResizeStart = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!currentProjectPath) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = paneLayout.reviewActionsWidth;
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      setPaneLayout(currentProjectPath, {
+        reviewActionsWidth: clamp(
+          startWidth - (moveEvent.clientX - startX),
+          PANE_WIDTH_LIMITS.reviewActions.min,
+          PANE_WIDTH_LIMITS.reviewActions.max,
+        ),
+      });
+    };
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleReviewQueueResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!currentProjectPath) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowRight' ? 1 : -1;
+    setPaneLayout(currentProjectPath, {
+      reviewQueueWidth: clamp(
+        paneLayout.reviewQueueWidth + direction * KEYBOARD_RESIZE_STEP,
+        PANE_WIDTH_LIMITS.reviewQueue.min,
+        PANE_WIDTH_LIMITS.reviewQueue.max,
+      ),
+    });
+  };
+
+  const handleReviewActionsResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!currentProjectPath) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? 1 : -1;
+    setPaneLayout(currentProjectPath, {
+      reviewActionsWidth: clamp(
+        paneLayout.reviewActionsWidth + direction * KEYBOARD_RESIZE_STEP,
+        PANE_WIDTH_LIMITS.reviewActions.min,
+        PANE_WIDTH_LIMITS.reviewActions.max,
+      ),
+    });
+  };
+
   return (
     <section className="review-room review-room-container">
       <div className="room-header">
@@ -406,7 +488,12 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
         </button>
       </div>
 
-      <div className="review-layout">
+      <div
+        className="review-layout resizable-review-layout"
+        style={{
+          gridTemplateColumns: `${paneLayout.reviewQueueWidth}px 6px minmax(0, 1fr) 6px ${paneLayout.reviewActionsWidth}px`,
+        }}
+      >
         {/* Left Column: Review Queue */}
         <section className="surface review-queue">
           <div className="panel-heading">
@@ -439,6 +526,19 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
             )}
           </div>
         </section>
+
+        <div
+          className="pane-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize review queue"
+          aria-valuemin={PANE_WIDTH_LIMITS.reviewQueue.min}
+          aria-valuemax={PANE_WIDTH_LIMITS.reviewQueue.max}
+          aria-valuenow={paneLayout.reviewQueueWidth}
+          tabIndex={0}
+          onMouseDown={handleReviewQueueResizeStart}
+          onKeyDown={handleReviewQueueResizeKeyDown}
+        />
 
         {/* Center Column: Diff & Verification Output */}
         <section className="surface review-main review-detail-panel">
@@ -599,6 +699,19 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
             </>
           )}
         </section>
+
+        <div
+          className="pane-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize review actions"
+          aria-valuemin={PANE_WIDTH_LIMITS.reviewActions.min}
+          aria-valuemax={PANE_WIDTH_LIMITS.reviewActions.max}
+          aria-valuenow={paneLayout.reviewActionsWidth}
+          tabIndex={0}
+          onMouseDown={handleReviewActionsResizeStart}
+          onKeyDown={handleReviewActionsResizeKeyDown}
+        />
 
         {/* Right Column: Actions & Handoff Info */}
         <ReviewActionsPanel
