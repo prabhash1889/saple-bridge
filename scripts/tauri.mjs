@@ -27,15 +27,30 @@ function runTauri(tauriArgs) {
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
 
-// Pass-through for anything that isn't `build`.
+// Pass-through for anything that isn't `build`. `dev` gets the dev config overlay (re-adds the
+// Vite dev-server origins to the CSP, which the production config no longer ships).
 if (args[0] !== 'build') {
+  if (args[0] === 'dev' && !args.includes('--config') && !args.some((a) => a.startsWith('--config='))) {
+    args.push('--config', 'src-tauri/tauri.dev.conf.json');
+  }
   runTauri(args);
   process.exit(0);
+}
+
+// Parse a cross-compile target (either `--target <triple>` or `--target=<triple>`), used to
+// locate the bundle output dir, which lives under target/<triple>/release for cross builds.
+function parseTargetTriple(list) {
+  const eq = list.find((a) => a.startsWith('--target='));
+  if (eq) return eq.slice('--target='.length);
+  const idx = list.indexOf('--target');
+  if (idx !== -1 && list[idx + 1]) return list[idx + 1];
+  return null;
 }
 
 // --- build: bump version -------------------------------------------------
 const confPath = join(root, 'src-tauri', 'tauri.conf.json');
 const pkgPath = join(root, 'package.json');
+const cargoPath = join(root, 'src-tauri', 'Cargo.toml');
 
 const conf = JSON.parse(readFileSync(confPath, 'utf8'));
 const [major, minor, patch] = String(conf.version).split('.').map((n) => parseInt(n, 10) || 0);
@@ -48,13 +63,22 @@ const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 pkg.version = newVersion;
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 
+// Keep Cargo.toml in the bump loop too — the first `version = "..."` line is the [package]
+// version at the top of the manifest (dependency versions use inline-table syntax).
+const cargoToml = readFileSync(cargoPath, 'utf8');
+writeFileSync(cargoPath, cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${newVersion}"`));
+
 console.log(`\n→ Building Saple Bridge v${newVersion}\n`);
 
 // --- run the actual build ------------------------------------------------
 runTauri(args);
 
 // --- collect installers into ./build/v<version>/<bundle>/ ----------------
-const bundleDir = join(root, 'src-tauri', 'target', 'release', 'bundle');
+// Cross-compiled builds emit under target/<triple>/release/bundle instead of target/release.
+const buildTriple = parseTargetTriple(args);
+const bundleDir = buildTriple
+  ? join(root, 'src-tauri', 'target', buildTriple, 'release', 'bundle')
+  : join(root, 'src-tauri', 'target', 'release', 'bundle');
 const outDir = join(root, 'build', `v${newVersion}`);
 
 // Installer extensions Tauri emits across platforms.

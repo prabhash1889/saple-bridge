@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
     "tauri": "node scripts/tauri.mjs",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "node scripts/tauri.mjs build"
   },
   "dependencies": {

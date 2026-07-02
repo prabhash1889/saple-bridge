@@ -59,6 +59,9 @@ next-env.d.ts
 
 # TypeScript
 *.tsbuildinfo
+# Emitted by a stray `tsc -b` of tsconfig.node.json — vite.config.ts is the source
+/vite.config.js
+/vite.config.d.ts
 
 # Local app data
 .saple/

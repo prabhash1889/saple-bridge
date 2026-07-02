@@ -3371,7 +3371,7 @@ dependencies = [
 
 [[package]]
 name = "saple-bridge"
-version = "1.0.0"
+version = "1.0.6"
 dependencies = [
  "keyring",
  "portable-pty",

@@ -1,8 +1,8 @@
 [package]
 name = "saple-bridge"
-version = "1.0.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.6"
+description = "Saple Bridge — local-first agentic development workspace"
+authors = ["Saple"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -20,8 +20,16 @@ const bridgeRoot = resolve(__dirname, '..');
 const mcpRoot = resolve(bridgeRoot, '..', 'saple-mcp'); // sibling repo under SAPLE-ALL
 const isWindows = process.platform === 'win32';
 
-// Resolve the target triple: explicit override (env or --target=) else the rustc host.
-const argTarget = process.argv.slice(2).map(a => a.match(/^--target[=\s]+(.+)$/)?.[1]).find(Boolean);
+// Resolve the target triple: explicit override (env or --target) else the rustc host.
+// Accept both `--target=<triple>` and the space form `--target <triple>` (two argv entries).
+function parseArgTarget(argv) {
+  const eq = argv.find((a) => a.startsWith('--target='));
+  if (eq) return eq.slice('--target='.length);
+  const idx = argv.indexOf('--target');
+  if (idx !== -1 && argv[idx + 1]) return argv[idx + 1];
+  return undefined;
+}
+const argTarget = parseArgTarget(process.argv.slice(2));
 let triple = process.env.SAPLE_MCP_TARGET || argTarget;
 if (!triple) {
   const rustc = spawnSync('rustc', ['-vV'], { encoding: 'utf8', shell: isWindows });
