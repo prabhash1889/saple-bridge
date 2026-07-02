@@ -1,6 +1,6 @@
 import React, { memo, useCallback } from 'react';
 import { Play, Terminal, Edit2, Trash2, Shield, FileText, ListChecks } from 'lucide-react';
-import { Task, useKanbanStore } from '../../stores/kanbanStore';
+import { Task, TaskColumn, useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
@@ -19,6 +19,7 @@ const TaskCardComponent: React.FC<TaskCardProps> = ({ task, onEdit, onClick }) =
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const deleteTask = useKanbanStore((state) => state.deleteTask);
   const updateTask = useKanbanStore((state) => state.updateTask);
+  const moveTask = useKanbanStore((state) => state.moveTask);
   const addPane = useTerminalStore((state) => state.addPane);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const isRunning = useTerminalStore((state) => Boolean(task.terminalId && state.sessions[task.terminalId]));
@@ -125,6 +126,12 @@ You MUST output one of the following exact review trigger patterns on a line by 
     }
   }, [setFocusedPane, task.terminalId]);
 
+  const handleMoveTask = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    e.stopPropagation();
+    if (!currentProjectPath) return;
+    void moveTask(currentProjectPath, task.id, e.target.value as TaskColumn);
+  }, [currentProjectPath, moveTask, task.id]);
+
   return (
     <div 
       draggable 
@@ -136,6 +143,20 @@ You MUST output one of the following exact review trigger patterns on a line by 
       <div style={cardHeaderStyle}>
         <span style={titleStyle}>{task.title}</span>
         <div style={actionsStyle}>
+          <label className="kanban-card-move-control" onClick={(e) => e.stopPropagation()}>
+            <span className="visually-hidden">Move {task.title} to column</span>
+            <select
+              value={task.column}
+              onChange={handleMoveTask}
+              aria-label={`Move ${task.title} to column`}
+              disabled={!currentProjectPath}
+            >
+              <option value="backlog">Backlog</option>
+              <option value="progress">In progress</option>
+              <option value="review">Review</option>
+              <option value="done">Done</option>
+            </select>
+          </label>
           <button 
             onClick={(e) => {
               e.stopPropagation();

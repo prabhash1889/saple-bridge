@@ -12,6 +12,7 @@ import { DirectoryStep } from './steps/DirectoryStep';
 import { ContextStep } from './steps/ContextStep';
 import { NameStep } from './steps/NameStep';
 import { LaunchStep } from './steps/LaunchStep';
+import { useFocusTrap } from '../../../lib/useFocusTrap';
 
 interface SwarmWizardProps {
   projectPath: string | null;
@@ -42,7 +43,9 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
   }));
   const [error, setError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, true, onClose);
 
   // Errors render at the top of the scrollable body; if the user has scrolled
   // down a long step (e.g. the roster) a new error would be hidden above the
@@ -115,11 +118,19 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal-container wizard" style={containerStyle}>
+      <div
+        ref={dialogRef}
+        className="modal-container wizard"
+        style={containerStyle}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="swarm-wizard-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div style={headerStyle}>
-          <span className="extracted-style-240">Create Swarm</span>
-          <button onClick={onClose} style={closeBtnStyle} title="Close"><X size={16} /></button>
+          <span id="swarm-wizard-title" className="extracted-style-240">Create Swarm</span>
+          <button onClick={onClose} style={closeBtnStyle} title="Close" aria-label="Close swarm wizard"><X size={16} /></button>
         </div>
 
         {/* Stepper */}
@@ -134,6 +145,7 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
                   onClick={() => (complete ? goToStep(i) : undefined)}
                   style={stepPillStyle(active, complete)}
                   disabled={!complete && !active}
+                  aria-current={active ? 'step' : undefined}
                 >
                   <span className="extracted-style-241">{complete ? <Check size={13} /> : <Icon size={13} />}</span>
                   <span className="extracted-style-242">{s.label}</span>

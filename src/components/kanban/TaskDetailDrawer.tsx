@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { X, Play, Terminal, CheckCircle2, Shield, FileText, CheckSquare, Edit, AlertCircle } from 'lucide-react';
 import { Task, useKanbanStore } from '../../stores/kanbanStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
@@ -10,6 +10,7 @@ import { formatShortDateTime } from '../../lib/date';
 import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
+import { useFocusTrap } from '../../lib/useFocusTrap';
 
 interface TaskDetailDrawerProps {
   task: Task | null;
@@ -23,6 +24,8 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
   const { updateTask } = useKanbanStore();
   const { sessions: agentSessions } = useAgentSessionStore();
   const { sessions: terminalSessions, addPane, setFocusedPane } = useTerminalStore();
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(drawerRef, isOpen && Boolean(task), onClose);
 
   if (!isOpen || !task) return null;
 
@@ -183,18 +186,27 @@ Instructions: ${systemPrompt}
 
   return (
     <div style={drawerOverlayStyle} onClick={onClose}>
-      <div style={drawerContainerStyle} onClick={e => e.stopPropagation()}>
+      <div
+        ref={drawerRef}
+        style={drawerContainerStyle}
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-detail-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div style={headerStyle}>
           <div className="extracted-style-006">
             <span style={statusStyle(task.column)}>{task.column.toUpperCase()}</span>
-            <h3 style={titleStyle}>{task.title}</h3>
+            <h3 id="task-detail-title" style={titleStyle}>{task.title}</h3>
           </div>
           <div className="extracted-style-007">
             <button
               onClick={() => { onEdit(task); onClose(); }}
               style={iconBtnStyle}
               title="Edit Task"
+              aria-label={`Edit ${task.title}`}
             >
               <Edit size={16} />
             </button>
@@ -202,6 +214,7 @@ Instructions: ${systemPrompt}
               onClick={onClose}
               style={iconBtnStyle}
               title="Close Panel"
+              aria-label="Close task details"
             >
               <X size={18} />
             </button>

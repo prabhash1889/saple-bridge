@@ -49,6 +49,7 @@
   --border: #22262D;
   --border-hover: #374151;
   --border-focus: #5D5FEF;
+  --focus-ring: 0 0 0 2px rgba(93, 95, 239, 0.34);
 
   /* Status Colors */
   --color-success: #10B981;

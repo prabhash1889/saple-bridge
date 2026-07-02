@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { Task, AgentConfig, useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
 import type { AgentProvider } from '../../types/provider';
 import type { TaskPriority } from '../../types/task';
+import { useFocusTrap } from '../../lib/useFocusTrap';
 
 interface TaskDialogProps {
   isOpen: boolean;
@@ -78,6 +79,8 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
   const [agentProvider, setAgentProvider] = useState<AgentProvider>('codex');
   const [agentModel, setAgentModel] = useState('gpt-4o');
   const [agentPrompt, setAgentPrompt] = useState(ROLE_PROMPTS.custom.prompt);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, isOpen, onClose);
 
   const enabledProviders = providers.filter((p: any) => p.enabled);
 
@@ -191,11 +194,18 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
   if (!isOpen) return null;
 
   return (
-    <div className="task-dialog-overlay">
-      <div className="task-dialog-modal">
+    <div className="task-dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div
+        ref={dialogRef}
+        className="task-dialog-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-dialog-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="task-dialog-header">
-          <h3>{taskToEdit ? 'Edit Task' : 'Create Task'}</h3>
+          <h3 id="task-dialog-title">{taskToEdit ? 'Edit Task' : 'Create Task'}</h3>
           <button
             onClick={onClose}
             className="icon-button"

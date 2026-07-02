@@ -11,6 +11,7 @@ import { useMemoryStore } from '../../stores/memoryStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
+import { useFocusTrap } from '../../lib/useFocusTrap';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -43,6 +44,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, isOpen, onClose);
 
   // Focus input on mount
   useEffect(() => {
@@ -369,11 +372,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
   return (
     <div className="palette-overlay" onClick={onClose}>
       <div 
+        ref={dialogRef}
         className="palette-dialog" 
         onClick={(e) => e.stopPropagation()}
-        role="combobox"
-        aria-expanded="true"
-        aria-haspopup="listbox"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        tabIndex={-1}
       >
         <div className="palette-search-wrapper">
           {mode !== 'commands' ? (
@@ -381,6 +386,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
               className="palette-back-btn" 
               onClick={() => { setMode('commands'); setSearch(''); }}
               title="Go back to main commands"
+              aria-label="Go back to main commands"
             >
               <ArrowLeft size={16} />
             </button>

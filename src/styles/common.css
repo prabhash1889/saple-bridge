@@ -40,6 +40,7 @@ body {
 *:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+  box-shadow: var(--focus-ring);
 }
 
 /* Inputs & Form Elements Defaults */
