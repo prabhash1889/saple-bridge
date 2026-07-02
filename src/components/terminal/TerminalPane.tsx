@@ -1,13 +1,17 @@
-import React, { memo, useCallback, useEffect, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   GitBranch,
   Maximize2,
   Minimize2,
+  Search,
   X,
   XCircle,
 } from 'lucide-react';
@@ -466,6 +470,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const webglAddonRef = useRef<WebglAddon | null>(null);
   const webglReleaseRef = useRef<(() => void) | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const setActiveView = useProjectStore((state) => state.setActiveView);
@@ -647,7 +655,25 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+    searchAddonRef.current = searchAddon;
+
     term.attachCustomKeyEventHandler((event) => {
+      // Ctrl/Cmd+F opens the pane's find bar instead of reaching the shell.
+      if (
+        event.type === 'keydown' &&
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'f'
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearchOpen(true);
+        return false;
+      }
+
       if (!isTerminalCopyShortcut(event)) {
         return true;
       }
@@ -887,9 +913,40 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       titleDisposable.dispose();
       unsubscribeOutput();
       unloadWebgl();
+      searchAddonRef.current = null; // disposed with the terminal
       term.dispose();
     };
   }, [sessionId]);
+
+  // Focus the find bar as soon as it opens (Ctrl+F inside xterm can't focus a React input
+  // synchronously — the overlay mounts on the next render).
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
+
+  const runSearch = (direction: 'next' | 'previous', query = searchQuery) => {
+    const addon = searchAddonRef.current;
+    if (!addon || !query) return;
+    if (direction === 'next') addon.findNext(query, { incremental: false });
+    else addon.findPrevious(query, { incremental: false });
+  };
+
+  const handleSearchInput = (value: string) => {
+    setSearchQuery(value);
+    // Incremental: extend the current match as the user types instead of jumping ahead.
+    if (value) searchAddonRef.current?.findNext(value, { incremental: true });
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    try {
+      searchAddonRef.current?.clearDecorations();
+    } catch {
+      // Addon may already be disposed with its terminal — nothing to clear.
+    }
+    terminalRef.current?.focus();
+  };
 
   // Acquire/release the WebGL renderer as this pane's workspace gains/loses visibility.
   // Acquisition is deferred one frame so the outgoing workspace's panes release their
@@ -1051,6 +1108,53 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         ref={containerRef}
         className="terminal-xterm-container"
       />
+
+      {searchOpen && (
+        <div className="terminal-search-overlay">
+          <Search size={12} aria-hidden />
+          <input
+            ref={searchInputRef}
+            className="terminal-search-input"
+            value={searchQuery}
+            placeholder="Find in terminal"
+            spellCheck={false}
+            onChange={(e) => handleSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                runSearch(e.shiftKey ? 'previous' : 'next');
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeSearch();
+              }
+            }}
+          />
+          <button
+            className="terminal-pane-title-button"
+            onClick={() => runSearch('previous')}
+            title="Previous match (Shift+Enter)"
+            aria-label="Previous match"
+          >
+            <ChevronUp size={13} />
+          </button>
+          <button
+            className="terminal-pane-title-button"
+            onClick={() => runSearch('next')}
+            title="Next match (Enter)"
+            aria-label="Next match"
+          >
+            <ChevronDown size={13} />
+          </button>
+          <button
+            className="terminal-pane-title-button"
+            onClick={closeSearch}
+            title="Close search (Esc)"
+            aria-label="Close search"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       {isWaitingReview && linkedTask && (
         <div className="terminal-review-overlay">

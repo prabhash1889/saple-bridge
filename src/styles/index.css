@@ -2276,6 +2276,36 @@ button.text-btn:hover {
   transform: translateZ(0);
 }
 
+/* Ctrl/Cmd+F find bar, floated over the top-right of the xterm surface. */
+.terminal-search-overlay {
+  position: absolute;
+  top: 40px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  color: var(--text-secondary);
+}
+
+.terminal-search-input {
+  width: 170px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.terminal-search-input::placeholder {
+  color: var(--text-muted);
+}
+
 .terminal-pane[data-focused="true"] {
   box-shadow: none;
 }
