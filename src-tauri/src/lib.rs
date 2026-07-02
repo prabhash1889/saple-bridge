@@ -61,6 +61,7 @@ pub fn run() {
             memory::read_memory_file,
             memory::save_memory_node,
             memory::get_unlinked_mentions,
+            memory::search_memory_content,
             memory::add_memory_link,
             git::git_diff_file,
             git::git_stage_file,

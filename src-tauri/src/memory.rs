@@ -890,6 +890,40 @@ fn collect_notes(dir: &Path, base: &Path, out: &mut Vec<(MemoryNode, String, Vec
     }
 }
 
+/// Case-insensitive full-text search over note titles and bodies. Returns matching note ids;
+/// the Memory list uses them to widen its instant title/tag filter to note content.
+#[tauri::command]
+pub async fn search_memory_content(project_path: String, query: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || search_memory_content_inner(project_path, query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn search_memory_content_inner(project_path: String, query: String) -> Result<Vec<String>, String> {
+    let q = query.trim().to_lowercase();
+    if q.len() < 2 {
+        return Ok(vec![]);
+    }
+    let memory_dir = get_memory_dir(&project_path);
+    if !memory_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut notes = Vec::new();
+    collect_notes(&memory_dir, &memory_dir, &mut notes);
+
+    let mut ids: Vec<String> = notes
+        .into_iter()
+        .filter(|(node, body, _)| {
+            node.title.to_lowercase().contains(&q) || body.to_lowercase().contains(&q)
+        })
+        .map(|(node, _, _)| node.id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
 /// Notes whose body mentions this note's title/alias as plain text without a
 /// `[[link]]` — Obsidian's "unlinked mentions". One entry per source note.
 #[tauri::command]

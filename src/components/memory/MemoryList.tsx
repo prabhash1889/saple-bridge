@@ -18,17 +18,19 @@ const CATEGORY_CHIPS = [
 
 export const MemoryList: React.FC = () => {
   const { currentProjectPath } = useProjectStore();
-  const { 
-    nodes, 
-    loadNote, 
-    searchQuery, 
-    setSearchQuery, 
-    selectedCategory, 
+  const {
+    nodes,
+    loadNote,
+    searchQuery,
+    setSearchQuery,
+    selectedCategory,
     setSelectedCategory,
     snapshots,
     loadSnapshots,
     takeSnapshot,
-    restoreSnapshot
+    restoreSnapshot,
+    contentMatchIds,
+    searchContent
   } = useMemoryStore();
 
   const [snapshotName, setSnapshotName] = useState('');
@@ -39,6 +41,16 @@ export const MemoryList: React.FC = () => {
       loadSnapshots(currentProjectPath);
     }
   }, [currentProjectPath, loadSnapshots]);
+
+  // Full-text pass (Rust, note bodies) behind a debounce; results widen the instant
+  // title/tag filter below via contentMatchIds.
+  useEffect(() => {
+    if (!currentProjectPath) return;
+    const timer = window.setTimeout(() => {
+      void searchContent(currentProjectPath, searchQuery);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery, currentProjectPath, searchContent]);
 
   const handleNodeClick = (node: MemoryNode) => {
     if (currentProjectPath) {
@@ -81,13 +93,15 @@ export const MemoryList: React.FC = () => {
     });
   };
 
-  // Filter nodes by search query and category
+  // Filter nodes by search query and category. Title/id/category/tag matching is instant;
+  // contentMatchIds adds notes whose *body* matches (async full-text pass).
   const filteredNodes = nodes.filter(node => {
-    const matchesSearch = 
+    const matchesSearch =
       node.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       node.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       node.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      node.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      node.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      contentMatchIds.includes(node.id);
       
     const matchesCategory = 
       selectedCategory === 'all' || 

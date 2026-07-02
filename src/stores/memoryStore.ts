@@ -35,6 +35,9 @@ interface MemoryState {
   activeNoteContent: string;
   unlinkedMentions: UnlinkedMention[];
   searchQuery: string;
+  // Note ids whose *content* matches the search query (Rust full-text pass); the list view
+  // unions these with its instant title/tag filter.
+  contentMatchIds: string[];
   selectedCategory: string;
   loading: boolean;
   error: string | null;
@@ -48,7 +51,8 @@ interface MemoryState {
   takeSnapshot: (projectPath: string, name: string) => Promise<void>;
   restoreSnapshot: (projectPath: string, name: string) => Promise<void>;
   loadSnapshots: (projectPath: string) => Promise<void>;
-  
+  searchContent: (projectPath: string, query: string) => Promise<void>;
+
   setActiveNote: (note: MemoryNode | null) => void;
   setSearchQuery: (query: string) => void;
   setSelectedCategory: (category: string) => void;
@@ -68,6 +72,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   activeNoteContent: '',
   unlinkedMentions: [],
   searchQuery: '',
+  contentMatchIds: [],
   selectedCategory: 'all',
   loading: false,
   error: null,
@@ -243,6 +248,23 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       set({ snapshots });
     } catch (err) {
       // ignore
+    }
+  },
+
+  searchContent: async (projectPath, query) => {
+    const q = query.trim();
+    if (q.length < 2) {
+      set({ contentMatchIds: [] });
+      return;
+    }
+    try {
+      const ids = await invoke<string[]>('search_memory_content', { projectPath, query: q });
+      // Only commit if the user hasn't typed a different query since this request started.
+      if (get().searchQuery.trim() === q) {
+        set({ contentMatchIds: ids });
+      }
+    } catch {
+      set({ contentMatchIds: [] });
     }
   },
 
