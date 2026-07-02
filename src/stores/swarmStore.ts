@@ -55,6 +55,7 @@ interface SwarmState {
   stopSwarm: (projectPath: string) => Promise<void>;
   updateAgentStatus: (projectPath: string, agentId: string, status: AgentStatus, extra?: Partial<SwarmAgent>) => Promise<void>;
   checkAndRunNextAgents: (projectPath: string) => Promise<void>;
+  runAgentScan: (projectPath: string) => Promise<void>;
   relaunchAgent: (projectPath: string, agentId: string) => Promise<void>;
   forceCompleteAgent: (projectPath: string, agentId: string) => Promise<void>;
   addCustomAgent: (agent: SwarmAgent) => void;
@@ -228,6 +229,13 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
     ]
   }
 ];
+
+// Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
+// updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
+// launch the same agent's PTY + prompt file twice. Concurrent triggers coalesce into one queued
+// re-run that re-reads fresh state.
+let agentScanInFlight = false;
+let agentScanQueued = false;
 
 const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
   const { updateAgentStatus } = useSwarmStore.getState();
@@ -469,6 +477,16 @@ export const useSwarmStore = create<SwarmState>()(
       },
 
       stopSwarm: async (projectPath) => {
+        // Deactivate BEFORE tearing panes down: the removePane awaits below yield to PTY-output
+        // handlers, and a concurrent [AGENT_DONE] -> checkAndRunNextAgents must see the swarm as
+        // stopped or it launches a fresh agent mid-shutdown, outside the kill list.
+        set({
+          swarmId: null,
+          status: 'stopped',
+          swarmActive: false,
+          activeAgents: get().activeAgents.map(a => ({ ...a, status: 'stopped' }))
+        });
+
         // Kill linked terminals
         const activePanes = get().activeAgents.filter(a => a.terminalId).map(a => a.terminalId!);
         for (const paneId of activePanes) {
@@ -478,13 +496,7 @@ export const useSwarmStore = create<SwarmState>()(
             console.error('Error removing terminal pane:', e);
           }
         }
-        
-        set({
-          swarmId: null,
-          status: 'stopped',
-          swarmActive: false,
-          activeAgents: get().activeAgents.map(a => ({ ...a, status: 'stopped' }))
-        });
+
         await get().saveSwarmState(projectPath);
       },
 
@@ -508,6 +520,24 @@ export const useSwarmStore = create<SwarmState>()(
       },
 
       checkAndRunNextAgents: async (projectPath) => {
+        if (agentScanInFlight) {
+          agentScanQueued = true;
+          return;
+        }
+        agentScanInFlight = true;
+        try {
+          await get().runAgentScan(projectPath);
+        } finally {
+          agentScanInFlight = false;
+          if (agentScanQueued) {
+            agentScanQueued = false;
+            void get().checkAndRunNextAgents(projectPath);
+          }
+        }
+      },
+
+      // The actual dependency scan. Only ever called via checkAndRunNextAgents' guard.
+      runAgentScan: async (projectPath) => {
         const { activeAgents, status, swarmActive } = get();
         if (!swarmActive || status !== 'running') return;
 
