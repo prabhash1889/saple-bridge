@@ -315,6 +315,13 @@ pub async fn spawn_pty(
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
 ) -> Result<(), String> {
+    // A duplicate id would overwrite the existing registry entry, leaking its child process and
+    // reader/emitter/writer threads (kill_pty would only ever reap the survivor). Check up front
+    // (cheap, before spawning anything); the insert below re-checks to close the race window.
+    if registry.sessions.lock().unwrap().contains_key(&id) {
+        return Err(format!("PTY session {} already exists", id));
+    }
+
     // Build the PTY, read keychain secrets and spawn the child process on a blocking
     // worker so this (synchronous, occasionally slow) work never blocks the Tauri main
     // thread / window message pump. The registry insert and the lightweight reader/emitter
@@ -515,7 +522,20 @@ pub async fn spawn_pty(
         job,
     }));
 
-    registry.sessions.lock().unwrap().insert(id.clone(), session.clone());
+    {
+        let mut sessions = registry.sessions.lock().unwrap();
+        if sessions.contains_key(&id) {
+            // Lost the race to a concurrent spawn with the same id: kill the child we just
+            // spawned instead of overwriting (and leaking) the established session.
+            let mut new_session = session.lock().unwrap();
+            if let Some(job) = new_session.job.as_ref() {
+                job.terminate();
+            }
+            let _ = new_session.child.kill();
+            return Err(format!("PTY session {} already exists", id));
+        }
+        sessions.insert(id.clone(), session.clone());
+    }
 
     // Writer thread: owns the PTY writer and performs the (possibly blocking) write_all off any
     // command/main thread and WITHOUT holding the session mutex. If the child stops draining its
