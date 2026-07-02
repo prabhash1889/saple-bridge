@@ -268,7 +268,12 @@ Phase 4 · `chore:`/`refactor:` for Phase 5. Verify locally before pushing per C
 
 ---
 
-## Phase 7 — Full-scan findings (2026-06-26) — ⬜ TODO
+## Phase 7 — Full-scan findings (2026-06-26) — ✅ DONE
+
+> Completed 2026-07-02. All 16 findings fixed across commits db45f32 (7.1), af2b1d2 (7.2),
+> 9833d0e (7.3), 3f21c11 (7.4), 8f36ddd (7.5/7.6), cd87d44 (7.7), 4615a34 (7.8/7.12-7.14),
+> 9944436 (7.9-7.11/7.16), 889372f (7.15). Verified: typecheck exit 0, build OK,
+> cargo test 30/30 pass (+5 new injection/traversal tests).
 
 > Source: full project scan via 4 parallel audits (Rust backend, React stores, React components,
 > build/config). Baseline at scan time: `tsc --noEmit` exit 0 and `cargo check` clean — these are
