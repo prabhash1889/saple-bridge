@@ -29,8 +29,20 @@ export const MemoryGraph: React.FC = () => {
   const canvasRef = useRef<SVGSVGElement>(null);
   const isSimulationActive = useRef(true);
 
-  const [simNodes, setSimNodes] = useState<SimNode[]>([]);
+  // Positions live in a ref, mutated by the rAF physics loop, which writes transforms straight
+  // to the SVG elements below. Re-rendering the whole React tree per frame (the previous
+  // setState-per-tick design) reconciled hundreds of nodes 60×/s. React re-renders only on
+  // structural change or when the simulation settles (renderTick bump); every render reads
+  // fresh positions from the ref, so React output and DOM writes never disagree.
+  const simNodesRef = useRef<SimNode[]>([]);
+  const nodeElsRef = useRef(new Map<string, SVGGElement>());
+  const edgeElsRef = useRef(new Map<string, SVGLineElement>());
+  const [, setRenderTick] = useState(0);
+  const bumpRender = () => setRenderTick((t) => t + 1);
+
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
+  const draggedNodeIdRef = useRef<string | null>(null);
+  draggedNodeIdRef.current = draggedNodeId;
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   // Global vs. local (focused neighborhood) view, plus display toggles.
@@ -102,9 +114,44 @@ export const MemoryGraph: React.FC = () => {
 
   const focusNode = focusId ? nodes.find((n) => n.id === focusId) : null;
 
+  // Geometry shared by the React render and the per-tick DOM writes: an edge line stops at the
+  // target circle's rim so the arrowhead isn't buried under it.
+  const edgeEndpoints = (sourceNode: SimNode, targetNode: SimNode) => {
+    const dx = targetNode.x - sourceNode.x;
+    const dy = targetNode.y - sourceNode.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const tr = radiusFor(targetNode.id) + 4;
+    return {
+      x1: sourceNode.x,
+      y1: sourceNode.y,
+      x2: targetNode.x - (dx / dist) * tr,
+      y2: targetNode.y - (dy / dist) * tr,
+    };
+  };
+
+  // Write current ref positions straight to the mounted SVG elements (no React involved).
+  const applyDomPositions = () => {
+    const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
+    for (const [id, el] of nodeElsRef.current) {
+      const n = byId.get(id);
+      if (n) el.setAttribute('transform', `translate(${n.x}, ${n.y})`);
+    }
+    for (const [key, el] of edgeElsRef.current) {
+      const sep = key.indexOf('->');
+      const source = byId.get(key.slice(0, sep));
+      const target = byId.get(key.slice(sep + 2));
+      if (!source || !target) continue;
+      const p = edgeEndpoints(source, target);
+      el.setAttribute('x1', String(p.x1));
+      el.setAttribute('y1', String(p.y1));
+      el.setAttribute('x2', String(p.x2));
+      el.setAttribute('y2', String(p.y2));
+    }
+  };
+
   // Initialize simulation nodes
   useEffect(() => {
-    const initialNodes: SimNode[] = nodes.map((node, index) => {
+    simNodesRef.current = nodes.map((node, index) => {
       const angle = (index / nodes.length) * Math.PI * 2;
       const radius = 100 + Math.random() * 60;
       return {
@@ -115,13 +162,14 @@ export const MemoryGraph: React.FC = () => {
         vy: 0,
       };
     });
-    setSimNodes(initialNodes);
     isSimulationActive.current = true;
+    bumpRender();
   }, [nodes]);
 
-  // Run Physics Loop with Cooldown
+  // Run Physics Loop with Cooldown. Mutates the position ref in place and writes transforms
+  // directly to the DOM; React state is only touched once, when the simulation settles.
   useEffect(() => {
-    if (simNodes.length === 0) return;
+    if (nodes.length === 0) return;
     isSimulationActive.current = true;
 
     let animationFrameId: number;
@@ -129,109 +177,120 @@ export const MemoryGraph: React.FC = () => {
     const updatePhysics = () => {
       if (!isSimulationActive.current) return;
 
-      setSimNodes(prevNodes => {
-        const nextNodes = prevNodes.map(n => ({ ...n }));
+      // A mounted-but-hidden Memory view (App keeps heavy views alive with CSS display:none)
+      // must not keep simulating: rAF still fires there, unlike for a hidden tab.
+      if (canvasRef.current && canvasRef.current.getClientRects().length === 0) {
+        animationFrameId = requestAnimationFrame(updatePhysics);
+        return;
+      }
 
-        const charge = 1000;
-        const spring = 0.04;
-        const restLength = 80;
-        const gravity = 0.015;
-        const friction = 0.8;
+      const simNodes = simNodesRef.current;
+      const draggedId = draggedNodeIdRef.current;
 
-        // 1. Repulsion
-        for (let i = 0; i < nextNodes.length; i++) {
-          const n1 = nextNodes[i];
-          for (let j = i + 1; j < nextNodes.length; j++) {
-            const n2 = nextNodes[j];
-            const dx = n1.x - n2.x;
-            const dy = n1.y - n2.y;
-            const distSq = dx * dx + dy * dy + 0.1;
-            const dist = Math.sqrt(distSq);
+      const charge = 1000;
+      const spring = 0.04;
+      const restLength = 80;
+      const gravity = 0.015;
+      const friction = 0.8;
 
-            if (dist < 220) {
-              const force = charge / distSq;
-              const fX = (dx / dist) * force;
-              const fY = (dy / dist) * force;
+      // 1. Repulsion
+      for (let i = 0; i < simNodes.length; i++) {
+        const n1 = simNodes[i];
+        for (let j = i + 1; j < simNodes.length; j++) {
+          const n2 = simNodes[j];
+          const dx = n1.x - n2.x;
+          const dy = n1.y - n2.y;
+          const distSq = dx * dx + dy * dy + 0.1;
+          const dist = Math.sqrt(distSq);
 
-              if (n1.id !== draggedNodeId) {
-                n1.vx += fX;
-                n1.vy += fY;
-              }
-              if (n2.id !== draggedNodeId) {
-                n2.vx -= fX;
-                n2.vy -= fY;
-              }
-            }
-          }
-        }
-
-        // 2. Attraction
-        edges.forEach(edge => {
-          const n1 = nextNodes.find(n => n.id === edge.source);
-          const n2 = nextNodes.find(n => n.id === edge.target);
-          if (n1 && n2) {
-            const dx = n2.x - n1.x;
-            const dy = n2.y - n1.y;
-            const dist = Math.sqrt(dx * dx + dy * dy) + 0.1;
-            const force = (dist - restLength) * spring;
+          if (dist < 220) {
+            const force = charge / distSq;
             const fX = (dx / dist) * force;
             const fY = (dy / dist) * force;
 
-            if (n1.id !== draggedNodeId) {
+            if (n1.id !== draggedId) {
               n1.vx += fX;
               n1.vy += fY;
             }
-            if (n2.id !== draggedNodeId) {
+            if (n2.id !== draggedId) {
               n2.vx -= fX;
               n2.vy -= fY;
             }
           }
-        });
-
-        // 3. Gravity & Update Positions
-        nextNodes.forEach(node => {
-          if (node.id === draggedNodeId) return;
-
-          const dx = width / 2 - node.x;
-          const dy = height / 2 - node.y;
-          node.vx += dx * gravity;
-          node.vy += dy * gravity;
-
-          node.x += node.vx;
-          node.y += node.vy;
-
-          node.vx *= friction;
-          node.vy *= friction;
-
-          // Boundary constraints (generous limits to allow panning exploration)
-          node.x = Math.max(-200, Math.min(width + 200, node.x));
-          node.y = Math.max(-200, Math.min(height + 200, node.y));
-        });
-
-        // Cooldown Check: stop updating if nodes are static
-        let maxSpeedSq = 0;
-        nextNodes.forEach(node => {
-          const speedSq = node.vx * node.vx + node.vy * node.vy;
-          if (speedSq > maxSpeedSq) {
-            maxSpeedSq = speedSq;
-          }
-        });
-
-        if (maxSpeedSq < 0.005 && !draggedNodeId) {
-          isSimulationActive.current = false;
         }
+      }
 
-        return nextNodes;
+      // 2. Attraction
+      const byId = new Map(simNodes.map((n) => [n.id, n]));
+      edges.forEach(edge => {
+        const n1 = byId.get(edge.source);
+        const n2 = byId.get(edge.target);
+        if (n1 && n2) {
+          const dx = n2.x - n1.x;
+          const dy = n2.y - n1.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) + 0.1;
+          const force = (dist - restLength) * spring;
+          const fX = (dx / dist) * force;
+          const fY = (dy / dist) * force;
+
+          if (n1.id !== draggedId) {
+            n1.vx += fX;
+            n1.vy += fY;
+          }
+          if (n2.id !== draggedId) {
+            n2.vx -= fX;
+            n2.vy -= fY;
+          }
+        }
       });
 
-      if (isSimulationActive.current) {
-        animationFrameId = requestAnimationFrame(updatePhysics);
+      // 3. Gravity & Update Positions
+      simNodes.forEach(node => {
+        if (node.id === draggedId) return;
+
+        const dx = width / 2 - node.x;
+        const dy = height / 2 - node.y;
+        node.vx += dx * gravity;
+        node.vy += dy * gravity;
+
+        node.x += node.vx;
+        node.y += node.vy;
+
+        node.vx *= friction;
+        node.vy *= friction;
+
+        // Boundary constraints (generous limits to allow panning exploration)
+        node.x = Math.max(-200, Math.min(width + 200, node.x));
+        node.y = Math.max(-200, Math.min(height + 200, node.y));
+      });
+
+      applyDomPositions();
+
+      // Cooldown Check: stop updating if nodes are static
+      let maxSpeedSq = 0;
+      simNodes.forEach(node => {
+        const speedSq = node.vx * node.vx + node.vy * node.vy;
+        if (speedSq > maxSpeedSq) {
+          maxSpeedSq = speedSq;
+        }
+      });
+
+      if (maxSpeedSq < 0.005 && !draggedId) {
+        isSimulationActive.current = false;
+        // One state commit so the next React render (hover, focus, ...) paints the settled
+        // layout it just observed in the DOM.
+        bumpRender();
+        return;
       }
+
+      animationFrameId = requestAnimationFrame(updatePhysics);
     };
 
     animationFrameId = requestAnimationFrame(updatePhysics);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [simNodes.length, edges, draggedNodeId]);
+    // draggedNodeId restarts the loop after a settle so dragging wakes the layout back up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes.length, edges, draggedNodeId]);
 
   // Bring a set of nodes into view (used by Fit and on focus/mode change).
   const fitToNodes = (list: SimNode[]) => {
@@ -262,10 +321,11 @@ export const MemoryGraph: React.FC = () => {
 
   // Re-fit whenever the visible neighborhood changes (focus / mode toggles).
   useEffect(() => {
-    if (simNodes.length === 0) return;
-    const visible = simNodes.filter((n) => visibleIds.has(n.id));
     // Defer a frame so positions reflect the latest simulation tick.
-    const id = requestAnimationFrame(() => fitToNodes(visible));
+    const id = requestAnimationFrame(() => {
+      const visible = simNodesRef.current.filter((n) => visibleIds.has(n.id));
+      fitToNodes(visible);
+    });
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, focusId, showOrphans]);
@@ -306,13 +366,14 @@ export const MemoryGraph: React.FC = () => {
     } else if (draggedNodeId && canvasRef.current) {
       const { x, y } = getGraphCoordinates(e.clientX, e.clientY);
       isSimulationActive.current = true;
-      setSimNodes(prevNodes =>
-        prevNodes.map(n =>
-          n.id === draggedNodeId
-            ? { ...n, x, y, vx: 0, vy: 0 }
-            : n
-        )
-      );
+      const dragged = simNodesRef.current.find((n) => n.id === draggedNodeId);
+      if (dragged) {
+        dragged.x = x;
+        dragged.y = y;
+        dragged.vx = 0;
+        dragged.vy = 0;
+        applyDomPositions();
+      }
     }
   };
 
@@ -344,7 +405,7 @@ export const MemoryGraph: React.FC = () => {
   };
 
   const handleFitScreen = () => {
-    fitToNodes(simNodes.filter((n) => visibleIds.has(n.id)));
+    fitToNodes(simNodesRef.current.filter((n) => visibleIds.has(n.id)));
   };
 
   // Single-click: in local mode, focus the neighborhood; in global mode, open it.
@@ -477,40 +538,41 @@ export const MemoryGraph: React.FC = () => {
 
           {/* Render Zoomed/Panned Content Group */}
           <g transform={`translate(${panX}, ${panY}) scale(${zoom})`}>
-            {/* Render links */}
-            {visibleEdges.map((edge, i) => {
-              const sourceNode = simNodes.find(n => n.id === edge.source);
-              const targetNode = simNodes.find(n => n.id === edge.target);
+            {/* Render links. Positions come from the simulation ref; while the physics loop is
+                running it updates these same elements' attributes directly via edgeElsRef. */}
+            {(() => {
+              const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
+              return visibleEdges.map((edge) => {
+              const sourceNode = byId.get(edge.source);
+              const targetNode = byId.get(edge.target);
               if (!sourceNode || !targetNode) return null;
 
-              // Shorten the line to the target node's edge so the arrowhead sits
-              // on the rim, not buried under the circle.
-              const dx = targetNode.x - sourceNode.x;
-              const dy = targetNode.y - sourceNode.y;
-              const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-              const tr = radiusFor(targetNode.id) + 4;
-              const x2 = targetNode.x - (dx / dist) * tr;
-              const y2 = targetNode.y - (dy / dist) * tr;
-
+              const p = edgeEndpoints(sourceNode, targetNode);
+              const edgeKey = `${edge.source}->${edge.target}`;
               const active = !hoverId || hoverNeighbors?.has(edge.source) && hoverNeighbors?.has(edge.target);
 
               return (
                 <line
-                  key={`link-${i}`}
-                  x1={sourceNode.x}
-                  y1={sourceNode.y}
-                  x2={x2}
-                  y2={y2}
+                  key={edgeKey}
+                  ref={(el) => {
+                    if (el) edgeElsRef.current.set(edgeKey, el);
+                    else edgeElsRef.current.delete(edgeKey);
+                  }}
+                  x1={p.x1}
+                  y1={p.y1}
+                  x2={p.x2}
+                  y2={p.y2}
                   stroke="var(--border)"
                   strokeWidth={1.5}
                   opacity={active ? 0.55 : 0.12}
                   markerEnd="url(#mem-arrow)"
                 />
               );
-            })}
+              });
+            })()}
 
             {/* Render nodes */}
-            {simNodes.filter((n) => visibleIds.has(n.id)).map(node => {
+            {simNodesRef.current.filter((n) => visibleIds.has(n.id)).map(node => {
               const nodeColor = CATEGORY_COLORS[node.category] || CATEGORY_COLORS.general;
               const isDragged = node.id === draggedNodeId;
               const r = radiusFor(node.id);
@@ -519,6 +581,10 @@ export const MemoryGraph: React.FC = () => {
               return (
                 <g
                   key={node.id}
+                  ref={(el) => {
+                    if (el) nodeElsRef.current.set(node.id, el);
+                    else nodeElsRef.current.delete(node.id);
+                  }}
                   transform={`translate(${node.x}, ${node.y})`}
                   style={{ cursor: isDragged ? 'grabbing' : 'grab', opacity: dim ? 0.25 : 1 }}
                   onMouseDown={(e) => handleMouseDown(node.id, e)}
