@@ -7,6 +7,7 @@ import {
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useKanbanStore, Task } from '../../stores/kanbanStore';
+import { useMemoryStore } from '../../stores/memoryStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
@@ -32,6 +33,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
   const { currentProjectPath, openWorkspace, setActiveView } = useProjectStore();
   const addPane = useTerminalStore((state) => state.addPane);
   const tasks = useKanbanStore((state) => state.tasks);
+  const memoryNodes = useMemoryStore((state) => state.nodes);
   const success = (msg: string, desc?: string) => useNotificationStore.getState().success(msg, desc);
   const error = (msg: string, desc?: string) => useNotificationStore.getState().error(msg, desc);
 
@@ -49,8 +51,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       setMode('commands');
       setSelectedIndex(0);
       setTimeout(() => inputRef.current?.focus(), 50);
+      // Warm the memory graph so note titles are searchable even before the Memory view has
+      // been visited (loadGraph short-circuits if already loaded for this project).
+      if (currentProjectPath) {
+        void useMemoryStore.getState().loadGraph(currentProjectPath);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, currentProjectPath]);
 
   // Handle global shortcuts & navigation
   useEffect(() => {
@@ -271,12 +278,53 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
         } as CommandItem));
     }
 
-    return baseCommands.filter(c => 
-      c.name.toLowerCase().includes(q) || 
+    const commandMatches = baseCommands.filter(c =>
+      c.name.toLowerCase().includes(q) ||
       c.description.toLowerCase().includes(q) ||
       c.category.toLowerCase().includes(q)
     );
-  }, [mode, search, baseCommands, roomsList, tasks]);
+
+    // Global search: from 2 typed characters on, also surface matching Kanban tasks and
+    // memory notes below the command matches, jumping to the owning view on selection.
+    if (!currentProjectPath || q.trim().length < 2) return commandMatches;
+
+    const taskMatches = tasks
+      .filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q))
+      .slice(0, 5)
+      .map(t => ({
+        id: `search-task-${t.id}`,
+        name: t.title,
+        description: `Task in "${t.column}" — open the Tasks board`,
+        category: 'Tasks',
+        icon: ClipboardList,
+        action: () => {
+          setActiveView('kanban');
+          onClose();
+        },
+      } as CommandItem));
+
+    const noteMatches = memoryNodes
+      .filter(n =>
+        n.title.toLowerCase().includes(q) ||
+        n.id.toLowerCase().includes(q) ||
+        n.tags.some(tag => tag.toLowerCase().includes(q))
+      )
+      .slice(0, 5)
+      .map(n => ({
+        id: `search-note-${n.id}`,
+        name: n.title,
+        description: `Memory note (${n.category}) — open in Memory`,
+        category: 'Memory',
+        icon: Network,
+        action: () => {
+          void useMemoryStore.getState().loadNote(currentProjectPath, n);
+          setActiveView('memory');
+          onClose();
+        },
+      } as CommandItem));
+
+    return [...commandMatches, ...taskMatches, ...noteMatches];
+  }, [mode, search, baseCommands, roomsList, tasks, memoryNodes, currentProjectPath, setActiveView, onClose]);
 
   // Keep selected index in bounds when items change
   useEffect(() => {
