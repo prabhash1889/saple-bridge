@@ -7,6 +7,7 @@ export interface GitFileStatus {
   status: string; // 'modified' | 'added' | 'deleted' | 'untracked'
   insertions?: number;
   deletions?: number;
+  staged?: boolean;
 }
 
 export interface ReviewRecord {
@@ -49,6 +50,8 @@ interface ReviewState {
   ) => Promise<void>;
   loadGitDiff: (projectPath: string, filePath: string) => Promise<string>;
   setActiveTaskId: (taskId: string | null) => void;
+  setFileStaged: (projectPath: string, taskId: string, filePath: string, staged: boolean) => Promise<void>;
+  commitStaged: (projectPath: string, message: string) => Promise<string>;
 }
 
 export const useReviewStore = create<ReviewState>((set, get) => ({
@@ -132,6 +135,32 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       set({ error: toErrorMessage(err), loading: false });
       throw err;
     }
+  },
+
+  // Stage/unstage one changed file and mirror the result into the record so the
+  // checkbox reflects git's index without a full record refresh.
+  setFileStaged: async (projectPath, taskId, filePath, staged) => {
+    await invoke(staged ? 'git_stage_file' : 'git_unstage_file', { projectPath, filePath });
+    set((state) => {
+      const record = state.reviews[taskId];
+      if (!record) return state;
+      return {
+        reviews: {
+          ...state.reviews,
+          [taskId]: {
+            ...record,
+            changedFiles: record.changedFiles.map((f) =>
+              f.path === filePath ? { ...f, staged } : f
+            ),
+          },
+        },
+      };
+    });
+  },
+
+  // Commit whatever is staged. Returns git's own summary line for the toast.
+  commitStaged: async (projectPath, message) => {
+    return await invoke<string>('git_commit', { projectPath, message });
   },
 
   loadGitDiff: async (projectPath, filePath) => {

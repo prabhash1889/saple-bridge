@@ -3072,11 +3072,65 @@ button.text-btn:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
   cursor: pointer;
   transition: background 0.2s;
+}
+
+.file-stage-checkbox {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Stage-and-commit bar under the changed-files list in the Review room. */
+.review-commit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.review-commit-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.review-commit-input:focus {
+  border-color: var(--accent);
+}
+
+.review-commit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.review-commit-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .file-item:last-child {

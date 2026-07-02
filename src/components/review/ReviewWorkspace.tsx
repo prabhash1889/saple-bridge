@@ -127,7 +127,9 @@ export const ReviewWorkspace: React.FC = () => {
     refreshReviewRecord,
     submitReviewDecision,
     loadGitDiff,
-    setActiveTaskId
+    setActiveTaskId,
+    setFileStaged,
+    commitStaged
   } = useReviewStore();
 
   const [activeTab, setActiveTab] = useState<'diff' | 'test'>('diff');
@@ -148,6 +150,8 @@ export const ReviewWorkspace: React.FC = () => {
   const [verificationResult, setVerificationResult] = useState<string | null>(null);
   const [memoryCreated, setMemoryCreated] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [commitMessage, setCommitMessage] = useState('');
+  const [committing, setCommitting] = useState(false);
 
   const reviewTasks = useMemo(() => tasks.filter((task) => task.column === 'review'), [tasks]);
   const activeTask = tasks.find((task) => task.id === activeTaskId);
@@ -370,6 +374,36 @@ export const ReviewWorkspace: React.FC = () => {
     }
   };
 
+  const stagedCount = activeRecord?.changedFiles.filter((f) => f.staged).length ?? 0;
+
+  const handleToggleStaged = async (filePath: string, staged: boolean) => {
+    if (!currentProjectPath || !activeTaskId) return;
+    try {
+      await setFileStaged(currentProjectPath, activeTaskId, filePath, staged);
+    } catch (err) {
+      useNotificationStore.getState().error(
+        `Failed to ${staged ? 'stage' : 'unstage'} ${filePath}`,
+        String(err)
+      );
+    }
+  };
+
+  const handleCommit = async () => {
+    if (!currentProjectPath || !commitMessage.trim() || stagedCount === 0) return;
+    setCommitting(true);
+    try {
+      const summary = await commitStaged(currentProjectPath, commitMessage.trim());
+      useNotificationStore.getState().success('Committed staged changes.', summary);
+      setCommitMessage('');
+      // Re-pull git status so committed files drop out of the changed list.
+      await handleRefresh();
+    } catch (err) {
+      useNotificationStore.getState().error('Commit failed', String(err));
+    } finally {
+      setCommitting(false);
+    }
+  };
+
   // TRUST BOUNDARY: `verificationCmd` is executed verbatim in the operator's shell by the Rust
   // `run_verification_command` (see review.rs). This is intentional — it runs the user's own
   // build/test commands — but it is unsandboxed. The command is shown in the editable input and
@@ -557,11 +591,20 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                       activeRecord?.changedFiles.map((file) => {
                         const fileClass = file.path === selectedFile ? 'active' : '';
                         return (
-                          <div 
-                            key={file.path} 
+                          <div
+                            key={file.path}
                             className={`file-item ${fileClass}`}
                             onClick={() => setSelectedFile(file.path)}
                           >
+                            <input
+                              type="checkbox"
+                              className="file-stage-checkbox"
+                              checked={!!file.staged}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={() => handleToggleStaged(file.path, !file.staged)}
+                              title={file.staged ? 'Unstage file' : 'Stage file for commit'}
+                              aria-label={`Stage ${file.path} for commit`}
+                            />
                             <span className="file-path" title={file.path}>{file.path}</span>
                             <div className="file-badges">
                               <span className="eyebrow" style={{ fontSize: '10px' }}>{file.status}</span>
@@ -577,6 +620,33 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                       })
                     )}
                   </div>
+
+                  {(activeRecord?.changedFiles.length ?? 0) > 0 && (
+                    <div className="review-commit-bar">
+                      <input
+                        className="review-commit-input"
+                        value={commitMessage}
+                        placeholder={stagedCount > 0 ? 'Commit message (e.g. "fix: ...")' : 'Stage files above to commit'}
+                        spellCheck={false}
+                        onChange={(e) => setCommitMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void handleCommit();
+                          }
+                        }}
+                      />
+                      <button
+                        className="review-commit-btn"
+                        disabled={committing || stagedCount === 0 || !commitMessage.trim()}
+                        onClick={() => void handleCommit()}
+                        title="git commit the staged files"
+                      >
+                        <Check size={13} />
+                        <span>{committing ? 'Committing...' : `Commit${stagedCount > 0 ? ` (${stagedCount})` : ''}`}</span>
+                      </button>
+                    </div>
+                  )}
 
                   {unrelatedFiles.length > 0 && (
                     <div className="warning-banner">

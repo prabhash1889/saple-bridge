@@ -17,6 +17,10 @@ pub struct GitFileStatus {
     pub status: String, // "modified", "added", "deleted", "untracked"
     pub insertions: Option<usize>,
     pub deletions: Option<usize>,
+    // Whether the index (X of porcelain XY) holds this file — i.e. `git add` has been run.
+    // `default` keeps review records written before this field existed deserializable.
+    #[serde(default)]
+    pub staged: bool,
 }
 
 /// Extract the destination path from a porcelain rename status field.
@@ -103,11 +107,15 @@ pub fn git_status_inner(project_path: String) -> Result<Vec<GitFileStatus>, Stri
             "modified".to_string()
         };
 
+        let index_char = status_chars.chars().next().unwrap_or(' ');
+        let staged = index_char != ' ' && index_char != '?';
+
         files.push(GitFileStatus {
             path: file_path,
             status,
             insertions: None,
             deletions: None,
+            staged,
         });
     }
 
@@ -213,6 +221,63 @@ pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<St
 #[tauri::command]
 pub async fn git_diff_file(project_path: String, file_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || git_diff_file_inner(project_path, file_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Stage (`git add`) or unstage (`git reset`) one file. The path is containment-validated and
+/// always passed after `--`, so it is a pathspec and can never be parsed as a git option.
+/// No shell is involved (argv exec), so no quoting/injection concerns.
+fn git_stage_file_inner(project_path: String, file_path: String, stage: bool) -> Result<(), String> {
+    get_project_file_path(&project_path, &file_path)?;
+
+    let args: &[&str] = if stage {
+        &["add", "--", &file_path]
+    } else {
+        &["reset", "--", &file_path]
+    };
+    let output = run_git_with_timeout(&project_path, args, GIT_TIMEOUT)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git_stage_file_inner(project_path, file_path, true))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_unstage_file(project_path: String, file_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git_stage_file_inner(project_path, file_path, false))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn git_commit_inner(project_path: String, message: String) -> Result<String, String> {
+    let msg = message.trim().to_string();
+    if msg.is_empty() {
+        return Err("Commit message must not be empty".to_string());
+    }
+    // `-m <msg>` goes through argv, never a shell, so arbitrary message content is safe.
+    let output = run_git_with_timeout(&project_path, &["commit", "-m", &msg], GIT_TIMEOUT)?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        // git prints "nothing to commit" style failures on stdout, real errors on stderr.
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Err(if stderr.is_empty() { stdout } else { stderr })
+    }
+}
+
+#[tauri::command]
+pub async fn git_commit(project_path: String, message: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || git_commit_inner(project_path, message))
         .await
         .map_err(|e| e.to_string())?
 }
