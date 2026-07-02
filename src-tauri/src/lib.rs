@@ -24,6 +24,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(pty::PtyRegistry::new())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| {
             // Closing the window must kill every PTY child (and join its reader/emitter threads),
             // otherwise agent CLIs keep running as orphaned processes after the app exits.

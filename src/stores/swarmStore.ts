@@ -9,6 +9,7 @@ import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
 import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
 import { useTerminalStore } from './terminalStore';
 import { useAgentSessionStore } from './agentSessionStore';
+import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
 
@@ -503,10 +504,10 @@ export const useSwarmStore = create<SwarmState>()(
       updateAgentStatus: async (projectPath, agentId, status, extra) => {
         // Auto-approve: an agent that requests review but is flagged auto-approve
         // advances straight to 'done' so dependents unblock without manual sign-off.
+        const previousAgent = get().activeAgents.find(a => a.id === agentId);
         let effectiveStatus = status;
         if (status === 'review') {
-          const agent = get().activeAgents.find(a => a.id === agentId);
-          if (agent?.autoApprove) {
+          if (previousAgent?.autoApprove) {
             effectiveStatus = 'done';
           }
         }
@@ -515,6 +516,13 @@ export const useSwarmStore = create<SwarmState>()(
             a.id === agentId ? { ...a, status: effectiveStatus, ...extra } : a
           )
         }));
+        if (
+          previousAgent &&
+          previousAgent.status !== effectiveStatus &&
+          (effectiveStatus === 'done' || effectiveStatus === 'failed')
+        ) {
+          notifyAgentStatusChanged(previousAgent.name, effectiveStatus);
+        }
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
       },

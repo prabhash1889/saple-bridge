@@ -7,6 +7,7 @@ import { useAgentSessionStore } from './agentSessionStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
+import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
 
 export type AiProvider = Extract<AgentProvider, 'codex' | 'claude' | 'gemini' | 'openrouter' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'custom'>;
@@ -396,6 +397,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           const task = useKanbanStore.getState().tasks.find((t) => t.terminalId === id);
           if (projectPath && task && task.column !== 'review') {
             void useKanbanStore.getState().updateTask(projectPath, task.id, { column: 'review' });
+            notifyTaskReadyForReview(task.title);
           }
         }
 
