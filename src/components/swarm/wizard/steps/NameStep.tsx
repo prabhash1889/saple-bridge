@@ -21,11 +21,11 @@ export const NameStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><Tag size={24} /></div>
-        <h2 style={heroTitleStyle}>Name your <span style={{ color: 'var(--accent)' }}>swarm</span></h2>
+        <h2 style={heroTitleStyle}>Name your <span className="extracted-style-212">swarm</span></h2>
         <p style={heroSubtitleStyle}>Give this swarm a recognizable name so you can find it later.</p>
       </div>
 
-      <div style={{ maxWidth: '460px', margin: '0 auto' }}>
+      <div className="extracted-style-213">
         <div style={sectionLabelStyle}>Swarm Name</div>
         <input
           value={swarmName}

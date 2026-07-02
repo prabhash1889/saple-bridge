@@ -108,7 +108,7 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
 
   const handleLaunchAgent = async () => {
     if (!currentProjectPath) return;
-    
+
     const provider = task.agentConfig?.provider || 'codex';
     const isProviderReady = useProviderStore.getState().isReady(provider);
 
@@ -149,7 +149,7 @@ Instructions: ${systemPrompt}
       });
 
       const paneId = await addPane(currentProjectPath, provider, model, promptPath);
-      
+
       const session = await useAgentSessionStore.getState().createSession({
         id: sessionId,
         projectPath: currentProjectPath,
@@ -162,13 +162,13 @@ Instructions: ${systemPrompt}
         terminalId: paneId,
       });
 
-      await updateTask(currentProjectPath, task.id, { 
-        terminalId: paneId, 
+      await updateTask(currentProjectPath, task.id, {
+        terminalId: paneId,
         sessionId: session.id,
-        column: 'progress' 
+        column: 'progress'
       });
 
-      useTerminalStore.getState().updateSession(paneId, { 
+      useTerminalStore.getState().updateSession(paneId, {
         name: `${provider.toUpperCase()} Agent: ${task.title}`,
         agentSessionId: session.id
       });
@@ -186,21 +186,21 @@ Instructions: ${systemPrompt}
       <div style={drawerContainerStyle} onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div style={headerStyle}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div className="extracted-style-006">
             <span style={statusStyle(task.column)}>{task.column.toUpperCase()}</span>
             <h3 style={titleStyle}>{task.title}</h3>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button 
-              onClick={() => { onEdit(task); onClose(); }} 
-              style={iconBtnStyle} 
+          <div className="extracted-style-007">
+            <button
+              onClick={() => { onEdit(task); onClose(); }}
+              style={iconBtnStyle}
               title="Edit Task"
             >
               <Edit size={16} />
             </button>
-            <button 
-              onClick={onClose} 
-              style={iconBtnStyle} 
+            <button
+              onClick={onClose}
+              style={iconBtnStyle}
               title="Close Panel"
             >
               <X size={18} />
@@ -222,11 +222,11 @@ Instructions: ${systemPrompt}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}><CheckSquare size={14} /> Acceptance Criteria</h4>
               {task.acceptanceCriteria && task.acceptanceCriteria.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                <div className="extracted-style-008">
                   {task.acceptanceCriteria.map((c, i) => (
                     <div key={i} style={criteriaRowStyle}>
                       <input type="checkbox" readOnly checked={task.column === 'done'} style={checkboxStyle} />
-                      <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{c}</span>
+                      <span className="extracted-style-009">{c}</span>
                     </div>
                   ))}
                 </div>
@@ -239,7 +239,7 @@ Instructions: ${systemPrompt}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}><FileText size={14} /> Target Files</h4>
               {task.targetFiles && task.targetFiles.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                <div className="extracted-style-010">
                   {task.targetFiles.map((file, i) => (
                     <span key={i} style={fileChipStyle}>
                       {file}
@@ -274,7 +274,7 @@ Instructions: ${systemPrompt}
             {/* Labels */}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}>Labels</h4>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '8px' }}>
+              <div className="extracted-style-011">
                 {task.labels && task.labels.length > 0 ? (
                   task.labels.map(l => (
                     <span key={l} style={labelBadgeStyle}>{l}</span>
@@ -338,17 +338,17 @@ Instructions: ${systemPrompt}
         {/* Drawer Actions / Footer */}
         <div style={footerStyle}>
           {task.column === 'review' && (
-            <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
-              <button 
-                onClick={handleReject} 
+            <div className="extracted-style-012">
+              <button
+                onClick={handleReject}
                 className="secondary-action"
                 style={{ ...btnStyle, borderColor: 'var(--color-danger)', color: 'var(--color-danger)', flex: 1 }}
               >
                 <AlertCircle size={14} /> Reject Changes
               </button>
-              <button 
-                onClick={handleApprove} 
-                className="primary" 
+              <button
+                onClick={handleApprove}
+                className="primary"
                 style={{ ...btnStyle, backgroundColor: 'var(--color-success)', borderColor: 'var(--color-success)', color: 'white', flex: 1 }}
               >
                 <CheckCircle2 size={14} /> Approve & Merge
@@ -357,18 +357,18 @@ Instructions: ${systemPrompt}
           )}
 
           {task.column !== 'review' && (
-            <div style={{ display: 'flex', gap: '12px', width: '100%', justifyContent: 'flex-end' }}>
+            <div className="extracted-style-013">
               {isTerminalRunning ? (
-                <button 
-                  onClick={handleViewTerminal} 
+                <button
+                  onClick={handleViewTerminal}
                   className="primary"
                   style={{ ...btnStyle, flex: 1 }}
                 >
                   <Terminal size={14} /> View Terminal
                 </button>
               ) : (
-                <button 
-                  onClick={handleLaunchAgent} 
+                <button
+                  onClick={handleLaunchAgent}
                   className="primary"
                   style={{ ...btnStyle, flex: 1 }}
                   disabled={!currentProjectPath}
@@ -581,7 +581,7 @@ const labelBadgeStyle: React.CSSProperties = {
 const sessionStatusStyle = (status: string): React.CSSProperties => {
   let color = 'var(--text-secondary)';
   let bg = 'var(--bg-surface-active)';
-  
+
   if (['running', 'starting'].includes(status)) {
     color = 'var(--color-success)';
     bg = 'var(--color-success-bg)';
@@ -589,7 +589,7 @@ const sessionStatusStyle = (status: string): React.CSSProperties => {
     color = 'var(--color-danger)';
     bg = 'var(--color-danger-bg)';
   }
-  
+
   return {
     fontSize: '11px',
     fontWeight: 600,

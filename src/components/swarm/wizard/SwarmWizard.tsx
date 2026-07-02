@@ -118,7 +118,7 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
       <div className="modal-container wizard" style={containerStyle}>
         {/* Header */}
         <div style={headerStyle}>
-          <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Create Swarm</span>
+          <span className="extracted-style-240">Create Swarm</span>
           <button onClick={onClose} style={closeBtnStyle} title="Close"><X size={16} /></button>
         </div>
 
@@ -135,8 +135,8 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
                   style={stepPillStyle(active, complete)}
                   disabled={!complete && !active}
                 >
-                  <span style={{ display: 'inline-flex' }}>{complete ? <Check size={13} /> : <Icon size={13} />}</span>
-                  <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s.label}</span>
+                  <span className="extracted-style-241">{complete ? <Check size={13} /> : <Icon size={13} />}</span>
+                  <span className="extracted-style-242">{s.label}</span>
                 </button>
                 {i < STEPS.length - 1 && <div style={connectorStyle(complete)} />}
               </React.Fragment>
@@ -161,7 +161,7 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
               <ChevronLeft size={14} /> Back
             </button>
           )}
-          <span style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+          <span className="extracted-style-243">
             STEP {state.step + 1} OF {STEPS.length}
           </span>
           {isLast ? (

@@ -363,9 +363,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
       {activeView === 'terminals' && panes.length > 0 && (
         <div className="sidebar-terminal-controls">
           <div
-            className="sidebar-section-title clickable-header"
+            className="extracted-style-014 sidebar-section-title clickable-header"
             onClick={() => setControlsCollapsed(!controlsCollapsed)}
-            style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', width: '100%', gap: '6px' }}
           >
              <TerminalIcon size={12} className="terminal-icon-glow" />
              <span>Terminal Controls</span>
@@ -385,7 +384,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                     aria-expanded={providerMenuOpen}
                     aria-label="Terminal type for new panes"
                   >
-                    <Bot size={14} style={{ color: 'var(--text-secondary)' }} />
+                    <Bot size={14} className="extracted-style-015" />
                     <span className="terminal-provider-label">
                       {AI_PROVIDERS.find((option) => option.value === selectedProvider)?.label ?? 'Claude'}
                     </span>
@@ -457,7 +456,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                   <div className="sidebar-control-row terminal-detail-row">
                     {/* Rename Pane */}
                     <div className="sidebar-input-group">
-                      <Edit3 size={13} style={{ color: 'var(--text-secondary)' }} />
+                      <Edit3 size={13} className="extracted-style-016" />
                       <input
                         value={focusedSession.name}
                         onChange={handleRenamePane}
@@ -509,7 +508,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
                     {/* Terminal font — app-wide; sits to the right of Maximize */}
                     <div className="sidebar-input-group terminal-font-group">
-                      <TerminalIcon size={13} style={{ color: 'var(--text-secondary)' }} />
+                      <TerminalIcon size={13} className="extracted-style-017" />
                       <select
                         value={fontId}
                         onChange={(e) => setFontId(e.target.value)}

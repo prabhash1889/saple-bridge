@@ -37,13 +37,13 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><Rocket size={24} /></div>
-        <h2 style={heroTitleStyle}>Review &amp; <span style={{ color: 'var(--accent)' }}>launch</span></h2>
+        <h2 style={heroTitleStyle}>Review &amp; <span className="extracted-style-183">launch</span></h2>
         <p style={heroSubtitleStyle}>Confirm the setup below, then launch the swarm. Agents start as soon as their dependencies allow.</p>
       </div>
 
       {unready.length > 0 && (
         <div style={warningBannerStyle}>
-          <AlertTriangle size={14} style={{ marginTop: '1px', flexShrink: 0 }} />
+          <AlertTriangle size={14} className="extracted-style-184" />
           <span>
             No stored credentials for {unready.map((p) => PROVIDER_LABELS[p]).join(', ')}. Those agents may still work if the CLI is logged in, otherwise they could fail.
           </span>
@@ -51,43 +51,43 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
       )}
       {experimentalInUse.length > 0 && (
         <div style={warningBannerStyle}>
-          <Zap size={14} style={{ marginTop: '1px', flexShrink: 0 }} />
+          <Zap size={14} className="extracted-style-185" />
           <span>{experimentalInUse.map((p) => PROVIDER_LABELS[p]).join(', ')} are experimental and launch interactively (no prompt is piped in).</span>
         </div>
       )}
       {agents.length > maxParallel && (
         <div style={warningBannerStyle}>
-          <AlertTriangle size={14} style={{ marginTop: '1px', flexShrink: 0 }} />
+          <AlertTriangle size={14} className="extracted-style-186" />
           <span>This roster has {agents.length} agents, above the workspace's parallel limit ({maxParallel}). Dependency ordering usually keeps fewer running at once — raise Max Parallel Agents in settings if needed.</span>
         </div>
       )}
 
       {/* Summary fields */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div className="extracted-style-187">
         <Field label="Name" value={swarmName || '—'} />
         <Field label="Directory" value={directory || '—'} mono />
         <div>
           <div style={sectionLabelStyle}>Mission</div>
-          <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{mission || '—'}</div>
+          <div className="extracted-style-188">{mission || '—'}</div>
         </div>
 
         {/* Roster */}
         <div>
           <div style={sectionLabelStyle}>Roster ({agents.length})</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div className="extracted-style-189">
             {agents.map((a) => {
               const provider = (a.provider || 'codex') as AgentProvider;
               const ready = isReady(provider) || EXPERIMENTAL_PROVIDERS.has(provider);
               return (
-                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', padding: '6px 10px', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface-light)', border: '1px solid var(--border)' }}>
+                <div key={a.id} className="extracted-style-190">
                   <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: ROLE_COLORS[a.role], flexShrink: 0 }} />
-                  <span style={{ flex: 1, color: 'var(--text-primary)', fontWeight: 600 }}>{a.name}</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{ROLE_LABELS[a.role]}</span>
-                  <span style={{ color: 'var(--text-secondary)' }}>{PROVIDER_LABELS[provider]}</span>
-                  {a.autoApprove && <span style={{ color: 'var(--color-warning)', fontSize: '10.5px', fontWeight: 700 }}>AUTO</span>}
+                  <span className="extracted-style-191">{a.name}</span>
+                  <span className="extracted-style-192">{ROLE_LABELS[a.role]}</span>
+                  <span className="extracted-style-193">{PROVIDER_LABELS[provider]}</span>
+                  {a.autoApprove && <span className="extracted-style-194">AUTO</span>}
                   {ready
-                    ? <Check size={13} style={{ color: 'var(--color-success)' }} />
-                    : <AlertTriangle size={13} style={{ color: 'var(--color-warning)' }} />}
+                    ? <Check size={13} className="extracted-style-195" />
+                    : <AlertTriangle size={13} className="extracted-style-196" />}
                 </div>
               );
             })}
@@ -98,9 +98,9 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
         {skills.length > 0 && (
           <div>
             <div style={sectionLabelStyle}>Skills</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            <div className="extracted-style-197">
               {skills.map((id) => (
-                <span key={id} style={{ fontSize: '11px', padding: '3px 9px', borderRadius: 'var(--radius-full)', background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 600 }}>
+                <span key={id} className="extracted-style-198">
                   {getSkillById(id)?.label || id}
                 </span>
               ))}
@@ -112,10 +112,10 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
         {contextFiles.length > 0 && (
           <div>
             <div style={sectionLabelStyle}>Context Files ({contextFiles.length})</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            <div className="extracted-style-199">
               {contextFiles.map((f) => (
-                <span key={f.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-                  <FileText size={12} style={{ color: 'var(--text-muted)' }} /> {f.name}
+                <span key={f.name} className="extracted-style-200">
+                  <FileText size={12} className="extracted-style-201" /> {f.name}
                 </span>
               ))}
             </div>

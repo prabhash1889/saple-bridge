@@ -231,7 +231,7 @@ export const CodeViewer: React.FC = () => {
   if (!activeFile) {
     return (
       <div className="code-viewer-empty">
-        <FileCode size={36} style={{ color: 'var(--text-muted)', marginBottom: '12px' }} />
+        <FileCode size={36} className="extracted-style-001" />
         <h3>No File Selected</h3>
         <p>Choose a file from the file explorer to view or edit its contents.</p>
       </div>

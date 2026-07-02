@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { 
+import {
   Folder, FolderOpen, File, ChevronDown, ChevronRight, Search, RefreshCw,
   FileCode, Terminal, Settings, BookOpen, ExternalLink
 } from 'lucide-react';
@@ -68,7 +68,7 @@ const buildTree = (files: FileEntry[]): TreeNode[] => {
     } else {
       const parentPath = parts.slice(0, -1).join('/');
       let parentNode = nodeMap.get(parentPath);
-      
+
       if (!parentNode) {
         parentNode = {
           name: parts[parts.length - 2],
@@ -77,7 +77,7 @@ const buildTree = (files: FileEntry[]): TreeNode[] => {
           children: [],
         };
         nodeMap.set(parentPath, parentNode);
-        
+
         const grandparentParts = parentPath.split('/');
         if (grandparentParts.length === 1) {
           rootNodes.push(parentNode);
@@ -145,7 +145,7 @@ const FileTreeNodeItem: React.FC<FileTreeNodeProps> = ({
     }
   };
 
-  const { icon: FileIcon, color: iconColor } = node.isDir 
+  const { icon: FileIcon, color: iconColor } = node.isDir
     ? { icon: isFolderExpanded ? FolderOpen : Folder, color: '#fbbf24' }
     : getFileIcon(node.name);
 
@@ -160,10 +160,10 @@ const FileTreeNodeItem: React.FC<FileTreeNodeProps> = ({
       >
         {/* Render vertical indentation guidelines */}
         {Array.from({ length: depth }).map((_, i) => (
-          <div 
-            key={i} 
-            className="file-tree-indent-guide" 
-            style={{ left: `${i * 12 + 14}px` }} 
+          <div
+            key={i}
+            className="file-tree-indent-guide"
+            style={{ left: `${i * 12 + 14}px` }}
           />
         ))}
 
@@ -299,8 +299,8 @@ export const FileTree: React.FC = () => {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <button 
-          onClick={() => currentProjectPath && loadFiles(currentProjectPath)} 
+        <button
+          onClick={() => currentProjectPath && loadFiles(currentProjectPath)}
           className="refresh-btn icon-button"
           title="Refresh file tree"
           disabled={loading}
@@ -311,7 +311,7 @@ export const FileTree: React.FC = () => {
 
       <div className="file-tree-list" role="tree">
         {error ? (
-          <div className="compact-empty" style={{ color: 'var(--color-danger)', padding: '8px 12px', fontSize: '12px' }}>
+          <div className="extracted-style-002 compact-empty">
             {error}
           </div>
         ) : loading && files.length === 0 ? (
@@ -322,7 +322,7 @@ export const FileTree: React.FC = () => {
             <div className="compact-empty">No matching files.</div>
           ) : (
             searchedFiles.map(file => {
-              const { icon: FileIcon, color: iconColor } = file.isDir 
+              const { icon: FileIcon, color: iconColor } = file.isDir
                 ? { icon: Folder, color: '#fbbf24' }
                 : getFileIcon(file.name);
               const isActive = activeFile === file.path;
@@ -330,8 +330,7 @@ export const FileTree: React.FC = () => {
               return (
                 <div
                   key={file.path}
-                  className={`file-tree-node flat-match ${isActive ? 'active' : ''}`}
-                  style={{ paddingLeft: '8px' }}
+                  className={[`file-tree-node flat-match ${isActive ? 'active' : ''}`, 'extracted-style-277'].filter(Boolean).join(' ')}
                   onClick={() => file.isDir ? toggleFolder(file.path) : handleFileClick(file.path)}
                 >
                   <span className="node-icon" style={{ color: iconColor }}>

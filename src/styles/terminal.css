@@ -1182,3 +1182,235 @@
     flex-direction: column;
   }
 }
+
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-244 {
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.extracted-style-245 {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.extracted-style-246 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.extracted-style-247 {
+  height: 34px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 0 10px;
+}
+
+.extracted-style-248 {
+  margin-top: 10px;
+}
+
+.extracted-style-249 {
+  border: none;
+  background: transparent;
+  padding: 0 24px;
+  max-width: 800px;
+  margin: 0 auto;
+  margin-top: 40px;
+}
+
+.extracted-style-250 {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.extracted-style-251 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.extracted-style-252 {
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.extracted-style-253 {
+  margin-bottom: 24px;
+}
+
+.extracted-style-254 {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.extracted-style-255 {
+  font-weight: 600;
+}
+
+.extracted-style-256 {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.extracted-style-257 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.extracted-style-258 {
+  color: var(--text-secondary);
+  margin-right: 8px;
+}
+
+.extracted-style-259 {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.extracted-style-260 {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.extracted-style-261 {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.extracted-style-262 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.extracted-style-263 {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.extracted-style-264 {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--text-secondary);
+}
+
+.extracted-style-265 {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.extracted-style-266 {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.extracted-style-267 {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.extracted-style-268 {
+  flex: 1;
+}
+
+.extracted-style-269 {
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.extracted-style-270 {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.extracted-style-271 {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.extracted-style-272 {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.extracted-style-273 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.extracted-style-274 {
+  width: 100%;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  padding: 12px 16px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.extracted-style-275 {
+  margin-top: 20px;
+  padding-bottom: 20px;
+}
+
+.extracted-style-276 {
+  margin-right: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.2s;
+}

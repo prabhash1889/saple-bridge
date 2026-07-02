@@ -24,23 +24,23 @@ export const MissionStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><MessageSquare size={24} /></div>
-        <h2 style={heroTitleStyle}>Swarm <span style={{ color: 'var(--accent)' }}>mission</span></h2>
+        <h2 style={heroTitleStyle}>Swarm <span className="extracted-style-202">mission</span></h2>
         <p style={heroSubtitleStyle}>Describe what you want this swarm to build or fix. This is shared with all agents as their mission brief.</p>
       </div>
 
-      <div style={{ position: 'relative', marginBottom: '10px' }}>
+      <div className="extracted-style-203">
         <textarea
           value={mission}
           onChange={(e) => update({ mission: e.target.value })}
           placeholder="What should this swarm accomplish? Agents will read this as their mission brief."
           style={{ ...textareaStyle, minHeight: '140px' }}
         />
-        <span style={{ position: 'absolute', bottom: '10px', right: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
+        <span className="extracted-style-204">
           {mission.length} chars
         </span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: 'var(--text-muted)', marginBottom: '24px' }}>
-        <Sparkles size={12} style={{ color: 'var(--accent)' }} />
+      <div className="extracted-style-205">
+        <Sparkles size={12} className="extracted-style-206" />
         Shared with all agents so they can coordinate and stay aligned.
       </div>
 
@@ -52,9 +52,9 @@ export const MissionStep: React.FC<WizardStepProps> = ({ state, update }) => {
         const items = SWARM_SKILLS.filter((s) => s.category === cat);
         if (items.length === 0) return null;
         return (
-          <div key={cat} style={{ marginBottom: '16px' }}>
+          <div key={cat} className="extracted-style-207">
             <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: CATEGORY_COLOR[cat], marginBottom: '8px' }}>{cat}</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
+            <div className="extracted-style-208">
               {items.map((skill) => {
                 const selected = skills.includes(skill.id);
                 return (
@@ -79,9 +79,9 @@ export const MissionStep: React.FC<WizardStepProps> = ({ state, update }) => {
                     >
                       {selected && <Check size={11} strokeWidth={3} />}
                     </span>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>{skill.label}</span>
-                      <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.35, marginTop: '2px' }}>{skill.description}</span>
+                    <span className="extracted-style-209">
+                      <span className="extracted-style-210">{skill.label}</span>
+                      <span className="extracted-style-211">{skill.description}</span>
                     </span>
                   </button>
                 );

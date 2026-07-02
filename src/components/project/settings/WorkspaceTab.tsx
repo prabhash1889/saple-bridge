@@ -89,15 +89,14 @@ export const WorkspaceTab: React.FC = () => {
               className="settings-input settings-input-narrow"
             />
           </div>
-          <div className="input-group checkbox-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px', marginTop: '14px', marginBottom: '14px' }}>
+          <div className="extracted-style-087 input-group checkbox-group">
             <input
               type="checkbox"
               id="enableEditMode"
               checked={enableEditMode}
-              onChange={e => setEnableEditMode(e.target.checked)}
-              style={{ margin: 0, width: 'auto', cursor: 'pointer' }}
+              onChange={e => setEnableEditMode(e.target.checked)} className="extracted-style-088"
             />
-            <label htmlFor="enableEditMode" style={{ fontWeight: 'normal', cursor: 'pointer', margin: 0, userSelect: 'none' }}>
+            <label htmlFor="enableEditMode" className="extracted-style-089">
               Enable File Editing (allows modifying files via file browser)
             </label>
           </div>

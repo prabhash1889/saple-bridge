@@ -63,12 +63,12 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
 
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
-      case 'running': return <Bot size={14} className="spin" style={{ color: 'var(--accent)' }} />;
-      case 'done': return <CheckCircle size={14} style={{ color: 'var(--color-success)' }} />;
-      case 'failed': return <AlertTriangle size={14} style={{ color: 'var(--color-danger)' }} />;
-      case 'review': return <UserCheck size={14} style={{ color: 'var(--color-warning)' }} />;
-      case 'blocked': return <Clock size={14} style={{ color: 'var(--text-muted)' }} />;
-      default: return <Clock size={14} style={{ color: 'var(--text-muted)' }} />;
+      case 'running': return <Bot size={14} className="extracted-style-128 spin" />;
+      case 'done': return <CheckCircle size={14} className="extracted-style-129" />;
+      case 'failed': return <AlertTriangle size={14} className="extracted-style-130" />;
+      case 'review': return <UserCheck size={14} className="extracted-style-131" />;
+      case 'blocked': return <Clock size={14} className="extracted-style-132" />;
+      default: return <Clock size={14} className="extracted-style-133" />;
     }
   };
 
@@ -170,8 +170,7 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
               stroke={isActive ? 'var(--accent)' : 'var(--border)'}
               strokeWidth={isActive ? 2 : 1.5}
               strokeDasharray={toAgent?.status === 'blocked' ? '4 4' : undefined}
-              markerEnd={isActive ? 'url(#arrow-active)' : 'url(#arrow)'}
-              style={{ transition: 'stroke 0.2s, stroke-width 0.2s' }}
+              markerEnd={isActive ? 'url(#arrow-active)' : 'url(#arrow)'} className="extracted-style-134"
             />
           );
         })}
@@ -202,15 +201,15 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
 
                     <div style={nodeMetaStyle}>
                       <span style={roleBadgeStyle(agent.role)}>{agent.role}</span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{agent.model}</span>
+                      <span className="extracted-style-135">{agent.model}</span>
                     </div>
 
                     <div style={nodeFooterStyle}>
                       <div style={nodeStatusStyle(agent.status)}>
                         {getStatusIcon(agent.status)}
-                        <span style={{ textTransform: 'uppercase', fontSize: '9px', fontWeight: 600 }}>{agent.status}</span>
+                        <span className="extracted-style-136">{agent.status}</span>
                       </div>
-                      
+
                       {agent.status === 'failed' && (
                         <button
                           onClick={(e) => {

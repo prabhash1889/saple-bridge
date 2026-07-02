@@ -50,7 +50,7 @@ export const ContextStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><FileText size={24} /></div>
-        <h2 style={heroTitleStyle}>Supporting <span style={{ color: 'var(--accent)' }}>context</span></h2>
+        <h2 style={heroTitleStyle}>Supporting <span className="extracted-style-160">context</span></h2>
         <p style={heroSubtitleStyle}>Optionally attach files to give your swarm extra context — specs, logs, code, etc. Text files only.</p>
       </div>
 
@@ -58,8 +58,7 @@ export const ContextStep: React.FC<WizardStepProps> = ({ state, update }) => {
         ref={inputRef}
         type="file"
         multiple
-        style={{ display: 'none' }}
-        onChange={(e) => { void handleFiles(e.target.files); e.target.value = ''; }}
+        onChange={(e) => { void handleFiles(e.target.files); e.target.value = ''; }} className="extracted-style-161"
       />
 
       <div
@@ -74,37 +73,33 @@ export const ContextStep: React.FC<WizardStepProps> = ({ state, update }) => {
           background: dragging ? 'var(--accent-light)' : 'var(--bg-surface-light)',
         }}
       >
-        <UploadCloud size={28} style={{ color: 'var(--accent)' }} />
-        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Add context files</div>
-        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Drag &amp; drop or click to attach text files (specs, logs, code).</div>
+        <UploadCloud size={28} className="extracted-style-162" />
+        <div className="extracted-style-163">Add context files</div>
+        <div className="extracted-style-164">Drag &amp; drop or click to attach text files (specs, logs, code).</div>
       </div>
 
       {rejected.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '12px', fontSize: '11.5px', color: 'var(--color-warning)' }}>
-          <AlertTriangle size={13} style={{ marginTop: '1px', flexShrink: 0 }} />
+        <div className="extracted-style-165">
+          <AlertTriangle size={13} className="extracted-style-166" />
           <span>Skipped: {rejected.join(', ')}</span>
         </div>
       )}
 
       {contextFiles.length > 0 && (
-        <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div className="extracted-style-167">
           {contextFiles.map((f) => (
             <div
-              key={f.name}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px',
-                borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', background: 'var(--bg-surface-light)',
-              }}
+              key={f.name} className="extracted-style-168"
             >
-              <FileText size={14} style={{ color: 'var(--text-muted)' }} />
-              <span style={{ flex: 1, fontSize: '12.5px', color: 'var(--text-primary)' }}>{f.name}</span>
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{(f.size / 1024).toFixed(1)} KB</span>
-              <button onClick={() => removeFile(f.name)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
+              <FileText size={14} className="extracted-style-169" />
+              <span className="extracted-style-170">{f.name}</span>
+              <span className="extracted-style-171">{(f.size / 1024).toFixed(1)} KB</span>
+              <button onClick={() => removeFile(f.name)} className="extracted-style-172">
                 <X size={14} />
               </button>
             </div>
           ))}
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right' }}>
+          <div className="extracted-style-173">
             {(totalBytes / 1024).toFixed(1)} KB of {(MAX_TOTAL_BYTES / 1024).toFixed(0)} KB used
           </div>
         </div>

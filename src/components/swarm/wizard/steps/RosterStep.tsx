@@ -100,14 +100,14 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><Users size={26} /></div>
-        <h2 style={heroTitleStyle}>Build your <span style={{ color: 'var(--accent)' }}>roster</span></h2>
+        <h2 style={heroTitleStyle}>Build your <span className="extracted-style-214">roster</span></h2>
         <p style={heroSubtitleStyle}>Pick a preset or customize individual agents. This is the team that will ship your code.</p>
       </div>
 
       {/* Quick presets */}
       <div style={sectionStyle}>
         <div style={sectionLabelStyle}>Quick Presets</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+        <div className="extracted-style-215">
           {SIZE_PRESETS.map((p) => {
             const selected = sizePresetId === p.id;
             return (
@@ -122,7 +122,7 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
                 }}
               >
                 <span style={{ fontSize: '22px', fontWeight: 700, color: selected ? 'var(--accent)' : 'var(--text-primary)' }}>{p.count}</span>
-                <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{p.label}</span>
+                <span className="extracted-style-216">{p.label}</span>
               </button>
             );
           })}
@@ -135,7 +135,7 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
         <div style={chipRowStyle}>
           {PROVIDER_ORDER.map((p) => (
             <button key={p} onClick={() => selectGlobalProvider(p)} style={chipStyle(globalProvider === p)}>
-              {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} style={{ color: 'var(--color-warning)' }} />}
+              {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} className="extracted-style-217" />}
               {PROVIDER_LABELS[p]}
             </button>
           ))}
@@ -143,7 +143,7 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
       </div>
 
       {/* Composition summary */}
-      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+      <div className="extracted-style-218">
         {composition.map((c) => (
           <span
             key={c.role}
@@ -156,11 +156,11 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
             {roleIcon(c.role, 12)} {c.count} {ROLE_LABELS[c.role]}{c.count > 1 ? 's' : ''}
           </span>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>{agents.length} total</span>
+        <span className="extracted-style-219">{agents.length} total</span>
       </div>
 
       {/* Agent list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div className="extracted-style-220">
         {agents.map((agent, idx) => (
           <AgentRow
             key={agent.id}
@@ -176,30 +176,21 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
       </div>
 
       <button
-        onClick={addAgent}
-        style={{
-          marginTop: '10px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-          height: '36px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border)',
-          background: 'transparent', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-        }}
+        onClick={addAgent} className="extracted-style-221"
       >
         <Plus size={13} /> Add Agent
       </button>
 
       {/* Advanced: start from template */}
-      <div style={{ marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+      <div className="extracted-style-222">
         <button
-          onClick={() => setShowTemplates((v) => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '6px', background: 'transparent', border: 'none',
-            color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', padding: 0,
-          }}
+          onClick={() => setShowTemplates((v) => !v)} className="extracted-style-223"
         >
           {showTemplates ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           Advanced: start from a named template
         </button>
         {showTemplates && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px', marginTop: '12px' }}>
+          <div className="extracted-style-224">
             {templates.map((t) => (
               <button
                 key={t.id}
@@ -210,8 +201,8 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
                   background: startedFromTemplateId === t.id ? 'var(--accent-light)' : 'var(--bg-surface-light)',
                 }}
               >
-                <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.4 }}>{t.description}</div>
+                <div className="extracted-style-225">{t.name}</div>
+                <div className="extracted-style-226">{t.description}</div>
               </button>
             ))}
           </div>
@@ -234,17 +225,17 @@ interface AgentRowProps {
 const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleExpand, onPatch, onRemove, onToggleDependency }) => {
   const accent = ROLE_COLORS[agent.role];
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-surface-light)', overflow: 'hidden' }}>
+    <div className="extracted-style-227">
       {/* Collapsed header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px' }}>
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)', width: '18px' }}>{index + 1}</span>
+      <div className="extracted-style-228">
+        <span className="extracted-style-229">{index + 1}</span>
         <span style={{ color: accent, display: 'inline-flex' }}>{roleIcon(agent.role)}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div className="extracted-style-230">
+          <div className="extracted-style-231">
             {agent.name}
           </div>
-          <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>
-            {PROVIDER_LABELS[agent.provider || 'codex']} · {agent.autoApprove ? <span style={{ color: 'var(--color-warning)' }}>Auto</span> : 'Manual'}
+          <div className="extracted-style-232">
+            {PROVIDER_LABELS[agent.provider || 'codex']} · {agent.autoApprove ? <span className="extracted-style-233">Auto</span> : 'Manual'}
           </div>
         </div>
         <button onClick={onRemove} title="Remove agent" style={iconBtn}><Trash2 size={13} /></button>
@@ -252,7 +243,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
       </div>
 
       {agent.expanded && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '12px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div className="extracted-style-234">
           {/* Name */}
           <div>
             <div style={sectionLabelStyle}>Name</div>
@@ -281,7 +272,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
                   onClick={() => onPatch({ provider: p, model: PROVIDER_DEFAULT_MODEL[p] || 'default' })}
                   style={chipStyle((agent.provider || 'codex') === p)}
                 >
-                  {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} style={{ color: 'var(--color-warning)' }} />}
+                  {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} className="extracted-style-235" />}
                   {PROVIDER_LABELS[p]}
                 </button>
               ))}
@@ -289,8 +280,8 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
           </div>
 
           {/* Model + auto-approve */}
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-            <div style={{ flex: 1 }}>
+          <div className="extracted-style-236">
+            <div className="extracted-style-237">
               <div style={sectionLabelStyle}>Model</div>
               <input value={agent.model} onChange={(e) => onPatch({ model: e.target.value })} style={smallInput} />
             </div>
@@ -321,7 +312,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
           {/* Dependencies */}
           <div>
             <div style={sectionLabelStyle}>Depends On (runs after)</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            <div className="extracted-style-238">
               {allAgents.filter((a) => a.id !== agent.id).map((other) => {
                 const isDep = agent.dependencies.includes(other.id);
                 return (
@@ -331,7 +322,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
                 );
               })}
               {allAgents.length <= 1 && (
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No other agents to depend on.</span>
+                <span className="extracted-style-239">No other agents to depend on.</span>
               )}
             </div>
           </div>

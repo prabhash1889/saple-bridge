@@ -37,7 +37,7 @@ export const SessionsTab: React.FC = () => {
         ) : sessions.length === 0 ? (
           <div className="compact-empty">No agent sessions recorded in this project yet.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="extracted-style-073">
             {sessions.map((session) => {
               const duration = session.completedAt
                 ? Math.round((new Date(session.completedAt).getTime() - new Date(session.startedAt).getTime()) / 1000)
@@ -45,23 +45,14 @@ export const SessionsTab: React.FC = () => {
 
               return (
                 <div
-                  key={session.id}
-                  style={{
-                    padding: '12px',
-                    background: 'var(--bg-surface-light)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-md)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px'
-                  }}
+                  key={session.id} className="extracted-style-074"
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="extracted-style-075">
                     <div>
-                      <strong style={{ color: 'var(--text-primary)', fontSize: '13px' }}>
+                      <strong className="extracted-style-076">
                         {session.name}
                       </strong>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginLeft: '10px' }}>
+                      <span className="extracted-style-077">
                         ({session.id})
                       </span>
                     </div>
@@ -70,9 +61,9 @@ export const SessionsTab: React.FC = () => {
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                  <div className="extracted-style-078">
                     <div>
-                      <strong>Provider:</strong> <span style={{ fontFamily: 'var(--font-mono)' }}>{session.provider} ({session.model})</span>
+                      <strong>Provider:</strong> <span className="extracted-style-079">{session.provider} ({session.model})</span>
                     </div>
                     <div>
                       <strong>Role:</strong> <span>{session.role}</span>
@@ -82,12 +73,11 @@ export const SessionsTab: React.FC = () => {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  <div className="extracted-style-080">
                     <span>Started: {new Date(session.startedAt).toLocaleString()}</span>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="extracted-style-081">
                       <button
-                        className="secondary btn-sm"
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px' }}
+                        className="extracted-style-082 secondary btn-sm"
                         onClick={async () => {
                           try {
                             const content = await invoke<string>('read_project_file', {
@@ -106,8 +96,7 @@ export const SessionsTab: React.FC = () => {
                       </button>
                       {(session.status === 'stopped' || session.status === 'failed') && (
                         <button
-                          className="secondary btn-sm"
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 8px' }}
+                          className="extracted-style-083 secondary btn-sm"
                           onClick={async () => {
                             try {
                               await useTerminalStore.getState().addPane(
@@ -141,17 +130,16 @@ export const SessionsTab: React.FC = () => {
       {activeLogContent !== null && (
         <div className="modal-overlay confirm-overlay" onClick={() => setActiveLogContent(null)}>
           <div
-            className="modal-container"
-            style={{ maxWidth: '800px', width: '95%', height: '80vh', display: 'flex', flexDirection: 'column' }}
+            className="extracted-style-084 modal-container"
             onClick={e => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
           >
             <div className="confirm-header">
-              <h3 style={{ margin: 0, fontSize: '15px' }}>Session Log: {activeLogTitle}</h3>
+              <h3 className="extracted-style-085">Session Log: {activeLogTitle}</h3>
               <button className="confirm-close-x" onClick={() => setActiveLogContent(null)} aria-label="Close logs"><X size={16} /></button>
             </div>
-            <div style={{ flex: 1, padding: '16px', background: 'var(--bg-deep)', color: 'var(--text-secondary)', overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
+            <div className="extracted-style-086">
               {activeLogContent || 'Log is empty.'}
             </div>
             <div className="confirm-footer">

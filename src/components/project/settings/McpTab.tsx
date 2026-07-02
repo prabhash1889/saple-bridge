@@ -126,14 +126,9 @@ export const McpTab: React.FC = () => {
           )}
 
           {mcpStatus?.legacyConfig && (
-            <div className="mcp-legacy-warning" role="alert" style={{
-              display: 'flex', gap: '8px', alignItems: 'flex-start',
-              padding: '10px 12px', marginBottom: '12px', borderRadius: '8px',
-              border: '1px solid var(--warning, #b58900)',
-              background: 'color-mix(in srgb, var(--warning, #b58900) 12%, transparent)',
-            }}>
-              <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '1px', color: 'var(--warning, #b58900)' }} />
-              <span style={{ fontSize: '12px', lineHeight: 1.5 }}>
+            <div className="extracted-style-052 mcp-legacy-warning" role="alert">
+              <AlertCircle size={15} className="extracted-style-053" />
+              <span className="extracted-style-054">
                 This project's MCP config points at the <strong>old embedded server</strong>, which no longer
                 runs (it now launches the Bridge window instead). Click <strong>Install Saple MCP Config</strong>
                 below to update it to the standalone <strong>saple-mcp</strong> server.
@@ -157,15 +152,15 @@ export const McpTab: React.FC = () => {
             {mcpError && <span className="status-error">Failed: {mcpError}</span>}
           </div>
 
-          <div style={{ marginTop: '24px', borderTop: '1px solid var(--border)', paddingTop: '20px' }}>
-            <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
+          <div className="extracted-style-055">
+            <h4 className="extracted-style-056">
               MCP Server Diagnostics & Tools Validation
             </h4>
             <p className="section-desc">
               Smoke test the MCP JSON-RPC protocol interface to verify registered tools and capabilities.
             </p>
 
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
+            <div className="extracted-style-057">
               <button onClick={handleRunMcpSmokeTest} disabled={mcpSmokeLoading} className="secondary">
                 <RefreshCw size={14} className={mcpSmokeLoading ? 'spin' : ''} />
                 <span>{mcpSmokeLoading ? 'Testing...' : 'Run Tools Smoke Test'}</span>
@@ -188,10 +183,10 @@ export const McpTab: React.FC = () => {
               <div style={mcpToolsListStyle}>
                 {mcpSmokeResult.tools.map((tool: any) => (
                   <div key={tool.name} style={mcpToolCardStyle}>
-                    <strong style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+                    <strong className="extracted-style-058">
                       {tool.name}
                     </strong>
-                    <p style={{ margin: '4px 0 0 0', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                    <p className="extracted-style-059">
                       {tool.description}
                     </p>
                   </div>

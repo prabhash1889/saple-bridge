@@ -1337,3 +1337,25 @@ html[data-theme="latte"] .terminal-provider-menu {
   color: var(--text-secondary);
   font-size: 12px;
 }
+
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-014 {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 6px;
+}
+
+.extracted-style-015 {
+  color: var(--text-secondary);
+}
+
+.extracted-style-016 {
+  color: var(--text-secondary);
+}
+
+.extracted-style-017 {
+  color: var(--text-secondary);
+}

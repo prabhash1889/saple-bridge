@@ -450,7 +450,7 @@ export const MemoryGraph: React.FC = () => {
     >
       <div style={headerStyle}>
         <span style={titleStyle}>SapleMemory Graph</span>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div className="extracted-style-019">
           {/* Global / Local mode toggle */}
           <div style={segToggleStyle}>
             <button
@@ -475,8 +475,7 @@ export const MemoryGraph: React.FC = () => {
             <input
               type="checkbox"
               checked={showOrphans}
-              onChange={(e) => setShowOrphans(e.target.checked)}
-              style={{ margin: 0 }}
+              onChange={(e) => setShowOrphans(e.target.checked)} className="extracted-style-020"
             />
             <span>Orphans</span>
           </label>
@@ -496,8 +495,8 @@ export const MemoryGraph: React.FC = () => {
         <div style={focusBarStyle}>
           {focusNode ? (
             <>
-              <span style={{ color: 'var(--text-secondary)' }}>Focused:</span>
-              <strong style={{ color: 'var(--text-primary)' }}>{focusNode.title}</strong>
+              <span className="extracted-style-021">Focused:</span>
+              <strong className="extracted-style-022">{focusNode.title}</strong>
               <button onClick={() => openNote(focusNode)} style={focusOpenBtnStyle}>
                 <ExternalLink size={12} />
                 <span>Open</span>
@@ -507,7 +506,7 @@ export const MemoryGraph: React.FC = () => {
               </button>
             </>
           ) : (
-            <span style={{ color: 'var(--text-muted)' }}>
+            <span className="extracted-style-023">
               Click a node to focus its neighborhood. Click again to open it.
             </span>
           )}
@@ -608,8 +607,7 @@ export const MemoryGraph: React.FC = () => {
                     textAnchor="middle"
                     fill="var(--text-primary)"
                     fontSize={10}
-                    fontWeight={500}
-                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    fontWeight={500} className="extracted-style-024"
                   >
                     {node.title}
                   </text>

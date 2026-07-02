@@ -38,29 +38,25 @@ export const DirectoryStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><FolderOpen size={24} /></div>
-        <h2 style={heroTitleStyle}>Working <span style={{ color: 'var(--accent)' }}>directory</span></h2>
+        <h2 style={heroTitleStyle}>Working <span className="extracted-style-174">directory</span></h2>
         <p style={heroSubtitleStyle}>The folder this swarm operates on. Agents spawn their terminals here and read/write files inside it.</p>
       </div>
 
       <div style={sectionLabelStyle}>Directory</div>
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 16px',
-          borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', background: 'var(--bg-surface-light)',
-        }}
+      <div className="extracted-style-175"
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="extracted-style-176">
           <div style={{ fontSize: '13px', fontWeight: 600, color: directory ? 'var(--text-primary)' : 'var(--text-muted)', wordBreak: 'break-all' }}>
             {directory || 'No directory selected'}
           </div>
           {summary && (
-            <div style={{ display: 'flex', gap: '12px', marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                {summary.writable ? <Check size={12} style={{ color: 'var(--color-success)' }} /> : <AlertTriangle size={12} style={{ color: 'var(--color-warning)' }} />}
+            <div className="extracted-style-177">
+              <span className="extracted-style-178">
+                {summary.writable ? <Check size={12} className="extracted-style-179" /> : <AlertTriangle size={12} className="extracted-style-180" />}
                 {summary.writable ? 'Writable' : 'Read-only'}
               </span>
               {summary.isGitRepo && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <span className="extracted-style-181">
                   <GitBranch size={12} /> {summary.branch || 'git'}
                 </span>
               )}
@@ -69,8 +65,7 @@ export const DirectoryStep: React.FC<WizardStepProps> = ({ state, update }) => {
         </div>
         <button
           onClick={chooseFolder}
-          className="primary"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '34px', padding: '0 14px', fontSize: '12px', whiteSpace: 'nowrap' }}
+          className="extracted-style-182 primary"
         >
           <FolderOpen size={13} /> Choose folder
         </button>

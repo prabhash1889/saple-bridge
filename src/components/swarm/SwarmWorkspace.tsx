@@ -261,7 +261,7 @@ export const SwarmWorkspace: React.FC = () => {
 
   if (isEditingTemplate) {
     return (
-      <div style={{ padding: '24px', overflowY: 'auto', height: '100%', backgroundColor: 'var(--bg-app)' }}>
+      <div className="extracted-style-147">
         <SwarmTemplateEditor
           template={selectedTemplate}
           onSave={() => setIsEditingTemplate(false)}
@@ -314,7 +314,7 @@ export const SwarmWorkspace: React.FC = () => {
         {/* Global Controls */}
         <div style={actionsContainerStyle}>
           {swarmActive ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="extracted-style-148">
               {status === 'running' ? (
                 <button onClick={handlePause} className="secondary" style={btnStyle}>
                   <Pause size={12} />
@@ -350,12 +350,12 @@ export const SwarmWorkspace: React.FC = () => {
         {/* Header */}
         <div style={headerStyle}>
           <div>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+            <h2 className="extracted-style-149">
               Swarm Room Orchestrator
             </h2>
             {swarmActive && (
-              <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Swarm ID: <code style={{ color: 'var(--accent)' }}>{swarmId}</code> | Mission: "{mission}"
+              <p className="extracted-style-150">
+                Swarm ID: <code className="extracted-style-151">{swarmId}</code> | Mission: "{mission}"
               </p>
             )}
           </div>
@@ -427,7 +427,7 @@ export const SwarmWorkspace: React.FC = () => {
                 {selectedAgent ? (
                   <div>
                     <div style={rightPanelTitleStyle}>
-                      <Settings size={14} style={{ color: 'var(--text-muted)' }} />
+                      <Settings size={14} className="extracted-style-152" />
                       <span>Inspect Agent: {selectedAgent.name}</span>
                     </div>
                     <SwarmAgentCard
@@ -446,7 +446,7 @@ export const SwarmWorkspace: React.FC = () => {
                         from its mailbox file mid-run. */}
                     <div style={composeBoxStyle}>
                       <div style={rightPanelTitleStyle}>
-                        <Edit size={13} style={{ color: 'var(--text-muted)' }} />
+                        <Edit size={13} className="extracted-style-153" />
                         <span>Post to {selectedAgent.name}'s mailbox</span>
                       </div>
                       <textarea
@@ -470,8 +470,8 @@ export const SwarmWorkspace: React.FC = () => {
                   </div>
                 ) : (
                   <div style={emptyInspectStyle}>
-                    <Shield size={32} style={{ color: 'var(--border)' }} />
-                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                    <Shield size={32} className="extracted-style-154" />
+                    <p className="extracted-style-155">
                       Select any agent node to inspect logs and handoffs.
                     </p>
                   </div>
@@ -482,9 +482,9 @@ export const SwarmWorkspace: React.FC = () => {
         ) : (
           /* Empty / Idle State */
           <div style={emptyStateStyle}>
-            <Bot size={54} className="swarm-hero-icon" style={{ marginBottom: '16px' }} />
-            <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>Saple Swarm Coordinator</h3>
-            <p style={{ maxWidth: '520px', color: 'var(--text-muted)', fontSize: '13px', marginTop: '8px', lineHeight: '1.6', textAlign: 'center' }}>
+            <Bot size={54} className="extracted-style-156 swarm-hero-icon" />
+            <h3 className="extracted-style-157">Saple Swarm Coordinator</h3>
+            <p className="extracted-style-158">
               Coordinators analyze missions, breaking down requirements onto a shared workspace filesystem, while Builders and Reviewers run validation test cycles inside parallel terminal streams.
             </p>
 
@@ -498,7 +498,7 @@ export const SwarmWorkspace: React.FC = () => {
               <span>Create Swarm</span>
             </button>
             {!currentProjectPath && (
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+              <p className="extracted-style-159">
                 Open a workspace to create a swarm.
               </p>
             )}

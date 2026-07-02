@@ -37,10 +37,10 @@ export const MemoryEditor: React.FC = () => {
   const [tags, setTags] = useState('');
   const [aliases, setAliases] = useState('');
   const [content, setContent] = useState('');
-  
+
   const outgoing = activeNote?.id ? edges.filter(e => e.source === activeNote.id).map(e => e.target) : [];
   const backlinks = activeNote?.id ? edges.filter(e => e.target === activeNote.id).map(e => e.source) : [];
-  
+
   // Wikilink autocomplete state
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -88,7 +88,7 @@ export const MemoryEditor: React.FC = () => {
     if (lastOpenBrackets !== -1 && lastOpenBrackets > lastCloseBrackets) {
       // User is inside [[ ...
       const query = text.substring(lastOpenBrackets + 2, pos).toLowerCase();
-      
+
       let matches: string[] = [];
       if (query.startsWith('file:')) {
         const fileQuery = query.substring(5).toLowerCase();
@@ -105,7 +105,7 @@ export const MemoryEditor: React.FC = () => {
             node.id !== activeNote?.id
           )
           .map(node => node.id);
-        
+
         // Also suggest "file:" keyword option
         const fileOptions: string[] = [];
         if ('file:'.startsWith(query) && query.length > 0) {
@@ -113,10 +113,10 @@ export const MemoryEditor: React.FC = () => {
         } else if (query.length === 0) {
           fileOptions.push('file:');
         }
-        
+
         matches = [...noteMatches, ...fileOptions];
       }
-        
+
       setSuggestions(matches);
       setShowSuggestions(matches.length > 0);
     } else {
@@ -126,11 +126,11 @@ export const MemoryEditor: React.FC = () => {
 
   const handleSelectSuggestion = (noteId: string) => {
     if (!textareaRef.current) return;
-    
+
     const text = content;
     const pos = cursorPos;
     const lastOpenBrackets = text.lastIndexOf('[[', pos - 1);
-    
+
     // Replace typing query with completed [[note-id]] link tag
     const before = text.substring(0, lastOpenBrackets);
     const after = text.substring(pos);
@@ -139,7 +139,7 @@ export const MemoryEditor: React.FC = () => {
 
     setContent(newContent);
     setShowSuggestions(false);
-    
+
     // Reset focus and cursor position after link insertion
     const nextCursorPos = lastOpenBrackets + completedLink.length;
     setTimeout(() => {
@@ -232,16 +232,16 @@ export const MemoryEditor: React.FC = () => {
       </div>
 
       {/* Split layout: Form on left, note details on right */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div className="extracted-style-018">
         {/* Editor Form */}
         <form onSubmit={handleSave} style={formStyle}>
           <div style={fieldsGridStyle}>
             <div style={fieldGroupStyle}>
               <label style={labelStyle}>Memory Note Title</label>
-              <input 
+              <input
                 required
-                value={title} 
-                onChange={e => setTitle(e.target.value)} 
+                value={title}
+                onChange={e => setTitle(e.target.value)}
                 placeholder="e.g. Database Choice, API Design Pattern"
                 style={inputStyle}
               />
@@ -250,8 +250,8 @@ export const MemoryEditor: React.FC = () => {
             <div style={fieldRowStyle}>
               <div style={halfFieldStyle}>
                 <label style={labelStyle}>Category</label>
-                <select 
-                  value={category} 
+                <select
+                  value={category}
                   onChange={e => setCategory(e.target.value)}
                   style={selectStyle}
                 >

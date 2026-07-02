@@ -429,7 +429,7 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                     <strong>{task.title}</strong>
                     <span>{task.agentConfig?.provider ?? 'unassigned'} - {task.agentConfig?.role ?? 'review'}</span>
                     {record && (
-                      <span className="eyebrow" style={{ marginTop: '4px', fontSize: '9px' }}>
+                      <span className="extracted-style-110 eyebrow">
                         {record.changedFiles.length} files changed
                       </span>
                     )}
@@ -443,7 +443,7 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
         {/* Center Column: Diff & Verification Output */}
         <section className="surface review-main review-detail-panel">
           {!activeTaskId ? (
-            <div className="room-empty-state" style={{ height: '100%', justifyContent: 'center' }}>
+            <div className="extracted-style-111 room-empty-state">
               <CheckCircle2 size={24} />
               <h3>Select a task from the review queue</h3>
             </div>
@@ -453,20 +453,18 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
             <>
               <div className="review-detail-header">
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '16px' }}>{activeTask?.title}</h3>
+                  <h3 className="extracted-style-112">{activeTask?.title}</h3>
                   <span
-                    className={`status-pill ${statusPillClass(activeRecord?.status)}`}
-                    style={{ textTransform: 'capitalize' }}
+                    className={[`status-pill ${statusPillClass(activeRecord?.status)}`, 'extracted-style-283'].filter(Boolean).join(' ')}
                   >
                     Status: {activeRecord?.status ?? 'pending'}
                   </span>
                 </div>
                 <button
-                  className="secondary-action"
+                  className="extracted-style-113 secondary-action"
                   onClick={handleRefresh}
                   disabled={refreshing || reviewLoading}
                   title="Re-pull git status & diffs"
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
                   <RefreshCw size={14} className={refreshing ? 'spinning' : undefined} />
                   <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
@@ -505,15 +503,15 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
 
                   {unrelatedFiles.length > 0 && (
                     <div className="warning-banner">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
+                      <div className="extracted-style-114">
                         <AlertTriangle size={14} />
                         <span>Warning: Unrelated Files Modified</span>
                       </div>
                       <span>
                         The agent modified files outside the target file list:
-                        <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                        <ul className="extracted-style-115">
                           {unrelatedFiles.slice(0, 3).map(f => (
-                            <li key={f.path} style={{ fontFamily: 'monospace', fontSize: '11px' }}>{f.path}</li>
+                            <li key={f.path} className="extracted-style-116">{f.path}</li>
                           ))}
                           {unrelatedFiles.length > 3 && <li>and {unrelatedFiles.length - 3} more...</li>}
                         </ul>
@@ -570,10 +568,9 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                       disabled={runningVerification}
                     />
                     <button
-                      className="primary"
+                      className="extracted-style-117 primary"
                       onClick={handleRunVerification}
                       disabled={runningVerification || submittingDecision}
-                      style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
                     >
                       {runningVerification ? (
                         <span>Running...</span>

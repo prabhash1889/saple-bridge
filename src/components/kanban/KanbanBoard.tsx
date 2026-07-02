@@ -146,9 +146,9 @@ export const KanbanBoard: React.FC = () => {
     return (
       <div style={emptyContainerStyle}>
         <div style={emptyCardStyle}>
-          <FolderOpen size={40} style={{ color: 'var(--text-muted)', marginBottom: '16px' }} />
+          <FolderOpen size={40} className="extracted-style-003" />
           <h3>No Workspace Active</h3>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '4px', marginBottom: '20px' }}>
+          <p className="extracted-style-004">
             Open a workspace directory to load and manage tasks.
           </p>
           <button onClick={handleOpenProject} className="primary">
@@ -181,7 +181,7 @@ export const KanbanBoard: React.FC = () => {
           placeholder="Search tasks, labels..."
           style={searchInputStyle}
         />
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div className="extracted-style-005">
           <select
             value={filterProvider}
             onChange={e => setFilterProvider(e.target.value)}
