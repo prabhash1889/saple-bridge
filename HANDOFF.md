@@ -1,4 +1,4 @@
-# Saple Bridge — Improvement Plan Handoff (2026-07-02)
+# Saple Bridge — Improvement Plan Handoff (2026-07-02, updated after B3)
 
 Paste this into a fresh Claude Code session started in `saple-bridge/` to continue the
 improvement plan. Read `CLAUDE.md` and the `AGENTS.md` files first, as usual.
@@ -7,16 +7,13 @@ improvement plan. Read `CLAUDE.md` and the `AGENTS.md` files first, as usual.
 
 A four-phase improvement plan (security → performance/health → features → UI polish) was
 executed against this repo on 2026-07-02. **Phases A (security/stability, all 16 plan.md
-Phase-7 findings), B1/B2, and C1/C2/C3/C5 are DONE and committed.** This handoff covers what
-remains: **B3, B4, C4, C6, and D1–D4.**
+Phase-7 findings), B1/B2/B3, and C1/C2/C3/C5 are DONE, committed, and pushed to `main`.**
+This handoff covers what remains: **B4, C4, C6, and D1–D4.**
 
-### ⚠️ Branch situation (resolve first)
+### Branch situation — resolved
 
-All of this work was committed to **`debug/terminal-webgl-artifacts`** (the repo was left on
-that branch by an earlier debugging session; it also carries 3 prior WebGL-debugging commits:
-`177657b`, `b1434f1`, `b763a6c`). Nothing has been pushed. Before continuing, decide with the
-user: merge the branch to `master`, or keep working on it. CLAUDE.md says work lands on the
-default branch, so a merge to `master` is probably the right first move.
+The earlier debug-branch situation is resolved: all completed work is merged to **`main`**
+and pushed to origin. Work directly on `main` per CLAUDE.md.
 
 ### What was completed (for orientation, all verified: typecheck 0, build OK, cargo test 30/30, vitest 11/11)
 
@@ -44,6 +41,23 @@ default branch, so a merge to `master` is probably the right first move.
 - **C5** — Memory full-text search (`memory.rs: search_memory_content` reusing
   `collect_notes`; `memoryStore.searchContent` + `contentMatchIds`; 250ms debounce in
   `MemoryList.tsx`).
+- **B3** — God components split (commit `ed92aa7`), mechanical, no behavior change:
+  - `ProjectSettings.tsx` is now a thin shell (tab bar + `pendingSettingsTab` consumption);
+    each tab lives in `src/components/project/settings/` (`KeychainTab`, `ProvidersTab`,
+    `WorkspaceTab`, `McpTab`, `MemoryTab`, `SessionsTab`, `DiagnosticsTab`), with shared
+    keychain constants (`KEYCHAIN_SERVICE_PREFIX`, `CODEX_KEY_SERVICE`, `SIGN_IN_COMMANDS`,
+    `MASKED_KEY`) in `settings/constants.ts`. Per-tab data loads moved from
+    `activeTab === 'x'` effects to mount effects inside each tab (equivalent — tabs only
+    mount when active).
+  - `TerminalPane.tsx` is now chrome-only; the xterm/PTY lifecycle lives in
+    `useXtermSession.ts` (init, addons, replay, resize, theme/font sync, WebGL
+    acquire/release), palettes in `terminalThemes.ts`, the WebGL context budget
+    (cap, holder registry, TEMP diagnostics) in `webglBudget.ts`, plus
+    `TerminalPaneTitlebar.tsx` and `TerminalSearchBar.tsx` (the C1 find bar — it now owns
+    its query state; the pane only holds the `searchOpen` flag).
+  - `ReviewWorkspace.tsx` keeps the queue/diff orchestration; extracted
+    `VirtualizedTextViewer.tsx`, `ReviewFileList.tsx` (file list + stage checkboxes +
+    commit bar), `ReviewActionsPanel.tsx` (right-hand actions/context column).
 
 ## Conventions (apply to all remaining work)
 
@@ -59,23 +73,6 @@ default branch, so a merge to `master` is probably the right first move.
 ---
 
 ## Remaining work
-
-### B3 — Split god components (mechanical, no behavior change)
-
-1. `src/components/project/ProjectSettings.tsx` (~1,130 lines) → one file per settings tab
-   under `src/components/project/settings/` (KeychainTab, ProvidersTab, WorkspaceTab, McpTab,
-   MemoryTab, SessionsTab, DiagnosticsTab). The tab switch is a `SettingsTab` union +
-   `tabs` array at the top; shared state (e.g. `providerKeys`) mostly belongs to one tab each.
-   Note: a `pendingSettingsTab` consumption effect was added near the top — keep it in the
-   shell component.
-2. `src/components/terminal/TerminalPane.tsx` (~1,250 lines) → extract:
-   - `useXtermSession` hook (the giant mount effect: xterm init, addons, replay, PTY wiring),
-   - `TerminalPaneTitlebar` (title, badges, branch/maximize/close buttons),
-   - keep WebGL budget logic (`webglHolders`, `MAX_WEBGL_CONTEXTS`) in its own module.
-   The Ctrl+F search overlay added in C1 can move out too (`TerminalSearchBar`).
-3. `src/components/review/ReviewWorkspace.tsx` (~900 lines) → extract `VirtualizedTextViewer`
-   (already a standalone component at the top of the file), the file list + commit bar, and
-   the right-hand actions panel.
 
 ### B4 — CSS modularization (pure move)
 
@@ -105,10 +102,12 @@ styles on a few screens or just visual smoke.
 
 ### D1 — Inline-style consolidation (~190 `style={{}}` usages)
 
-Worst offenders: `ProjectSettings.tsx` (~70, easier after B3), `ReviewWorkspace.tsx` (~40),
-swarm wizard files (`wizardStyles.ts` is a start — it already centralizes some). Convert to
-classes in the (post-B4) per-view CSS files using `var(--*)` tokens. Mechanical; do after
-B3/B4 to avoid conflicts.
+Worst offenders (post-B3 locations): the settings tab components under
+`src/components/project/settings/` (~70 combined — `SessionsTab`/`DiagnosticsTab`/`MemoryTab`
+are the heaviest), `ReviewWorkspace.tsx` + `ReviewActionsPanel.tsx`/`ReviewFileList.tsx`/
+`VirtualizedTextViewer.tsx` (~40 combined), swarm wizard files (`wizardStyles.ts` is a
+start — it already centralizes some). Convert to classes in the (post-B4) per-view CSS files
+using `var(--*)` tokens. Mechanical; do after B4 to avoid conflicts.
 
 ### D2 — Accessibility pass
 
@@ -135,5 +134,5 @@ B3/B4 to avoid conflicts.
 
 ## Suggested order
 
-Merge-to-master decision → B3 → B4 → D1 → C4 → D2 → D3 → D4 → (C6 only after user provides
-release/signing setup). Each item independently shippable; verify + commit after each.
+B4 → D1 → C4 → D2 → D3 → D4 → (C6 only after user provides release/signing setup).
+Each item independently shippable; verify + commit after each.
