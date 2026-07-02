@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
+import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { TERMINAL_SCROLLBACK_ROWS } from '../../lib/terminalLimits';
 import { useThemeStore, resolveTheme } from '../../stores/themeStore';
@@ -371,6 +372,38 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
         event.preventDefault();
         event.stopPropagation();
         onSearchOpenRef.current();
+        return false;
+      }
+
+      // Plain Ctrl+V: stock xterm swallows this into the raw 0x16 control byte and no
+      // paste ever happens (the keydown is preventDefault-ed, so the WebView's native
+      // paste never fires). Intercept it: when the clipboard holds text, insert it via
+      // xterm's paste path (bracketed paste — works in every TUI); when it holds no
+      // text, forward the original 0x16 so TUIs with their own Ctrl+V bindings (codex/
+      // Claude Code image paste) still see the keystroke. Ctrl+Shift+V is untouched —
+      // it rides the WebView's native paste event.
+      if (
+        event.type === 'keydown' &&
+        event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        event.code === 'KeyV'
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        readText()
+          .then((text) => {
+            if (text) {
+              term.paste(text);
+            } else {
+              term.input('\x16', true);
+            }
+          })
+          .catch(() => {
+            // Clipboard empty or non-text (e.g. an image) — behave like stock xterm.
+            term.input('\x16', true);
+          });
         return false;
       }
 

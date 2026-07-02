@@ -25,6 +25,12 @@ pub fn run() {
         .manage(pty::PtyRegistry::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Clipboard reads go through this plugin (not navigator.clipboard.readText): the
+        // WebView2 clipboard-read permission is only auto-granted when the window is built
+        // with enable_clipboard_access(), which config-defined windows never are — the async
+        // web API would hang on a permission prompt or be denied. Used by the terminal's
+        // Ctrl+V paste handler (see useXtermSession.ts).
+        .plugin(tauri_plugin_clipboard_manager::init())
         .on_window_event(|window, event| {
             // Closing the window must kill every PTY child (and join its reader/emitter threads),
             // otherwise agent CLIs keep running as orphaned processes after the app exits.
