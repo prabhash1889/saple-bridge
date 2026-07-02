@@ -151,6 +151,7 @@ export const ProjectDashboard: React.FC = () => {
   const reviewTasks = tasks.filter((task) => task.column === 'review');
   const activeTasks = tasks.filter((task) => task.column === 'backlog' || task.column === 'progress');
   const runningAgents = activeAgents.filter((agent) => ['running', 'waiting', 'review'].includes(agent.status));
+  const showFirstRunWalkthrough = !currentProjectPath && workspaceHistory.length === 0;
 
   const legacyHomePanel = currentProjectPath ? (
     <section className="dashboard-shell home-legacy-panel">
@@ -304,6 +305,36 @@ export const ProjectDashboard: React.FC = () => {
         </button>
       </div>
 
+      {showFirstRunWalkthrough && (
+        <section className="surface onboarding-panel" aria-label="First run walkthrough">
+          <div className="panel-heading">
+            <Layers3 size={16} />
+            <span>Start Here</span>
+          </div>
+          <div className="onboarding-steps">
+            <article className="onboarding-step">
+              <span className="onboarding-step-icon"><FolderOpen size={16} /></span>
+              <strong>Open a repo folder</strong>
+              <p>Bridge creates the local `.saple` workspace files inside your project.</p>
+            </article>
+            <article className="onboarding-step">
+              <span className="onboarding-step-icon"><Terminal size={16} /></span>
+              <strong>Launch a terminal</strong>
+              <p>Use the Command Room for shells, coding agents, and live logs.</p>
+            </article>
+            <article className="onboarding-step">
+              <span className="onboarding-step-icon"><ClipboardList size={16} /></span>
+              <strong>Create a task</strong>
+              <p>Move tasks through backlog, progress, review, and done.</p>
+            </article>
+          </div>
+          <button onClick={() => handleOpenWorkspace('terminals')} className="primary onboarding-primary-action">
+            <FolderOpen size={16} />
+            Open first workspace
+          </button>
+        </section>
+      )}
+
       <div className="empty-dashboard-grid home-empty-grid">
         <section className="surface">
           <div className="panel-heading">
@@ -311,7 +342,10 @@ export const ProjectDashboard: React.FC = () => {
             <span>Recent Workspaces</span>
           </div>
           {recentProjects.length === 0 ? (
-            <div className="compact-empty">No recent workspaces yet.</div>
+            <div className="compact-empty empty-state-card">
+              <FolderOpen size={18} />
+              <span>No recent workspaces yet.</span>
+            </div>
           ) : (
             <div className="recent-project-table">
               {recentProjects.slice(0, 5).map((path) => {
