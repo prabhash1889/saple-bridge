@@ -82,7 +82,7 @@ fn create_review_record_inner(
             }
             record.updated_at = now_iso();
             let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-            fs::write(&review_file_path, json).map_err(|e| e.to_string())?;
+            crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
             return Ok(record);
         }
     }
@@ -154,7 +154,7 @@ fn create_review_record_inner(
     };
 
     let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    fs::write(&review_file_path, json).map_err(|e| e.to_string())?;
+    crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
 
     Ok(record)
 }
@@ -199,7 +199,7 @@ fn submit_review_decision_inner(
     record.updated_at = now_iso();
 
     let record_json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    fs::write(&review_file_path, record_json).map_err(|e| e.to_string())?;
+    crate::fs_lock::atomic_write(&review_file_path, record_json.as_bytes())?;
 
     // 2. Update task in tasks.json
     let tasks_file = get_project_file_path(&project_path, ".saple/tasks.json")?;
@@ -217,7 +217,7 @@ fn submit_review_decision_inner(
             }
             if updated {
                 let json = serde_json::to_string_pretty(&tasks).map_err(|e| e.to_string())?;
-                fs::write(&tasks_file, json).map_err(|e| e.to_string())?;
+                crate::fs_lock::atomic_write(&tasks_file, json.as_bytes())?;
             }
         }
     }
@@ -241,7 +241,7 @@ fn submit_review_decision_inner(
             }
             if updated {
                 let json = serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?;
-                fs::write(&sessions_file, json).map_err(|e| e.to_string())?;
+                crate::fs_lock::atomic_write(&sessions_file, json.as_bytes())?;
             }
         }
     }
@@ -341,7 +341,7 @@ fn run_verification_command_inner(
                 record.test_output = Some(combined.clone());
                 record.updated_at = now_iso();
                 if let Ok(json) = serde_json::to_string_pretty(&record) {
-                    let _ = fs::write(&review_file_path, json);
+                    let _ = crate::fs_lock::atomic_write(&review_file_path, json.as_bytes());
                 }
             }
         }

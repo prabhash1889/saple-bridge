@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { enqueueWrite } from '../lib/writeQueue';
 import { createId } from '../lib/id';
 import { nowIso } from '../lib/date';
 import type { AgentSession, AgentStatus } from '../types/agent';
@@ -60,11 +61,16 @@ export const useAgentSessionStore = create<AgentSessionState>()(
 
     saveSessions: async (projectPath) => {
       try {
-        await invoke('write_project_file', {
-          projectPath,
-          filePath: SESSION_FILE,
-          content: JSON.stringify(get().sessions, null, 2),
-        });
+        // Serialized like tasks/swarm saves: overlapping saves must not reorder, or a stale
+        // session snapshot wins on disk. The content is read inside the queued task so each
+        // write persists the state as of when it runs, not when it was enqueued.
+        await enqueueWrite(`sessions:${projectPath}`, () =>
+          invoke('write_project_file', {
+            projectPath,
+            filePath: SESSION_FILE,
+            content: JSON.stringify(get().sessions, null, 2),
+          })
+        );
       } catch (error) {
         console.error('Failed to save agent sessions:', error);
       }

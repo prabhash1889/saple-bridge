@@ -238,7 +238,7 @@ fn ensure_project_config_inner(project_path: String) -> Result<WorkspaceConfig, 
         };
         
         let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-        fs::write(&config_path, json).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&config_path, json.as_bytes())?;
         
         Ok(config)
     }
