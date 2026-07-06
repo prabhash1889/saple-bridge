@@ -75,6 +75,12 @@ interface TerminalState {
   focusedPaneId: string | null;
   maximizedPaneId: string | null;
   reviewPanes: Record<string, boolean>;
+  // Panes that produced output while unfocused (activity dot on the titlebar). Cleared when
+  // the pane is focused. Kept as a flat map (not per-workspace) — a pane id is globally unique.
+  activityPanes: Record<string, boolean>;
+  // Panes whose PTY child has exited (exit badge on the titlebar). Set from the `pty-exit`
+  // event; cleared only when the pane is removed.
+  exitedPanes: Record<string, boolean>;
   workspacePanes: Record<string, string[]>;
   workspaceFocusedPaneIds: Record<string, string | null>;
   workspaceMaximizedPaneIds: Record<string, string | null>;
@@ -90,6 +96,7 @@ interface TerminalState {
   getLatestSequence: (paneId: string) => number;
   addPane: (cwd: string, aiProvider?: AiProvider, model?: string, promptFile?: string, customCommand?: string) => Promise<string>;
   splitPane: (paneId: string, cwd: string) => Promise<string>;
+  reorderPane: (paneId: string, targetPaneId: string) => void;
   removePane: (paneId: string) => Promise<void>;
   closeWorkspaceTerminals: (workspaceKey: string) => Promise<void>;
   restoreWorkspacePanes: (workspacePath: string) => Promise<void>;
@@ -340,6 +347,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
     focusedPaneId: null,
     maximizedPaneId: null,
     reviewPanes: {},
+    activityPanes: {},
+    exitedPanes: {},
     workspacePanes: {},
     workspaceFocusedPaneIds: {},
     workspaceMaximizedPaneIds: {},
@@ -379,6 +388,14 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       ptyOutputUnlisten = await listen<{ id: string; data: string }>('pty-output', (event) => {
         const { id, data } = event.payload;
         get().appendOutput(id, data);
+
+        // Mark unfocused panes that produced output since the user last looked at them, so the
+        // titlebar can show an activity dot. Guarded so it only fires on the transition to
+        // active (the common no-op case never touches reactive state on the output hot path).
+        const activityState = get();
+        if (activityState.focusedPaneId !== id && !activityState.activityPanes[id]) {
+          set({ activityPanes: { ...activityState.activityPanes, [id]: true } });
+        }
 
         // Detect lifecycle markers against the rolling tail (not the raw chunk) so a
         // marker split across two PTY bursts is still caught. The cheap substring pre-filter
@@ -423,6 +440,9 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         const { id } = event.payload;
         if (!get().sessions[id]) return;
         get().appendOutput(id, '\r\n\x1b[2m[process exited — close this pane to start a new one]\x1b[0m\r\n');
+        if (!get().exitedPanes[id]) {
+          set((state) => ({ exitedPanes: { ...state.exitedPanes, [id]: true } }));
+        }
       });
     },
 
@@ -637,9 +657,13 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         const newPanes = panesForWorkspace.filter((pane) => pane !== paneId);
         const newSessions = { ...state.sessions };
         const newReviewPanes = { ...state.reviewPanes };
+        const newActivityPanes = { ...state.activityPanes };
+        const newExitedPanes = { ...state.exitedPanes };
 
         delete newSessions[paneId];
         delete newReviewPanes[paneId];
+        delete newActivityPanes[paneId];
+        delete newExitedPanes[paneId];
         pendingOutputChunks.delete(paneId);
         paneOutputBuffers.delete(paneId);
         paneOutputLengths.delete(paneId);
@@ -675,6 +699,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           panes: isActiveWorkspace ? newPanes : state.panes,
           sessions: newSessions,
           reviewPanes: newReviewPanes,
+          activityPanes: newActivityPanes,
+          exitedPanes: newExitedPanes,
           workspacePanes: nextWorkspacePanes,
           workspaceFocusedPaneIds: nextWorkspaceFocused,
           workspaceMaximizedPaneIds: nextWorkspaceMaximized,
@@ -717,9 +743,13 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       set((current) => {
         const newSessions = { ...current.sessions };
         const newReviewPanes = { ...current.reviewPanes };
+        const newActivityPanes = { ...current.activityPanes };
+        const newExitedPanes = { ...current.exitedPanes };
         for (const paneId of paneIds) {
           delete newSessions[paneId];
           delete newReviewPanes[paneId];
+          delete newActivityPanes[paneId];
+          delete newExitedPanes[paneId];
           pendingOutputChunks.delete(paneId);
           paneOutputBuffers.delete(paneId);
           paneOutputLengths.delete(paneId);
@@ -741,6 +771,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         return {
           sessions: newSessions,
           reviewPanes: newReviewPanes,
+          activityPanes: newActivityPanes,
+          exitedPanes: newExitedPanes,
           workspacePanes: newWorkspacePanes,
           workspaceFocusedPaneIds: newWorkspaceFocused,
           workspaceMaximizedPaneIds: newWorkspaceMaximized,
@@ -754,13 +786,48 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
     setFocusedPane: (paneId) => {
       const workspaceKey = paneId ? getWorkspaceKeyForPane(get().sessions[paneId]) : getActiveWorkspaceKey();
       set((state) => {
-        if (!workspaceKey) return { focusedPaneId: paneId };
+        // Focusing a pane clears its "unread output" activity dot.
+        const activityPanes = paneId && state.activityPanes[paneId]
+          ? (() => {
+              const next = { ...state.activityPanes };
+              delete next[paneId];
+              return next;
+            })()
+          : state.activityPanes;
+        if (!workspaceKey) return { focusedPaneId: paneId, activityPanes };
         return {
           focusedPaneId: getActiveWorkspaceKey() === workspaceKey ? paneId : state.focusedPaneId,
           workspaceFocusedPaneIds: { ...state.workspaceFocusedPaneIds, [workspaceKey]: paneId },
+          activityPanes,
         };
       });
       if (workspaceKey) captureLayout(workspaceKey);
+    },
+
+    // Move `paneId` to the grid slot occupied by `targetPaneId` within the same workspace
+    // (drag-to-reorder). No-op across workspaces or when either pane is missing. Re-snapshots
+    // the layout so the new order survives a restart-and-restore.
+    reorderPane: (paneId, targetPaneId) => {
+      if (paneId === targetPaneId) return;
+      const workspaceKey = getWorkspaceKeyForPane(get().sessions[paneId]);
+      if (!workspaceKey) return;
+      if (getWorkspaceKeyForPane(get().sessions[targetPaneId]) !== workspaceKey) return;
+
+      set((state) => {
+        const current = state.workspacePanes[workspaceKey] || [];
+        const from = current.indexOf(paneId);
+        const to = current.indexOf(targetPaneId);
+        if (from === -1 || to === -1) return {};
+        const next = [...current];
+        next.splice(from, 1);
+        next.splice(to, 0, paneId);
+        const isActiveWorkspace = getActiveWorkspaceKey() === workspaceKey;
+        return {
+          workspacePanes: { ...state.workspacePanes, [workspaceKey]: next },
+          panes: isActiveWorkspace ? next : state.panes,
+        };
+      });
+      captureLayout(workspaceKey);
     },
 
     setMaximizedPane: (paneId) => {
@@ -870,6 +937,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         focusedPaneId: null,
         maximizedPaneId: null,
         reviewPanes: {},
+        activityPanes: {},
+        exitedPanes: {},
         workspacePanes: {},
         workspaceFocusedPaneIds: {},
         workspaceMaximizedPaneIds: {},

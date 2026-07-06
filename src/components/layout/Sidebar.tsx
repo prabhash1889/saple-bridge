@@ -14,6 +14,7 @@ import {
   Tag,
   Minimize2,
   Maximize2,
+  Minus,
   Command,
   Terminal as TerminalIcon,
   FolderOpen,
@@ -124,6 +125,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
   const fontId = useTerminalFontStore((state) => state.fontId);
   const setFontId = useTerminalFontStore((state) => state.setFontId);
+  const fontSize = useTerminalFontStore((state) => state.fontSize);
+  const increaseFontSize = useTerminalFontStore((state) => state.increaseFontSize);
+  const decreaseFontSize = useTerminalFontStore((state) => state.decreaseFontSize);
+  const resetFontSize = useTerminalFontStore((state) => state.resetFontSize);
 
   const maxLimit = getMaxPaneLimit();
   const atMax = !canAddPane();
@@ -538,6 +543,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                           </option>
                         ))}
                       </select>
+                    </div>
+                  </div>
+
+                  {/* Font size — app-wide, mirrors the Ctrl+= / Ctrl+- / Ctrl+0 shortcuts */}
+                  <div className="sidebar-control-row">
+                    <div
+                      className="terminal-fontsize-group"
+                      title="Terminal font size (Ctrl+= / Ctrl+- / Ctrl+0)"
+                    >
+                      <span className="terminal-fontsize-label">Font size</span>
+                      <button
+                        type="button"
+                        className="terminal-fontsize-btn"
+                        onClick={decreaseFontSize}
+                        aria-label="Decrease terminal font size"
+                      >
+                        <Minus size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="terminal-fontsize-value"
+                        onClick={resetFontSize}
+                        title="Reset to default font size"
+                      >
+                        {fontSize}px
+                      </button>
+                      <button
+                        type="button"
+                        className="terminal-fontsize-btn"
+                        onClick={increaseFontSize}
+                        aria-label="Increase terminal font size"
+                      >
+                        <Plus size={12} />
+                      </button>
                     </div>
                   </div>
                 </div>

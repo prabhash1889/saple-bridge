@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
-  Search, Terminal, ClipboardList, Network, Users, 
-  GitPullRequest, Settings, FolderOpen, ShieldCheck, 
-  HelpCircle, Play, ChevronRight, CornerDownLeft, ArrowLeft 
+  Search, Terminal, ClipboardList, Network, Users,
+  GitPullRequest, Settings, FolderOpen, ShieldCheck,
+  HelpCircle, Play, ChevronRight, CornerDownLeft, ArrowLeft, Keyboard
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
@@ -126,6 +126,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     }
   };
 
+  const handleShowShortcuts = () => {
+    onClose();
+    window.dispatchEvent(new Event('saple:open-shortcuts'));
+  };
+
   const handleRunDiagnostics = () => {
     onClose();
     // Store-driven tab selection: ProjectSettings consumes pendingSettingsTab on mount, so this
@@ -187,6 +192,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
         shortcut: 'Ctrl+O',
         icon: FolderOpen,
         action: handleOpenWorkspace,
+      },
+      {
+        id: 'keyboard_shortcuts',
+        name: 'Keyboard Shortcuts',
+        description: 'View all keyboard shortcuts and terminal gestures',
+        category: 'Help',
+        shortcut: 'Ctrl+/',
+        icon: Keyboard,
+        action: handleShowShortcuts,
       },
     ];
 

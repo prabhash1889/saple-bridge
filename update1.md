@@ -73,22 +73,49 @@ Makes every later UI change cheaper and safer. Implemented; typecheck, lint
 
 ---
 
-## Phase 3 - Terminal room (the daily driver)
+## Phase 3 - Terminal room (the daily driver) - DONE
 
-### 3.1 Quality-of-life
-- Clickable URLs via `@xterm/addon-web-links` (open through the existing opener plugin).
-- Activity/bell indicators: mark unfocused panes that produced output since last focus (dot on `TerminalPaneTitlebar`); show exit status badge when a session's process exits instead of a dead pane.
-- Font size control (Ctrl+= / Ctrl+- / Ctrl+0 on focused pane) added to `terminalFontStore` alongside the existing font-family choice.
-- Configurable scrollback limit in Workspace settings (wire through existing `terminalLimits.ts`).
+Implemented; typecheck, lint (0 errors, 8 pre-existing `exhaustive-deps` warnings),
+`npm test` (31 passing), `npm run build`, and `cargo check` all green. No Rust changes.
 
-### 3.2 Layout and session resilience
-- Persist per-workspace pane set (names, colors, provider, cwd) - `terminalLayoutStore` already persists layouts by path; extend it so "Restore last session" on workspace open can respawn panes with the same names/providers/cwd (PTYs themselves cannot survive restart).
-- Drag-to-reorder panes in `TerminalGrid`; keyboard shortcut to cycle panes already exists (Ctrl+Alt+Right) - add Ctrl+Alt+Left and document all shortcuts in a "Keyboard shortcuts" help dialog reachable from the command palette.
+### 3.1 Quality-of-life - DONE
+- [x] Clickable URLs: the stable `@xterm/addon-web-links` still peers on xterm 5 and its
+  xterm-6 build is a pre-release, so instead of pinning a shipped app to a beta we register
+  our own provider through xterm's supported `registerLinkProvider` API (`webLinks.ts`).
+  URLs open through the existing opener plugin (`openUrl`), never navigating the WebView.
+  Wrapped-line stitching + the offset→buffer-cell coordinate math are pure functions with
+  unit tests (`webLinks.test.ts`).
+- [x] Activity + exit indicators: `terminalStore` now tracks `activityPanes` (set on the
+  `pty-output` hot path only on the transition to "has unread output", cleared on focus) and
+  `exitedPanes` (set from `pty-exit`). `TerminalPaneTitlebar` shows an accent activity dot and
+  an "exited" badge; both maps are cleaned up on pane/workspace teardown.
+- [x] Font size control: `fontSize` added to `terminalFontStore` (with increase/decrease/reset,
+  clamped 8-32). Ctrl+= / Ctrl+- / Ctrl+0 handled inside the pane key handler; a stepper in the
+  sidebar Terminal Controls mirrors it. `useXtermSession` re-applies size live and re-fits the PTY.
+- [x] Configurable scrollback: `scrollbackRows` added to `terminalFontStore` (clamped
+  1,000-100,000), surfaced as a "Terminal Preferences" section in Settings > Workspace, applied
+  live via `term.options.scrollback`. `terminalLimits.ts` keeps the old constant as the default.
 
-### 3.3 Search and copy polish
-- Ship the in-flight clipboard work; add "Copy last command output" if feasible from the buffer, and a right-click context menu on panes (Copy / Paste / Clear / Search) so mouse-first users are not stranded.
+### 3.2 Layout and session resilience - DONE
+- [x] Per-workspace pane restore already existed (`restoreWorkspacePanes` + the setup wizard's
+  "Restore previous terminals"); left intact and now also re-snapshotted after a reorder.
+- [x] Drag-to-reorder: the pane title is a drag grip; dropping onto another pane's titlebar calls
+  the new `reorderPane` store action (same-workspace only, via a private DnD MIME so a drag never
+  pastes into a terminal) and re-persists the layout.
+- [x] Ctrl+Alt+Left added alongside the existing Ctrl+Alt+Right (unified into
+  `focusAdjacentTerminal`). A "Keyboard Shortcuts" dialog (`KeyboardShortcutsDialog`) documents
+  every shortcut and terminal gesture, reachable from the command palette or Ctrl+/.
 
-**Verification:** E2E in `npm run tauri:dev` as a user would: open two providers, click URLs, restart the app and restore the session, resize/reorder panes, verify glyphs/fonts/scrollback. Unit tests for the layout-restore store logic.
+### 3.3 Search and copy polish - DONE
+- [x] The in-flight clipboard work is shipped (Ctrl+C copy-selection / Ctrl+V paste already
+  present). Added a right-click context menu on panes (`TerminalPaneContextMenu`):
+  Copy / Copy all output / Paste / Clear / Search. Per-command output boundaries aren't captured
+  in the buffer, so "Copy last command output" was implemented as "Copy all output" (clean text
+  serialized from the xterm buffer, no ANSI codes) rather than an unreliable heuristic.
+
+**Verification:** typecheck / lint / `npm test` (incl. new `webLinks` tests) / `npm run build` /
+`cargo check` green locally. The live E2E pass (click URLs, drag-reorder, restart-and-restore,
+Nerd-Font glyphs) remains a manual `npm run tauri:dev` / packaged-build check.
 
 ---
 

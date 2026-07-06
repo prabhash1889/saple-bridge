@@ -6,6 +6,7 @@ import { ProjectDashboard } from './components/project/ProjectDashboard';
 import { ToastHost } from './components/common/ToastHost';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { RoomSkeleton } from './components/common/RoomSkeleton';
+import { KeyboardShortcutsDialog } from './components/common/KeyboardShortcutsDialog';
 import { useProjectStore, ViewType } from './stores/projectStore';
 import { useKanbanStore } from './stores/kanbanStore';
 import { useSwarmStore } from './stores/swarmStore';
@@ -43,6 +44,7 @@ function App() {
   const themeMode = useThemeStore((state) => state.mode);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mountedHeavyViews, setMountedHeavyViews] = useState<Set<ViewType>>(() => new Set<ViewType>());
   // Heavy views get a slim TopBar (branch + theme toggle stay reachable) instead of
   // hiding it entirely, which previously stranded the theme toggle and git context.
@@ -102,11 +104,12 @@ function App() {
       }
     };
 
-    const focusNextTerminal = () => {
+    const focusAdjacentTerminal = (direction: 1 | -1) => {
       const { panes, focusedPaneId, setFocusedPane } = useTerminalStore.getState();
       if (panes.length === 0) return;
       const currentIndex = panes.indexOf(focusedPaneId || '');
-      const nextIndex = (currentIndex + 1) % panes.length;
+      const base = currentIndex === -1 ? 0 : currentIndex;
+      const nextIndex = (base + direction + panes.length) % panes.length;
       setFocusedPane(panes[nextIndex]);
     };
 
@@ -143,10 +146,14 @@ function App() {
         handleNewTerminal();
       }
 
-      // 5. Focus next terminal: Ctrl+Shift+Tab or Ctrl+Alt+Right
+      // 5. Cycle terminals: Ctrl+Alt+Right / Ctrl+Shift+Tab (next), Ctrl+Alt+Left (previous)
       if ((e.ctrlKey && e.altKey && e.key === 'ArrowRight') || (e.ctrlKey && e.shiftKey && e.key === 'Tab')) {
         e.preventDefault();
-        focusNextTerminal();
+        focusAdjacentTerminal(1);
+      }
+      if (e.ctrlKey && e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        focusAdjacentTerminal(-1);
       }
 
       // 6. Open review queue: Ctrl+Shift+R
@@ -156,11 +163,25 @@ function App() {
           useProjectStore.getState().setActiveView('review');
         }
       }
+
+      // 7. Keyboard shortcuts help: Ctrl+/
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentProjectPath]);
+
+  // The command palette opens the shortcuts dialog by dispatching this window event, so the
+  // palette stays decoupled from App's local dialog state.
+  useEffect(() => {
+    const open = () => setShortcutsOpen(true);
+    window.addEventListener('saple:open-shortcuts', open);
+    return () => window.removeEventListener('saple:open-shortcuts', open);
+  }, []);
 
   const renderHeavyView = (view: ViewType, node: ReactNode) => {
     if (!mountedHeavyViews.has(view)) return null;
@@ -212,6 +233,7 @@ function App() {
           <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
         </Suspense>
       )}
+      <KeyboardShortcutsDialog isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }

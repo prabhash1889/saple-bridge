@@ -1601,3 +1601,111 @@ button.text-btn:hover {
   background: var(--accent);
   opacity: 1;
 }
+
+/* ── Keyboard shortcuts dialog (Phase 3.2) ───────────────────────────────────────── */
+.shortcuts-dialog {
+  background: rgba(24, 24, 27, 0.9);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  max-width: 560px;
+  width: 90%;
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(20px);
+}
+
+.shortcuts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.shortcuts-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.shortcuts-body {
+  padding: 12px 18px 18px;
+  overflow-y: auto;
+}
+
+.shortcuts-group {
+  margin-top: 16px;
+}
+
+.shortcuts-group:first-child {
+  margin-top: 4px;
+}
+
+.shortcuts-group-title {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.shortcuts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.shortcuts-row:last-child {
+  border-bottom: none;
+}
+
+.shortcuts-label {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.shortcuts-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.shortcuts-plus {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.shortcuts-kbd {
+  display: inline-flex;
+  align-items: center;
+  min-width: 20px;
+  height: 22px;
+  padding: 0 6px;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1;
+}
