@@ -48,6 +48,27 @@ export interface WorkspaceHistoryEntry {
   openedAt: number;
 }
 
+// Legacy (v0) persisted shape read by the `migrate` step. v0 stored `openWorkspacePaths`
+// instead of `openWorkspaces`; the index signature carries through any other persisted keys.
+interface PersistedProjectStateV0 {
+  openWorkspaces?: unknown;
+  openWorkspacePaths?: string[];
+  currentProjectPath?: string;
+  [key: string]: unknown;
+}
+
+// The subset of ProjectState written to storage (see `partialize` below) and produced by `migrate`.
+type PersistedProjectState = Pick<
+  ProjectState,
+  | 'currentProjectPath'
+  | 'currentProjectName'
+  | 'currentWorkspaceId'
+  | 'activeView'
+  | 'recentProjects'
+  | 'workspaceHistory'
+  | 'openWorkspaces'
+>;
+
 const basename = (path: string) => {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
@@ -306,8 +327,11 @@ export const useProjectStore = create<ProjectState>()(
       version: 1,
       // v0 stored `openWorkspacePaths: string[]`. Convert each path to an instance and
       // point currentWorkspaceId at the one matching the persisted active path.
-      migrate: (persisted: any, _version) => {
-        if (!persisted || Array.isArray(persisted.openWorkspaces)) return persisted;
+      migrate: (persistedState, _version) => {
+        const persisted = persistedState as PersistedProjectStateV0 | undefined;
+        if (!persisted || Array.isArray(persisted.openWorkspaces)) {
+          return persisted as PersistedProjectState | undefined;
+        }
         const paths: string[] = Array.isArray(persisted.openWorkspacePaths) ? persisted.openWorkspacePaths : [];
         const openWorkspaces: WorkspaceInstance[] = [];
         for (const p of paths) {
@@ -326,8 +350,9 @@ export const useProjectStore = create<ProjectState>()(
           }
           currentWorkspaceId = inst.id;
         }
-        const { openWorkspacePaths, ...rest } = persisted;
-        return { ...rest, openWorkspaces, currentWorkspaceId };
+        // openWorkspacePaths is a legacy persisted field we intentionally drop.
+        const { openWorkspacePaths: _openWorkspacePaths, ...rest } = persisted;
+        return { ...rest, openWorkspaces, currentWorkspaceId } as PersistedProjectState;
       },
       partialize: (state) => ({
         currentProjectPath: state.currentProjectPath,

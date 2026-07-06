@@ -601,7 +601,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
           cols: nextSize.cols,
           rows: nextSize.rows,
         }).catch(e => console.error('PTY resize on layout change failed:', e));
-      } catch (err) {
+      } catch {
         // Ignored when elements are momentarily detached
       }
     };

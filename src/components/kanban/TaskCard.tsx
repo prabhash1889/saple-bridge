@@ -112,9 +112,9 @@ You MUST output one of the following exact review trigger patterns on a line by 
         agentSessionId: session.id
       });
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to launch agent:', error);
-      useNotificationStore.getState().error(`Failed to launch agent: ${error.toString()}`);
+      useNotificationStore.getState().error(`Failed to launch agent: ${String(error)}`);
     }
   }, [addPane, currentProjectPath, task, updateTask]);
 

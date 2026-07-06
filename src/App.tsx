@@ -94,8 +94,8 @@ function App() {
         await useTerminalStore.getState().addPane(currentProjectPath);
         setActiveView('terminals');
         useNotificationStore.getState().success('Created new terminal pane.');
-      } catch (err: any) {
-        useNotificationStore.getState().error(`Failed to create terminal: ${err.toString()}`);
+      } catch (err) {
+        useNotificationStore.getState().error(`Failed to create terminal: ${String(err)}`);
       }
     };
 

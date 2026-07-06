@@ -18,10 +18,6 @@ import { TerminalPane } from './TerminalPane';
 const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
   { value: 'codex', label: 'Codex', icon: 'C' },
   { value: 'claude', label: 'Claude', icon: 'Cl' },
-  { value: 'gemini', label: 'Gemini', icon: 'G' },
-  { value: 'openrouter', label: 'OpenRouter', icon: 'Or' },
-  { value: 'cursor', label: 'Cursor', icon: 'Cr' },
-  { value: 'copilot', label: 'Copilot', icon: 'Co' },
   { value: 'droid', label: 'Droid', icon: 'D' },
   { value: 'pi', label: 'Pi', icon: 'Pi' },
   { value: 'opencode', label: 'OpenCode', icon: 'O' },
@@ -94,9 +90,7 @@ const WorkspaceTerminalGridComponent: React.FC<WorkspaceTerminalGridProps> = ({ 
 
 const WorkspaceTerminalGrid = memo(WorkspaceTerminalGridComponent);
 
-interface TerminalGridProps {}
-
-const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
+const TerminalGridComponent: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<TerminalProviderOption>('codex');
   const [setupStep, setSetupStep] = useState<SetupStep>('start');
   const [selectedLayoutCount, setSelectedLayoutCount] = useState(4);

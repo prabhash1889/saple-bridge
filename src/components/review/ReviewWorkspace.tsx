@@ -219,8 +219,8 @@ export const ReviewWorkspace: React.FC = () => {
       await loadTasks(currentProjectPath, true);
       await loadSessions(currentProjectPath, true);
       setActiveTaskId(null);
-    } catch (err: any) {
-      useNotificationStore.getState().error(`Approval failed: ${err.toString()}`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Approval failed: ${String(err)}`);
     } finally {
       setSubmittingDecision(false);
     }
@@ -255,8 +255,8 @@ export const ReviewWorkspace: React.FC = () => {
       await loadTasks(currentProjectPath, true);
       await loadSessions(currentProjectPath, true);
       setActiveTaskId(null);
-    } catch (err: any) {
-      useNotificationStore.getState().error(`Rejection failed: ${err.toString()}`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Rejection failed: ${String(err)}`);
     } finally {
       setSubmittingDecision(false);
       setRejecting(false);
@@ -284,8 +284,8 @@ export const ReviewWorkspace: React.FC = () => {
         setFileDiff(diff);
         setLoadingDiff(false);
       }
-    } catch (err: any) {
-      useNotificationStore.getState().error(`Refresh failed: ${err.toString()}`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Refresh failed: ${String(err)}`);
     } finally {
       setRefreshing(false);
     }
@@ -374,8 +374,8 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
         content: memoryContent,
       });
       setMemoryCreated(true);
-    } catch (err: any) {
-      useNotificationStore.getState().error(`Failed to save memory note: ${err.toString()}`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to save memory note: ${String(err)}`);
     }
   };
 

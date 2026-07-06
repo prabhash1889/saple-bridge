@@ -1,0 +1,18 @@
+# Build output and dependencies
+dist
+build
+node_modules
+src-tauri/target
+src-tauri/gen
+
+# Generated / vendored
+package-lock.json
+skills-lock.json
+src/assets/fonts
+
+# Rust and native
+*.rs
+*.lock
+
+# Data / snapshots
+.saple

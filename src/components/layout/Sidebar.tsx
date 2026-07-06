@@ -252,12 +252,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
             >
               <Icon size={18} />
               <span>{item.label}</span>
-              {item.id === 'review' && openTaskCount > 0 && (
-                <span className="badge review-badge">{openTaskCount}</span>
-              )}
-              {item.id === 'swarm' && runningAgentCount > 0 && (
-                <span className="badge swarm-badge">{runningAgentCount}</span>
-              )}
             </button>
           );
         })}
@@ -547,12 +541,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
             >
               <Icon size={18} />
               <span>{item.label}</span>
-              {item.id === 'review' && openTaskCount > 0 && (
-                <span className="badge review-badge">{openTaskCount}</span>
-              )}
-              {item.id === 'swarm' && runningAgentCount > 0 && (
-                <span className="badge swarm-badge">{runningAgentCount}</span>
-              )}
             </button>
           );
 

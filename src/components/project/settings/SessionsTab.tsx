@@ -86,7 +86,7 @@ export const SessionsTab: React.FC = () => {
                             });
                             setActiveLogTitle(session.name);
                             setActiveLogContent(content);
-                          } catch (err) {
+                          } catch {
                             errorNotification('Log file not found or empty.');
                           }
                         }}
@@ -109,8 +109,8 @@ export const SessionsTab: React.FC = () => {
                               await saveSessions(currentProjectPath);
                               successNotification('Agent session resumed in a new terminal.');
                               useProjectStore.getState().setActiveView('terminals');
-                            } catch (err: any) {
-                              errorNotification(`Failed to resume agent: ${err.toString()}`);
+                            } catch (err) {
+                              errorNotification(`Failed to resume agent: ${String(err)}`);
                             }
                           }}
                         >

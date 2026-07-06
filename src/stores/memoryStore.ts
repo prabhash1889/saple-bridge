@@ -88,8 +88,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
         loadedProjectPath: projectPath,
         loading: false 
       });
-    } catch (err: any) {
-      set({ error: `Failed to load graph: ${err.toString()}`, loading: false });
+    } catch (err) {
+      set({ error: `Failed to load graph: ${String(err)}`, loading: false });
     }
   },
 
@@ -129,9 +129,9 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       if (node.id) {
         get().loadUnlinkedMentions(projectPath, node.id);
       }
-    } catch (err: any) {
+    } catch (err) {
       if (requestId !== loadNoteSeq) return;
-      set({ error: `Failed to load note: ${err.toString()}`, loading: false });
+      set({ error: `Failed to load note: ${String(err)}`, loading: false });
     }
   },
 
@@ -157,8 +157,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       if (active?.id) {
         get().loadUnlinkedMentions(projectPath, active.id);
       }
-    } catch (err: any) {
-      set({ error: `Failed to add link: ${err.toString()}` });
+    } catch (err) {
+      set({ error: `Failed to add link: ${String(err)}` });
     }
   },
 
@@ -186,8 +186,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
         activeNoteContent: content,
         loading: false 
       });
-    } catch (err: any) {
-      set({ error: `Failed to save note: ${err.toString()}`, loading: false });
+    } catch (err) {
+      set({ error: `Failed to save note: ${String(err)}`, loading: false });
     }
   },
 
@@ -208,8 +208,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
         activeNoteContent: '',
         loading: false 
       });
-    } catch (err: any) {
-      set({ error: `Failed to delete note: ${err.toString()}`, loading: false });
+    } catch (err) {
+      set({ error: `Failed to delete note: ${String(err)}`, loading: false });
     }
   },
 
@@ -219,8 +219,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       await invoke('create_memory_snapshot', { projectPath, name });
       const snapshots = await invoke<string[]>('list_memory_snapshots', { projectPath });
       set({ snapshots, loading: false });
-    } catch (err: any) {
-      set({ error: `Failed to create snapshot: ${err.toString()}`, loading: false });
+    } catch (err) {
+      set({ error: `Failed to create snapshot: ${String(err)}`, loading: false });
     }
   },
 
@@ -237,8 +237,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
         activeNoteContent: '',
         loading: false 
       });
-    } catch (err: any) {
-      set({ error: `Failed to restore snapshot: ${err.toString()}`, loading: false });
+    } catch (err) {
+      set({ error: `Failed to restore snapshot: ${String(err)}`, loading: false });
     }
   },
 
@@ -246,7 +246,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
     try {
       const snapshots = await invoke<string[]>('list_memory_snapshots', { projectPath });
       set({ snapshots });
-    } catch (err) {
+    } catch {
       // ignore
     }
   },

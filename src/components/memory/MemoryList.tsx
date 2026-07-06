@@ -67,8 +67,8 @@ export const MemoryList: React.FC = () => {
       await takeSnapshot(currentProjectPath, snapshotName.trim());
       setSnapshotName('');
       useNotificationStore.getState().success('Snapshot created successfully!');
-    } catch (err: any) {
-      useNotificationStore.getState().error(`Failed to create snapshot: ${err.toString()}`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to create snapshot: ${String(err)}`);
     } finally {
       setSnapshotLoading(false);
     }
@@ -84,8 +84,8 @@ export const MemoryList: React.FC = () => {
         try {
           await restoreSnapshot(currentProjectPath, name);
           useNotificationStore.getState().success('Snapshot restored successfully!');
-        } catch (err: any) {
-          useNotificationStore.getState().error(`Failed to restore snapshot: ${err.toString()}`);
+        } catch (err) {
+          useNotificationStore.getState().error(`Failed to restore snapshot: ${String(err)}`);
         } finally {
           setSnapshotLoading(false);
         }

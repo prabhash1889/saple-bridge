@@ -46,9 +46,9 @@ export const KeychainTab: React.FC = () => {
       // Reflect the new key in the provider cards' readiness/"Key saved" badge immediately.
       refreshReadiness();
       setTimeout(() => setKeySaveStatus('idle'), 3000);
-    } catch (err: any) {
+    } catch (err) {
       setKeySaveStatus('error');
-      setKeyErrorMessage(err.toString());
+      setKeyErrorMessage(String(err));
     } finally {
       setKeyLoading(false);
     }

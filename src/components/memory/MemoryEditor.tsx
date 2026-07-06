@@ -179,8 +179,8 @@ export const MemoryEditor: React.FC = () => {
         try {
           await deleteNote(currentProjectPath, activeNote);
           useNotificationStore.getState().success(`Deleted note "${activeNote.title}"`);
-        } catch (err: any) {
-          useNotificationStore.getState().error(`Failed to delete: ${err.toString()}`);
+        } catch (err) {
+          useNotificationStore.getState().error(`Failed to delete: ${String(err)}`);
         }
       }
     });

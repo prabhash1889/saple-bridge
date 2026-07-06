@@ -92,8 +92,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
         await openWorkspace(folder);
         success(`Opened workspace at ${folder}`);
       }
-    } catch (err: any) {
-      error(`Failed to open workspace: ${err.toString()}`);
+    } catch (err) {
+      error(`Failed to open workspace: ${String(err)}`);
     }
   };
 
@@ -107,8 +107,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       await addPane(currentProjectPath);
       setActiveView('terminals');
       success('Created new command room terminal pane.');
-    } catch (err: any) {
-      error(`Failed to create terminal: ${err.toString()}`);
+    } catch (err) {
+      error(`Failed to create terminal: ${String(err)}`);
     }
   };
 
@@ -121,8 +121,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     try {
       const res = await invoke<string>('install_mcp_config', { projectPath: currentProjectPath });
       success('MCP configuration installed successfully.', res);
-    } catch (err: any) {
-      error(`Failed to install MCP config: ${err.toString()}`);
+    } catch (err) {
+      error(`Failed to install MCP config: ${String(err)}`);
     }
   };
 
@@ -171,8 +171,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
 
       setActiveView('terminals');
       success(`Launched task "${task.title}" using ${provider}`);
-    } catch (err: any) {
-      error(`Failed to launch task: ${err.toString()}`);
+    } catch (err) {
+      error(`Failed to launch task: ${String(err)}`);
     }
   };
 

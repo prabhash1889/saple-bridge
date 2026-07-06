@@ -4,11 +4,26 @@ import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 
+// Shape of the `run_diagnostics` Rust command result, limited to the fields this tab reads.
+interface DiagnosticsResult {
+  os: string;
+  shell: string;
+  workspaceWrite: boolean;
+  gitAvailable: boolean;
+  keychains?: Array<{ status: string }>;
+  providerClis: Array<{ name: string; available: boolean; version?: string }>;
+  mcpConfig: {
+    hasMcpJson: boolean;
+    hasMcpConfigJson: boolean;
+    sapleMemoryConfigured: boolean;
+  };
+}
+
 export const DiagnosticsTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
 
   const [diagLoading, setDiagLoading] = useState(false);
-  const [diagResult, setDiagResult] = useState<any | null>(null);
+  const [diagResult, setDiagResult] = useState<DiagnosticsResult | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
 
   const successNotification = (msg: string, desc?: string) => useNotificationStore.getState().success(msg, desc);
@@ -32,12 +47,12 @@ export const DiagnosticsTab: React.FC = () => {
             setDiagResult(null);
             setDiagError(null);
             try {
-              const res = await invoke<any>('run_diagnostics', { projectPath: currentProjectPath });
+              const res = await invoke<DiagnosticsResult>('run_diagnostics', { projectPath: currentProjectPath });
               setDiagResult(res);
               successNotification('Diagnostics completed successfully.');
-            } catch (err: any) {
-              setDiagError(err.toString());
-              errorNotification(`Diagnostics failed: ${err.toString()}`);
+            } catch (err) {
+              setDiagError(String(err));
+              errorNotification(`Diagnostics failed: ${String(err)}`);
             } finally {
               setDiagLoading(false);
             }
@@ -106,7 +121,7 @@ export const DiagnosticsTab: React.FC = () => {
               Provider CLI Availability
             </h4>
             <div className="extracted-style-039">
-              {diagResult.providerClis.map((c: any) => (
+              {diagResult.providerClis.map((c) => (
                 <div key={c.name} className="extracted-style-040 diag-row">
                   <span className="extracted-style-041">{c.name} CLI</span>
                   <div className="extracted-style-042">

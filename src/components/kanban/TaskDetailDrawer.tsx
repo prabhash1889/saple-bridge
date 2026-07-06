@@ -83,9 +83,9 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
       await useReviewStore.getState().submitReviewDecision(currentProjectPath, task.id, 'approve');
       await useKanbanStore.getState().loadTasks(currentProjectPath, true);
       onClose();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Approve failed:', err);
-      useNotificationStore.getState().error(`Approve failed: ${err.toString()}`);
+      useNotificationStore.getState().error(`Approve failed: ${String(err)}`);
     }
   };
 
@@ -95,9 +95,9 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
       await useReviewStore.getState().submitReviewDecision(currentProjectPath, task.id, 'reject');
       await useKanbanStore.getState().loadTasks(currentProjectPath, true);
       onClose();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Reject failed:', err);
-      useNotificationStore.getState().error(`Reject failed: ${err.toString()}`);
+      useNotificationStore.getState().error(`Reject failed: ${String(err)}`);
     }
   };
 
@@ -178,9 +178,9 @@ Instructions: ${systemPrompt}
 
       onClose();
       useProjectStore.getState().setActiveView('terminals');
-    } catch (error: any) {
+    } catch (error) {
       console.error('Launch agent failed:', error);
-      useNotificationStore.getState().error(`Launch failed: ${error.toString()}`);
+      useNotificationStore.getState().error(`Launch failed: ${String(error)}`);
     }
   };
 

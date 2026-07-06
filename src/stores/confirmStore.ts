@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-interface ConfirmOpts {
+export interface ConfirmOpts {
   title: string;
   message: string;
   confirmLabel?: string;

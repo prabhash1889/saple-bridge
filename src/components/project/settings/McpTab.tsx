@@ -12,6 +12,16 @@ interface McpStatus {
   legacyConfig: boolean;
 }
 
+interface McpTool {
+  name: string;
+  description?: string;
+}
+
+/** Result of the `test_mcp_tools` Rust command, limited to the fields this tab reads. */
+interface McpSmokeResult {
+  tools?: McpTool[];
+}
+
 const mcpToolsListStyle: React.CSSProperties = {
   maxHeight: '240px',
   overflowY: 'auto',
@@ -43,7 +53,7 @@ export const McpTab: React.FC = () => {
   const [mcpError, setMcpError] = useState<string | null>(null);
 
   const [mcpSmokeLoading, setMcpSmokeLoading] = useState(false);
-  const [mcpSmokeResult, setMcpSmokeResult] = useState<any>(null);
+  const [mcpSmokeResult, setMcpSmokeResult] = useState<McpSmokeResult | null>(null);
   const [mcpSmokeError, setMcpSmokeError] = useState<string | null>(null);
 
   const refreshMcpStatus = useCallback(async () => {
@@ -67,8 +77,8 @@ export const McpTab: React.FC = () => {
       const result = await invoke<string>('install_mcp_config', { projectPath: currentProjectPath });
       setMcpResult(result);
       await refreshMcpStatus();
-    } catch (err: any) {
-      setMcpError(err.toString());
+    } catch (err) {
+      setMcpError(String(err));
     } finally {
       setMcpInstalling(false);
     }
@@ -80,10 +90,10 @@ export const McpTab: React.FC = () => {
     setMcpSmokeResult(null);
     setMcpSmokeError(null);
     try {
-      const result = await invoke<any>('test_mcp_tools', { projectPath: currentProjectPath });
+      const result = await invoke<McpSmokeResult>('test_mcp_tools', { projectPath: currentProjectPath });
       setMcpSmokeResult(result);
-    } catch (err: any) {
-      setMcpSmokeError(err.toString());
+    } catch (err) {
+      setMcpSmokeError(String(err));
     } finally {
       setMcpSmokeLoading(false);
     }
@@ -181,7 +191,7 @@ export const McpTab: React.FC = () => {
 
             {mcpSmokeResult && mcpSmokeResult.tools && (
               <div style={mcpToolsListStyle}>
-                {mcpSmokeResult.tools.map((tool: any) => (
+                {mcpSmokeResult.tools.map((tool) => (
                   <div key={tool.name} style={mcpToolCardStyle}>
                     <strong className="extracted-style-058">
                       {tool.name}

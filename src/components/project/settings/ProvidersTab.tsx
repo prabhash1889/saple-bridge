@@ -81,8 +81,8 @@ export const ProvidersTab: React.FC = () => {
       await useTerminalStore.getState().addPane(currentProjectPath, 'custom', undefined, undefined, command);
       useProjectStore.getState().setActiveView('terminals');
       successNotification(`Launching ${provider} sign-in`, 'Complete the login in the new terminal.');
-    } catch (err: any) {
-      errorNotification('Failed to start sign-in', err?.toString?.());
+    } catch (err) {
+      errorNotification('Failed to start sign-in', String(err));
     }
   };
 

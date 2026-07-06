@@ -286,7 +286,7 @@ ${skillsSection}${contextSection}
     // 1. Spawn terminal pane. spawn_pty launches the provider CLI with this prompt
     // file piped in, so no separate launch command is written to the PTY.
     const provider = agent.provider || 'codex';
-    const paneId = await useTerminalStore.getState().addPane(projectPath, provider as any, agent.model, promptFile);
+    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile);
 
     // 2. Set terminal metadata
     useTerminalStore.getState().updateSession(paneId, {
@@ -298,7 +298,7 @@ ${skillsSection}${contextSection}
       projectPath,
       name: agent.name,
       cwd: projectPath,
-      provider: provider as any,
+      provider: provider,
       model: agent.model,
       role: agent.role,
       swarmId: useSwarmStore.getState().swarmId || undefined,

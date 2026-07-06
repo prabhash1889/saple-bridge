@@ -27,7 +27,7 @@ describe('memoryStore.loadNote', () => {
     let resolveOld!: (v: string) => void;
     const oldPromise = new Promise<string>((r) => (resolveOld = r));
 
-    invokeMock.mockImplementation((cmd: string, args: any) => {
+    invokeMock.mockImplementation((cmd: string, args: { filePath: string }) => {
       if (cmd === 'read_memory_file') {
         return args.filePath.includes('old') ? oldPromise : Promise.resolve('new content');
       }

@@ -82,7 +82,7 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, isOpen, onClose);
 
-  const enabledProviders = providers.filter((p: any) => p.enabled);
+  const enabledProviders = providers.filter((p) => p.enabled);
 
   useEffect(() => {
     if (taskToEdit) {
@@ -119,7 +119,7 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
     const prov = e.target.value as AgentProvider;
     setAgentProvider(prov);
     
-    const pConfig = providers.find((p: any) => p.provider === prov);
+    const pConfig = providers.find((p) => p.provider === prov);
     if (pConfig) {
       setAgentModel(pConfig.customModel || pConfig.defaultModel || '');
     }
@@ -327,7 +327,7 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
                   value={agentProvider} 
                   onChange={handleProviderChange}
                 >
-                  {enabledProviders.map((p: any) => (
+                  {enabledProviders.map((p) => (
                     <option key={p.provider} value={p.provider}>
                       {p.label}
                     </option>

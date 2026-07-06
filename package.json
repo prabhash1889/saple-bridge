@@ -1,11 +1,15 @@
 {
   "name": "saple-bridge",
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"scripts/**/*.{js,mjs}\" \"*.{ts,js,mjs,json}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/**/*.{js,mjs}\" \"*.{ts,js,mjs,json}\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "tsc && vite build",
@@ -37,7 +41,14 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.26",
+    "globals": "^15.15.0",
+    "prettier": "^3.9.4",
     "typescript": "~5.8.3",
+    "typescript-eslint": "^8.62.1",
     "vite": "^7.0.4",
     "vitest": "^4.1.9"
   }

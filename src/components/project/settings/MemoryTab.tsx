@@ -3,7 +3,7 @@ import { Database, RefreshCw } from 'lucide-react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useMemoryStore } from '../../../stores/memoryStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
-import { useConfirmStore } from '../../../stores/confirmStore';
+import { useConfirmStore, type ConfirmOpts } from '../../../stores/confirmStore';
 
 export const MemoryTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -11,7 +11,7 @@ export const MemoryTab: React.FC = () => {
   const [snapshotName, setSnapshotName] = useState('');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
 
-  const confirmAction = (opts: any) => useConfirmStore.getState().confirm(opts);
+  const confirmAction = (opts: ConfirmOpts) => useConfirmStore.getState().confirm(opts);
   const successNotification = (msg: string, desc?: string) => useNotificationStore.getState().success(msg, desc);
   const errorNotification = (msg: string, desc?: string) => useNotificationStore.getState().error(msg, desc);
 
@@ -44,8 +44,8 @@ export const MemoryTab: React.FC = () => {
                 await takeSnapshot(currentProjectPath, snapshotName.trim());
                 setSnapshotName('');
                 successNotification('Snapshot created successfully!');
-              } catch (err: any) {
-                errorNotification(`Failed to create snapshot: ${err.toString()}`);
+              } catch (err) {
+                errorNotification(`Failed to create snapshot: ${String(err)}`);
               } finally {
                 setSnapshotLoading(false);
               }
@@ -97,8 +97,8 @@ export const MemoryTab: React.FC = () => {
                             try {
                               await restoreSnapshot(currentProjectPath, name);
                               successNotification('Snapshot restored successfully!');
-                            } catch (err: any) {
-                              errorNotification(`Failed to restore snapshot: ${err.toString()}`);
+                            } catch (err) {
+                              errorNotification(`Failed to restore snapshot: ${String(err)}`);
                             } finally {
                               setSnapshotLoading(false);
                             }
