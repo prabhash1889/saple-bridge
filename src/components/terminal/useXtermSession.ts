@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { TERMINAL_SCROLLBACK_ROWS } from '../../lib/terminalLimits';
 import { useThemeStore, resolveTheme } from '../../stores/themeStore';
@@ -29,48 +29,38 @@ import '@xterm/xterm/css/xterm.css';
 // WebView user agent (no extra deps) and pass it to the Terminal below.
 export const IS_WINDOWS_PTY = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent);
 
+// Shortcut letters match on event.key OR event.code, because each covers a case the
+// other misses: `code` is derived from the hardware scan code, which is 0 for synthetic
+// keystrokes (SendInput from voice/automation tools, giving code:"") but is layout
+// independent; `key` follows the active keyboard layout (Ctrl+V on a Cyrillic layout
+// reports key:"м" but code:"KeyV") yet is always correct for synthetic input.
+const matchesShortcutLetter = (event: KeyboardEvent, letter: string, physicalCode: string) =>
+  event.key.toLowerCase() === letter || event.code === physicalCode;
+
 const isTerminalCopyShortcut = (event: KeyboardEvent) =>
   event.type === 'keydown' &&
   event.ctrlKey &&
   event.shiftKey &&
   !event.altKey &&
-  event.code === 'KeyC';
+  !event.metaKey &&
+  matchesShortcutLetter(event, 'c', 'KeyC');
 
 const copyTextToClipboard = async (text: string) => {
+  // Clipboard writes go through the Tauri plugin for the same reason reads do (see
+  // lib.rs): WebView2 never auto-grants clipboard permission to config-defined windows,
+  // so navigator.clipboard.writeText intermittently rejects or hangs on a permission
+  // prompt - the cause of flaky terminal copies. The web API stays as a fallback only.
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
+    await writeText(text);
+    return;
   } catch (err) {
-    console.warn('Navigator clipboard copy failed, falling back to execCommand:', err);
+    console.warn('Plugin clipboard copy failed, falling back to navigator.clipboard:', err);
   }
 
-  const activeElement = document.activeElement instanceof HTMLElement
-    ? document.activeElement
-    : null;
-  const textarea = document.createElement('textarea');
-
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  textarea.style.opacity = '0';
-
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-
   try {
-    if (!document.execCommand('copy')) {
-      throw new Error('document.execCommand("copy") returned false');
-    }
+    await navigator.clipboard.writeText(text);
   } catch (err) {
     console.error('Failed to copy terminal selection:', err);
-  } finally {
-    document.body.removeChild(textarea);
-    activeElement?.focus();
   }
 };
 
@@ -378,17 +368,19 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       // Plain Ctrl+V: stock xterm swallows this into the raw 0x16 control byte and no
       // paste ever happens (the keydown is preventDefault-ed, so the WebView's native
       // paste never fires). Intercept it: when the clipboard holds text, insert it via
-      // xterm's paste path (bracketed paste — works in every TUI); when it holds no
+      // xterm's paste path (bracketed paste - works in every TUI); when it holds no
       // text, forward the original 0x16 so TUIs with their own Ctrl+V bindings (codex/
-      // Claude Code image paste) still see the keystroke. Ctrl+Shift+V is untouched —
-      // it rides the WebView's native paste event.
+      // Claude Code image paste) still see the keystroke. Ctrl+Shift+V is untouched -
+      // it rides the WebView's native paste event. Matched via matchesShortcutLetter:
+      // synthetic Ctrl+V (SendInput with no scan code, e.g. voice-to-text injectors)
+      // arrives with code:"" and would bypass a code-only check.
       if (
         event.type === 'keydown' &&
         event.ctrlKey &&
         !event.shiftKey &&
         !event.altKey &&
         !event.metaKey &&
-        event.code === 'KeyV'
+        matchesShortcutLetter(event, 'v', 'KeyV')
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -404,6 +396,25 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
             // Clipboard empty or non-text (e.g. an image) — behave like stock xterm.
             term.input('\x16', true);
           });
+        return false;
+      }
+
+      // Plain Ctrl+C with an active selection copies it instead of sending SIGINT
+      // (Windows Terminal / VS Code convention). The selection is dismissed so an
+      // immediate second Ctrl+C still interrupts the running process as usual.
+      if (
+        event.type === 'keydown' &&
+        event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        matchesShortcutLetter(event, 'c', 'KeyC') &&
+        term.hasSelection()
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void copyTextToClipboard(term.getSelection());
+        term.clearSelection();
         return false;
       }
 
