@@ -11,6 +11,11 @@ import { useThemeStore, resolveTheme } from '../../stores/themeStore';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
 import { getTerminalTheme, terminalThemeFor } from './terminalThemes';
 import {
+  copyTerminalSelection,
+  isTerminalCopyShortcut,
+  matchesShortcutLetter,
+} from './terminalClipboard';
+import {
   MAX_WEBGL_CONTEXTS,
   decrementActiveWebglContexts,
   getActiveWebglContexts,
@@ -28,22 +33,6 @@ import '@xterm/xterm/css/xterm.css';
 // REPLACES the existing rows and the shell banner/history is lost. Detect Windows from the
 // WebView user agent (no extra deps) and pass it to the Terminal below.
 export const IS_WINDOWS_PTY = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent);
-
-// Shortcut letters match on event.key OR event.code, because each covers a case the
-// other misses: `code` is derived from the hardware scan code, which is 0 for synthetic
-// keystrokes (SendInput from voice/automation tools, giving code:"") but is layout
-// independent; `key` follows the active keyboard layout (Ctrl+V on a Cyrillic layout
-// reports key:"м" but code:"KeyV") yet is always correct for synthetic input.
-const matchesShortcutLetter = (event: KeyboardEvent, letter: string, physicalCode: string) =>
-  event.key.toLowerCase() === letter || event.code === physicalCode;
-
-const isTerminalCopyShortcut = (event: KeyboardEvent) =>
-  event.type === 'keydown' &&
-  event.ctrlKey &&
-  event.shiftKey &&
-  !event.altKey &&
-  !event.metaKey &&
-  matchesShortcutLetter(event, 'c', 'KeyC');
 
 const copyTextToClipboard = async (text: string) => {
   // Clipboard writes go through the Tauri plugin for the same reason reads do (see
@@ -413,9 +402,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       ) {
         event.preventDefault();
         event.stopPropagation();
-        void copyTextToClipboard(term.getSelection());
-        term.clearSelection();
-        return false;
+        return !copyTerminalSelection(term, copyTextToClipboard, { clearSelection: true });
       }
 
       if (!isTerminalCopyShortcut(event)) {
@@ -425,10 +412,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       event.preventDefault();
       event.stopPropagation();
 
-      if (term.hasSelection()) {
-        void copyTextToClipboard(term.getSelection());
-      }
-
+      copyTerminalSelection(term, copyTextToClipboard);
       return false;
     });
 
@@ -661,6 +645,23 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       term.dispose();
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!active) return;
+
+    const handleWindowKeyDown = (event: KeyboardEvent) => {
+      if (!isTerminalCopyShortcut(event)) return;
+
+      const term = terminalRef.current;
+      if (!term || !copyTerminalSelection(term, copyTextToClipboard)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [active]);
 
   // Acquire/release the WebGL renderer as this pane's workspace gains/loses visibility.
   // Acquisition is deferred one frame so the outgoing workspace's panes release their
