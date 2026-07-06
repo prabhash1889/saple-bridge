@@ -15,7 +15,11 @@ const roomMeta: Record<ViewType, { title: string; context: string }> = {
   settings: { title: 'Settings', context: 'Workspace, providers, memory, and diagnostics.' },
 };
 
-export const TopBar: React.FC = () => {
+interface TopBarProps {
+  slim?: boolean;
+}
+
+export const TopBar: React.FC<TopBarProps> = ({ slim = false }) => {
   const {
     activeView,
     currentProjectPath,
@@ -25,15 +29,30 @@ export const TopBar: React.FC = () => {
   const [branch, setBranch] = useState<string | null>(null);
 
   useEffect(() => {
-    setBranch(null);
-    if (!currentProjectPath) return;
-    invoke<string>('git_current_branch', { projectPath: currentProjectPath })
-      .then(setBranch)
-      .catch(() => setBranch(null));
+    if (!currentProjectPath) {
+      setBranch(null);
+      return;
+    }
+
+    const refreshBranch = () => {
+      invoke<string>('git_current_branch', { projectPath: currentProjectPath })
+        .then(setBranch)
+        .catch(() => setBranch(null));
+    };
+
+    refreshBranch();
+    // The branch can change from outside the app (checkout in a terminal, another tool),
+    // so re-read it whenever the window regains focus.
+    window.addEventListener('focus', refreshBranch);
+    return () => window.removeEventListener('focus', refreshBranch);
   }, [currentProjectPath]);
 
   return (
-    <header className={`topbar-area ${activeView === 'dashboard' || activeView === 'terminals' ? 'workspace-first' : ''}`}>
+    <header
+      className={`topbar-area ${slim ? 'topbar-slim' : ''} ${
+        activeView === 'dashboard' || activeView === 'terminals' ? 'workspace-first' : ''
+      }`}
+    >
       <div className="topbar-workspace">
         <strong>{currentProjectName ?? 'No Workspace Open'}</strong>
         <span className="topbar-path-line" title={currentProjectPath ?? undefined}>

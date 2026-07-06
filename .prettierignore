@@ -1,0 +1,10 @@
+dist
+build
+coverage
+node_modules
+src-tauri/target
+src-tauri/gen
+package-lock.json
+skills-lock.json
+src/assets/fonts
+*.woff2

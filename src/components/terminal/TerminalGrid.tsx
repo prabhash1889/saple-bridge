@@ -94,9 +94,7 @@ const WorkspaceTerminalGridComponent: React.FC<WorkspaceTerminalGridProps> = ({ 
 
 const WorkspaceTerminalGrid = memo(WorkspaceTerminalGridComponent);
 
-interface TerminalGridProps {}
-
-const TerminalGridComponent: React.FC<TerminalGridProps> = () => {
+const TerminalGridComponent: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<TerminalProviderOption>('codex');
   const [setupStep, setSetupStep] = useState<SetupStep>('start');
   const [selectedLayoutCount, setSelectedLayoutCount] = useState(4);

@@ -43,7 +43,9 @@ function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mountedHeavyViews, setMountedHeavyViews] = useState<Set<ViewType>>(() => new Set<ViewType>());
-  const hideTopBar = HEAVY_VIEWS.includes(activeView);
+  // Heavy views get a slim TopBar (branch + theme toggle stay reachable) instead of
+  // hiding it entirely, which previously stranded the theme toggle and git context.
+  const slimTopBar = HEAVY_VIEWS.includes(activeView);
 
   // Apply the resolved theme, and when following the OS, react to system changes.
   useEffect(() => {
@@ -184,9 +186,9 @@ function App() {
   };
 
   return (
-    <div className={`app-grid ${hideTopBar ? 'no-topbar' : ''}`}>
+    <div className={`app-grid ${slimTopBar ? 'slim-topbar' : ''}`}>
       <Sidebar onOpenPalette={() => setPaletteOpen(true)} />
-      {!hideTopBar && <TopBar />}
+      <TopBar slim={slimTopBar} />
       <main className="content-area">
         {renderHeavyView('terminals', <TerminalGrid />)}
         {renderHeavyView('kanban', <KanbanBoard />)}

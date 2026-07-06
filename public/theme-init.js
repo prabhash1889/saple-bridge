@@ -13,7 +13,7 @@
       ? mode
       : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme', resolved);
-  } catch (e) {
+  } catch {
     document.documentElement.setAttribute('data-theme', 'dark');
   }
 })();

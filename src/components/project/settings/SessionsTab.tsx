@@ -86,7 +86,7 @@ export const SessionsTab: React.FC = () => {
                             });
                             setActiveLogTitle(session.name);
                             setActiveLogContent(content);
-                          } catch (err) {
+                          } catch {
                             errorNotification('Log file not found or empty.');
                           }
                         }}

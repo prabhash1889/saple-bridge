@@ -17,6 +17,10 @@ import {
   Command,
   Terminal as TerminalIcon,
   FolderOpen,
+  LayoutGrid,
+  Database,
+  Users,
+  GitPullRequest,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useKanbanStore } from '../../stores/kanbanStore';
@@ -64,11 +68,23 @@ const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
 ];
 
 
-const primaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
+type NavItem = { id: ViewType; label: string; icon: React.ElementType; accent: string };
+
+const primaryNavItems: NavItem[] = [
   { id: 'dashboard', label: 'Home', icon: Home, accent: 'home' },
 ];
 
-const secondaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
+// The five workspace rooms, kept in the same order as Alt+1-9, the command palette,
+// and the dashboard cards. Each requires an open workspace (see `workspaceRooms`).
+const roomNavItems: NavItem[] = [
+  { id: 'terminals', label: 'Terminals', icon: TerminalIcon, accent: 'command' },
+  { id: 'kanban', label: 'Tasks', icon: LayoutGrid, accent: 'tasks' },
+  { id: 'memory', label: 'Memory', icon: Database, accent: 'memory' },
+  { id: 'swarm', label: 'Swarm', icon: Users, accent: 'swarm' },
+  { id: 'review', label: 'Review', icon: GitPullRequest, accent: 'review' },
+];
+
+const secondaryNavItems: NavItem[] = [
   { id: 'editor', label: 'Files', icon: FileCode, accent: 'editor' },
   { id: 'settings', label: 'Settings', icon: Settings, accent: 'settings' },
 ];
@@ -224,6 +240,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [workspaceMenu]);
 
+  // Shared renderer so the badge logic (open tasks on Tasks/Review, running agents on
+  // Swarm) stays in one place across the primary, rooms, and secondary nav groups.
+  const renderNavItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
+    const active = activeView === item.id;
+    const showTaskBadge = (item.id === 'kanban' || item.id === 'review') && openTaskCount > 0;
+    const showAgentBadge = item.id === 'swarm' && runningAgentCount > 0;
+
+    return (
+      <button
+        key={item.id}
+        className={`room-nav-item accent-${item.accent} ${active ? 'active' : ''}`}
+        onClick={() => !disabled && setActiveView(item.id)}
+        disabled={disabled}
+        title={disabled ? `Open a workspace to access ${item.label}` : item.label}
+        aria-label={item.label}
+      >
+        <Icon size={18} />
+        <span>{item.label}</span>
+        {showTaskBadge && <span className="badge review-badge">{openTaskCount}</span>}
+        {showAgentBadge && <span className="badge swarm-badge">{runningAgentCount}</span>}
+      </button>
+    );
+  };
+
   return (
     <aside className="sidebar-area">
       <div className="sidebar-brand workspace-rail-brand">
@@ -236,31 +278,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
       </div>
 
       <nav className="room-nav room-nav-primary" aria-label="Rooms">
-        {primaryNavItems.map((item) => {
-          const Icon = item.icon;
-          const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
-          const active = activeView === item.id;
-
-          return (
-            <button
-              key={item.id}
-              className={`room-nav-item accent-${item.accent} ${active ? 'active' : ''}`}
-              onClick={() => !disabled && setActiveView(item.id)}
-              disabled={disabled}
-              title={disabled ? `Open a workspace to access ${item.label}` : item.label}
-              aria-label={item.label}
-            >
-              <Icon size={18} />
-              <span>{item.label}</span>
-              {item.id === 'review' && openTaskCount > 0 && (
-                <span className="badge review-badge">{openTaskCount}</span>
-              )}
-              {item.id === 'swarm' && runningAgentCount > 0 && (
-                <span className="badge swarm-badge">{runningAgentCount}</span>
-              )}
-            </button>
-          );
-        })}
+        {primaryNavItems.map(renderNavItem)}
+        {roomNavItems.map(renderNavItem)}
       </nav>
 
       <section className="recent-workspaces workspace-rail" aria-label="Workspaces">
@@ -275,9 +294,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                 aria-label="Add workspace"
               >
                 <Plus size={12} />
-              </button>
-              <button title="Workspace options" aria-label="Workspace options">
-                <ChevronsUpDown size={12} />
               </button>
             </div>
           </div>
@@ -533,33 +549,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
       <nav className="room-nav room-nav-secondary" aria-label="Workspace tools">
         {secondaryNavItems.map((item) => {
-          const Icon = item.icon;
-          const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
-          const active = activeView === item.id;
-          const navButton = (
-            <button
-              key={item.id}
-              className={`room-nav-item accent-${item.accent} ${active ? 'active' : ''}`}
-              onClick={() => !disabled && setActiveView(item.id)}
-              disabled={disabled}
-              title={disabled ? `Open a workspace to access ${item.label}` : item.label}
-              aria-label={item.label}
-            >
-              <Icon size={18} />
-              <span>{item.label}</span>
-              {item.id === 'review' && openTaskCount > 0 && (
-                <span className="badge review-badge">{openTaskCount}</span>
-              )}
-              {item.id === 'swarm' && runningAgentCount > 0 && (
-                <span className="badge swarm-badge">{runningAgentCount}</span>
-              )}
-            </button>
-          );
-
           if (item.id === 'settings') {
             return (
               <div key={item.id} className="settings-command-row">
-                {navButton}
+                {renderNavItem(item)}
                 <button
                   className="icon-button sidebar-command-button"
                   onClick={onOpenPalette}
@@ -572,7 +565,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
             );
           }
 
-          return navButton;
+          return renderNavItem(item);
         })}
       </nav>
 
