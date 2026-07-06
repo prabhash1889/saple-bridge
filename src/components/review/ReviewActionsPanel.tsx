@@ -43,18 +43,18 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
     {activeTask ? (
       <div className="side-panel-content">
         <div>
-          <h4 className="extracted-style-090">Task Brief</h4>
-          <p className="extracted-style-091">
+          <h4 className="review-section-heading">Task Brief</h4>
+          <p className="review-brief-text">
             {activeTask.description || 'No description provided.'}
           </p>
         </div>
 
         {activeTask.targetFiles && activeTask.targetFiles.length > 0 && (
           <div>
-            <h4 className="extracted-style-092">Expected Target Files</h4>
-            <div className="extracted-style-093">
+            <h4 className="review-section-heading">Expected Target Files</h4>
+            <div className="review-target-files">
               {activeTask.targetFiles.map(f => (
-                <span key={f} className="extracted-style-094 status-pill command">
+                <span key={f} className="review-target-file-pill status-pill command">
                   {f}
                 </span>
               ))}
@@ -64,7 +64,7 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
 
         {activeTask.acceptanceCriteria && activeTask.acceptanceCriteria.length > 0 && (
           <div>
-            <h4 className="extracted-style-095">Acceptance Checklist</h4>
+            <h4 className="review-section-heading">Acceptance Checklist</h4>
             <div className="review-criteria-list">
               {activeTask.acceptanceCriteria.map((c, i) => (
                 <div key={i} className="review-criteria-item">
@@ -78,8 +78,8 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
 
         {activeRecord && (
           <div>
-            <h4 className="extracted-style-096">Agent Metadata</h4>
-            <div className="extracted-style-097">
+            <h4 className="review-section-heading">Agent Metadata</h4>
+            <div className="review-metadata">
               <div><strong>Provider:</strong> {activeRecord.provider}</div>
               <div><strong>Model:</strong> {activeRecord.model}</div>
               <div><strong>Role:</strong> {activeRecord.role}</div>
@@ -92,7 +92,7 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
           <div className="review-action-buttons review-side-footer">
             {rejecting && (
               <div className="rejection-notes-box">
-                <span className="extracted-style-098 eyebrow">Rejection Feedback</span>
+                <span className="review-rejection-label eyebrow">Rejection Feedback</span>
                 <textarea
                   value={notes}
                   onChange={(e) => onNotesChange(e.target.value)}
@@ -102,9 +102,9 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
               </div>
             )}
 
-            <div className="extracted-style-099">
+            <div className="review-decision-actions">
               <button
-                className={[`danger ${rejecting ? 'primary' : ''}`, 'extracted-style-282'].filter(Boolean).join(' ')}
+                className={`review-decision-btn danger ${rejecting ? 'primary' : ''}`}
                 onClick={onReject}
                 disabled={submittingDecision || runningVerification}
               >
@@ -113,7 +113,7 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
               </button>
               {!rejecting && (
                 <button
-                  className="extracted-style-100 primary"
+                  className="review-decision-btn primary"
                   onClick={onApprove}
                   disabled={submittingDecision || runningVerification}
                 >
@@ -136,30 +136,30 @@ export const ReviewActionsPanel: React.FC<ReviewActionsPanelProps> = ({
         )}
 
         {activeRecord && activeRecord.status !== 'pending' && (
-          <div className="extracted-style-101 review-side-footer">
-            <div className="extracted-style-102">
+          <div className="review-outcome-panel review-side-footer">
+            <div className="review-outcome-status">
               {activeRecord.status === 'approved' ? (
                 <>
                   <Award className="success-icon" size={16} />
-                  <span className="extracted-style-103">Review Approved</span>
+                  <span className="review-outcome-label">Review Approved</span>
                 </>
               ) : (
                 <>
                   <ShieldAlert className="warning-icon" size={16} />
-                  <span className="extracted-style-104">Review Rejected</span>
+                  <span className="review-outcome-label">Review Rejected</span>
                 </>
               )}
             </div>
             {activeRecord.notes && (
-              <div className="extracted-style-105">
+              <div className="review-notes-box">
                 <strong>Rejection Notes:</strong>
-                <p className="extracted-style-106">{activeRecord.notes}</p>
+                <p className="review-notes-text">{activeRecord.notes}</p>
               </div>
             )}
 
             {/* Create Memory Note */}
             <button
-              className="extracted-style-107 secondary-action"
+              className="review-reopen-btn secondary-action"
               onClick={onCreateMemory}
               disabled={memoryCreated}
             >

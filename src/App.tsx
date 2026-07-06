@@ -5,6 +5,7 @@ import { StatusBar } from './components/layout/StatusBar';
 import { ProjectDashboard } from './components/project/ProjectDashboard';
 import { ToastHost } from './components/common/ToastHost';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
+import { RoomSkeleton } from './components/common/RoomSkeleton';
 import { useProjectStore, ViewType } from './stores/projectStore';
 import { useKanbanStore } from './stores/kanbanStore';
 import { useSwarmStore } from './stores/swarmStore';
@@ -164,7 +165,7 @@ function App() {
     const isActive = activeView === view;
     return (
       <div key={view} className={`view-pane${isActive ? '' : ' is-hidden'}`} aria-hidden={!isActive}>
-        <Suspense fallback={isActive ? <div className="compact-empty">Loading room...</div> : null}>
+        <Suspense fallback={isActive ? <RoomSkeleton /> : null}>
           {node}
         </Suspense>
       </div>
@@ -195,7 +196,7 @@ function App() {
         {renderHeavyView('review', <ReviewWorkspace />)}
         {!HEAVY_VIEWS.includes(activeView) && (
           <div className="view-pane">
-            <Suspense fallback={<div className="compact-empty">Loading room...</div>}>
+            <Suspense fallback={<RoomSkeleton />}>
               {renderLightView()}
             </Suspense>
           </div>

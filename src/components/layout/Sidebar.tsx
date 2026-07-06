@@ -357,7 +357,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
       {activeView === 'terminals' && panes.length > 0 && (
         <div className="sidebar-terminal-controls">
           <div
-            className="extracted-style-014 sidebar-section-title clickable-header"
+            className="sidebar-collapsible-header sidebar-section-title clickable-header"
             onClick={() => setControlsCollapsed(!controlsCollapsed)}
           >
              <TerminalIcon size={12} className="terminal-icon-glow" />
@@ -378,7 +378,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                     aria-expanded={providerMenuOpen}
                     aria-label="Terminal type for new panes"
                   >
-                    <Bot size={14} className="extracted-style-015" />
+                    <Bot size={14} className="fg-secondary" />
                     <span className="terminal-provider-label">
                       {AI_PROVIDERS.find((option) => option.value === selectedProvider)?.label ?? 'Claude'}
                     </span>
@@ -450,7 +450,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                   <div className="sidebar-control-row terminal-detail-row">
                     {/* Rename Pane */}
                     <div className="sidebar-input-group">
-                      <Edit3 size={13} className="extracted-style-016" />
+                      <Edit3 size={13} className="fg-secondary" />
                       <input
                         value={focusedSession.name}
                         onChange={handleRenamePane}
@@ -502,7 +502,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
                     {/* Terminal font — app-wide; sits to the right of Maximize */}
                     <div className="sidebar-input-group terminal-font-group">
-                      <TerminalIcon size={13} className="extracted-style-017" />
+                      <TerminalIcon size={13} className="fg-secondary" />
                       <select
                         value={fontId}
                         onChange={(e) => setFontId(e.target.value)}

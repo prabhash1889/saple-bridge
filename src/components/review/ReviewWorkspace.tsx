@@ -516,7 +516,7 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                     <strong>{task.title}</strong>
                     <span>{task.agentConfig?.provider ?? 'unassigned'} - {task.agentConfig?.role ?? 'review'}</span>
                     {record && (
-                      <span className="extracted-style-110 eyebrow">
+                      <span className="review-task-eyebrow eyebrow">
                         {record.changedFiles.length} files changed
                       </span>
                     )}
@@ -543,7 +543,7 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
         {/* Center Column: Diff & Verification Output */}
         <section className="surface review-main review-detail-panel">
           {!activeTaskId ? (
-            <div className="extracted-style-111 room-empty-state">
+            <div className="review-empty-fill room-empty-state">
               <CheckCircle2 size={24} />
               <h3>Select a task from the review queue</h3>
             </div>
@@ -553,15 +553,15 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
             <>
               <div className="review-detail-header">
                 <div>
-                  <h3 className="extracted-style-112">{activeTask?.title}</h3>
+                  <h3 className="review-task-title">{activeTask?.title}</h3>
                   <span
-                    className={[`status-pill ${statusPillClass(activeRecord?.status)}`, 'extracted-style-283'].filter(Boolean).join(' ')}
+                    className={`status-pill review-status-label ${statusPillClass(activeRecord?.status)}`}
                   >
                     Status: {activeRecord?.status ?? 'pending'}
                   </span>
                 </div>
                 <button
-                  className="extracted-style-113 secondary-action"
+                  className="review-header-action secondary-action"
                   onClick={handleRefresh}
                   disabled={refreshing || reviewLoading}
                   title="Re-pull git status & diffs"
@@ -603,15 +603,15 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
 
                   {unrelatedFiles.length > 0 && (
                     <div className="warning-banner">
-                      <div className="extracted-style-114">
+                      <div className="review-verify-heading">
                         <AlertTriangle size={14} />
                         <span>Warning: Unrelated Files Modified</span>
                       </div>
                       <span>
                         The agent modified files outside the target file list:
-                        <ul className="extracted-style-115">
+                        <ul className="review-verify-file-list">
                           {unrelatedFiles.slice(0, 3).map(f => (
-                            <li key={f.path} className="extracted-style-116">{f.path}</li>
+                            <li key={f.path} className="review-verify-file-path">{f.path}</li>
                           ))}
                           {unrelatedFiles.length > 3 && <li>and {unrelatedFiles.length - 3} more...</li>}
                         </ul>
@@ -668,7 +668,7 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                       disabled={runningVerification}
                     />
                     <button
-                      className="extracted-style-117 primary"
+                      className="review-verify-btn primary"
                       onClick={handleRunVerification}
                       disabled={runningVerification || submittingDecision}
                     >

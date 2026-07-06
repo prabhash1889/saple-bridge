@@ -341,16 +341,16 @@ const TerminalGridComponent: React.FC = () => {
             {workspaceGrids}
             {!showSetup && panes.length === 0 && (
               <div className="terminal-empty-state">
-                <TerminalIcon size={40} className="extracted-style-244" />
+                <TerminalIcon size={40} className="terminal-empty-icon" />
                 <p>No active terminal panes.</p>
-                <p className="extracted-style-245">
+                <p className="terminal-empty-text">
                   Create up to {maxLimit} panes for parallel terminal or agent sessions
                 </p>
-                <div className="extracted-style-246">
+                <div className="terminal-empty-actions">
                   <select
                     value={selectedProvider}
                     onChange={(e) => setSelectedProvider(e.target.value as TerminalProviderOption)}
-                    aria-label="AI provider for new pane" className="extracted-style-247"
+                    aria-label="AI provider for new pane" className="terminal-empty-provider-select"
                   >
                     {AI_PROVIDERS.map((provider) => (
                       <option key={provider.value} value={provider.value}>
@@ -365,7 +365,7 @@ const TerminalGridComponent: React.FC = () => {
                 </div>
                 {savedPaneCount > 0 && (
                   <button
-                    onClick={() => currentProjectPath && restoreWorkspacePanes(currentProjectPath)} className="extracted-style-248"
+                    onClick={() => currentProjectPath && restoreWorkspacePanes(currentProjectPath)} className="terminal-restore-btn"
                   >
                     <History size={15} />
                     <span>Restore previous {savedPaneCount} terminal{savedPaneCount === 1 ? '' : 's'}</span>
@@ -501,32 +501,32 @@ const TerminalGridComponent: React.FC = () => {
           )}
 
           {setupStep === 'agents' && (
-            <div className="extracted-style-249 command-setup-panel agents-setup-panel">
-              <div className="extracted-style-250">
-                <h2 className="extracted-style-251">Add AI coding agents</h2>
-                <p className="extracted-style-252">
+            <div className="agents-setup-wrap command-setup-panel agents-setup-panel">
+              <div className="agents-setup-header">
+                <h2 className="agents-setup-title">Add AI coding agents</h2>
+                <p className="agents-setup-subtitle">
                   Pick which agents should launch in your {clampedLayoutCount} terminals. You can run them alongside your<br/>regular terminal — or skip this step entirely.
                 </p>
               </div>
 
-              <div className="extracted-style-253 agent-progress-section">
-                <div className="extracted-style-254">
-                  <span className="extracted-style-255">{totalAssigned}/{clampedLayoutCount}</span>
+              <div className="agent-progress-block agent-progress-section">
+                <div className="agent-progress-label">
+                  <span className="agent-progress-count">{totalAssigned}/{clampedLayoutCount}</span>
                   <span>{totalAssigned === 0 ? 'No agents yet' : `${totalAssigned} agents selected`}</span>
                 </div>
-                <div className="extracted-style-256 agent-progress-bar">
+                <div className="agent-progress-track agent-progress-bar">
                   <div style={{ width: `${(totalAssigned / clampedLayoutCount) * 100}%`, background: 'var(--text-primary)', height: '100%', transition: 'width 0.3s ease' }} />
                 </div>
               </div>
 
-              <div className="extracted-style-257 agent-quick-fill">
-                <span className="extracted-style-258">Quick fill:</span>
-                <button className="extracted-style-259 quick-fill-btn" onClick={handleEnableAll}>Enable all</button>
-                <button className="extracted-style-260 quick-fill-btn" onClick={handleOneOfEach}>One of each</button>
-                <button className="extracted-style-261 quick-fill-btn" onClick={handleSplitEvenly}>Split evenly</button>
+              <div className="agent-quick-fill-row agent-quick-fill">
+                <span className="agent-quick-fill-label">Quick fill:</span>
+                <button className="quick-fill-option quick-fill-btn" onClick={handleEnableAll}>Enable all</button>
+                <button className="quick-fill-option quick-fill-btn" onClick={handleOneOfEach}>One of each</button>
+                <button className="quick-fill-option quick-fill-btn" onClick={handleSplitEvenly}>Split evenly</button>
               </div>
 
-              <div className="extracted-style-262 agent-picker-grid">
+              <div className="agent-picker-grid-layout agent-picker-grid">
                 {selectableProviders.map((provider) => {
                   const count = agentCounts[provider.value] || 0;
                   const isChecked = count > 0;
@@ -545,8 +545,8 @@ const TerminalGridComponent: React.FC = () => {
                       <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: isChecked ? '1px solid var(--text-primary)' : '1px solid var(--text-secondary)', background: isChecked ? 'var(--text-primary)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px' }}>
                         {isChecked && <Check size={12} color="var(--bg-tertiary)" strokeWidth={3} />}
                       </div>
-                      <span className="extracted-style-263">{provider.label}</span>
-                      <div onClick={e => e.stopPropagation()} className="extracted-style-264">
+                      <span className="agent-picker-label">{provider.label}</span>
+                      <div onClick={e => e.stopPropagation()} className="agent-picker-controls">
                         <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', opacity: count === 0 ? 0.3 : 1, fontSize: '16px' }} disabled={count === 0} onClick={() => handleAgentCountChange(provider.value, -1)}>-</button>
                         <span style={{ minWidth: '16px', textAlign: 'center', fontWeight: count > 0 ? 600 : 400, color: count > 0 ? 'var(--text-primary)' : 'inherit', fontSize: '15px' }}>{count}</span>
                         <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', opacity: totalAssigned >= clampedLayoutCount ? 0.3 : 1, fontSize: '16px' }} disabled={totalAssigned >= clampedLayoutCount} onClick={() => handleAgentCountChange(provider.value, 1)}>+</button>
@@ -557,9 +557,9 @@ const TerminalGridComponent: React.FC = () => {
               </div>
 
               {hasMoreProviders && (
-                <div className="extracted-style-265">
+                <div className="agents-expand-row">
                   <button
-                    onClick={() => setProvidersExpanded((prev) => !prev)} className="extracted-style-266"
+                    onClick={() => setProvidersExpanded((prev) => !prev)} className="agents-expand-toggle"
                   >
                     {providersExpanded ? 'SHOW LESS' : `SHOW MORE (${allSelectableProviders.length - COLLAPSED_PROVIDER_COUNT})`}
                   </button>
@@ -567,27 +567,27 @@ const TerminalGridComponent: React.FC = () => {
               )}
 
               <div className="custom-command-section" style={{ background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '20px', border: customCommandCount > 0 ? '1px solid var(--text-primary)' : '1px solid transparent' }}>
-                <div className="extracted-style-267">
+                <div className="custom-command-row">
                   <div onClick={() => setCustomCommandCount(prev => prev > 0 ? 0 : Math.min(1, clampedLayoutCount - totalAssigned + prev))} style={{ width: '16px', height: '16px', borderRadius: '4px', border: customCommandCount > 0 ? '1px solid var(--text-primary)' : '1px solid var(--text-secondary)', background: customCommandCount > 0 ? 'var(--text-primary)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px', marginTop: '2px', cursor: 'pointer' }}>
                     {customCommandCount > 0 && <Check size={12} color="var(--bg-tertiary)" strokeWidth={3} />}
                   </div>
-                  <div className="extracted-style-268">
-                    <div className="extracted-style-269">Custom Command</div>
-                    <div className="extracted-style-270">Enter any CLI agent or shell command</div>
+                  <div className="custom-command-info">
+                    <div className="custom-command-title">Custom Command</div>
+                    <div className="custom-command-desc">Enter any CLI agent or shell command</div>
                   </div>
-                  <div className="extracted-style-271">
-                    <button onClick={() => setCustomCommandCount(clampedLayoutCount - totalAssigned + customCommandCount)} className="extracted-style-272">ALL {clampedLayoutCount}</button>
-                    <div className="extracted-style-273">
+                  <div className="custom-command-controls">
+                    <button onClick={() => setCustomCommandCount(clampedLayoutCount - totalAssigned + customCommandCount)} className="custom-command-all-btn">ALL {clampedLayoutCount}</button>
+                    <div className="custom-command-stepper">
                       <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', opacity: customCommandCount === 0 ? 0.3 : 1, fontSize: '16px' }} disabled={customCommandCount === 0} onClick={() => setCustomCommandCount(prev => prev - 1)}>-</button>
                       <span style={{ fontWeight: customCommandCount > 0 ? 600 : 400, color: customCommandCount > 0 ? 'var(--text-primary)' : 'inherit', fontSize: '15px' }}>{customCommandCount}</span>
                       <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', opacity: totalAssigned >= clampedLayoutCount ? 0.3 : 1, fontSize: '16px' }} disabled={totalAssigned >= clampedLayoutCount} onClick={() => setCustomCommandCount(prev => prev + 1)}>+</button>
                     </div>
                   </div>
                 </div>
-                <input type="text" value={customCommand} onChange={(e) => setCustomCommand(e.target.value)} placeholder="npm run agent..." className="extracted-style-274" />
+                <input type="text" value={customCommand} onChange={(e) => setCustomCommand(e.target.value)} placeholder="npm run agent..." className="custom-command-input" />
               </div>
 
-              <div className="extracted-style-275">
+              <div className="agents-setup-footer">
                 <button
                   onClick={handleAddCustomCommand}
                   disabled={!currentProjectPath || !customCommand.trim() || !canAddPane()}

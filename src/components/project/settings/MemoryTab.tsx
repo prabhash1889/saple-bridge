@@ -34,7 +34,7 @@ export const MemoryTab: React.FC = () => {
       {!currentProjectPath ? (
         <div className="compact-empty">Open a workspace to manage memory snapshots.</div>
       ) : (
-        <div className="extracted-style-060">
+        <div className="settings-form-col">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -49,10 +49,10 @@ export const MemoryTab: React.FC = () => {
               } finally {
                 setSnapshotLoading(false);
               }
-            }} className="extracted-style-061"
+            }} className="settings-form-row"
           >
-            <div className="extracted-style-062 input-group">
-              <label className="extracted-style-063">
+            <div className="settings-form-field input-group">
+              <label className="settings-field-label">
                 Snapshot Name
               </label>
               <input
@@ -60,29 +60,29 @@ export const MemoryTab: React.FC = () => {
                 placeholder="e.g. before-refactoring"
                 value={snapshotName}
                 onChange={(e) => setSnapshotName(e.target.value)}
-                disabled={snapshotLoading} className="extracted-style-064"
+                disabled={snapshotLoading} className="settings-input-36"
               />
             </div>
-            <button type="submit" className="extracted-style-065 primary" disabled={snapshotLoading || !snapshotName.trim()}>
+            <button type="submit" className="settings-input-36 primary" disabled={snapshotLoading || !snapshotName.trim()}>
               <RefreshCw size={14} className={snapshotLoading ? 'spin' : ''} />
               <span>{snapshotLoading ? 'Taking Snapshot...' : 'Take Snapshot'}</span>
             </button>
           </form>
 
-          <div className="extracted-style-066">
-            <h4 className="extracted-style-067">
+          <div className="settings-divider-top">
+            <h4 className="settings-section-title-spaced">
               Available Snapshots ({snapshots.length})
             </h4>
 
             {snapshots.length === 0 ? (
-              <div className="extracted-style-068 compact-empty">No snapshots created yet.</div>
+              <div className="settings-pad-20 compact-empty">No snapshots created yet.</div>
             ) : (
-              <div className="extracted-style-069">
+              <div className="settings-stack-8">
                 {snapshots.map((name) => (
                   <div
-                    key={name} className="extracted-style-070"
+                    key={name} className="settings-session-row"
                   >
-                    <span className="extracted-style-071">
+                    <span className="settings-session-name">
                       {name}
                     </span>
                     <button

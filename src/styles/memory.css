@@ -30,41 +30,28 @@
   margin-bottom: 20px;
 }
 
-/* Extracted from static JSX style props during inline-style consolidation. */
-.extracted-style-018 {
+.memory-editor-body {
   display: flex;
   flex: 1;
   overflow: hidden;
 }
 
-.extracted-style-019 {
+.memory-graph-toolbar {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
-.extracted-style-020 {
+.memory-graph-orphan-checkbox {
   margin: 0;
 }
 
-.extracted-style-021 {
-  color: var(--text-secondary);
-}
-
-.extracted-style-022 {
-  color: var(--text-primary);
-}
-
-.extracted-style-023 {
-  color: var(--text-muted);
-}
-
-.extracted-style-024 {
+.memory-graph-label {
   pointer-events: none;
   user-select: none;
 }
 
-.extracted-style-025 {
+.memory-empty-icon {
   color: var(--text-muted);
   margin-bottom: 16px;
 }

@@ -450,7 +450,7 @@ export const MemoryGraph: React.FC = () => {
     >
       <div style={headerStyle}>
         <span style={titleStyle}>SapleMemory Graph</span>
-        <div className="extracted-style-019">
+        <div className="memory-graph-toolbar">
           {/* Global / Local mode toggle */}
           <div style={segToggleStyle}>
             <button
@@ -475,7 +475,7 @@ export const MemoryGraph: React.FC = () => {
             <input
               type="checkbox"
               checked={showOrphans}
-              onChange={(e) => setShowOrphans(e.target.checked)} className="extracted-style-020"
+              onChange={(e) => setShowOrphans(e.target.checked)} className="memory-graph-orphan-checkbox"
             />
             <span>Orphans</span>
           </label>
@@ -495,8 +495,8 @@ export const MemoryGraph: React.FC = () => {
         <div style={focusBarStyle}>
           {focusNode ? (
             <>
-              <span className="extracted-style-021">Focused:</span>
-              <strong className="extracted-style-022">{focusNode.title}</strong>
+              <span className="fg-secondary">Focused:</span>
+              <strong className="fg-primary">{focusNode.title}</strong>
               <button onClick={() => openNote(focusNode)} style={focusOpenBtnStyle}>
                 <ExternalLink size={12} />
                 <span>Open</span>
@@ -506,7 +506,7 @@ export const MemoryGraph: React.FC = () => {
               </button>
             </>
           ) : (
-            <span className="extracted-style-023">
+            <span className="fg-muted">
               Click a node to focus its neighborhood. Click again to open it.
             </span>
           )}
@@ -607,7 +607,7 @@ export const MemoryGraph: React.FC = () => {
                     textAnchor="middle"
                     fill="var(--text-primary)"
                     fontSize={10}
-                    fontWeight={500} className="extracted-style-024"
+                    fontWeight={500} className="memory-graph-label"
                   >
                     {node.title}
                   </text>

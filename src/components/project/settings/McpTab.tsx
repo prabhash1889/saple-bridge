@@ -136,9 +136,9 @@ export const McpTab: React.FC = () => {
           )}
 
           {mcpStatus?.legacyConfig && (
-            <div className="extracted-style-052 mcp-legacy-warning" role="alert">
-              <AlertCircle size={15} className="extracted-style-053" />
-              <span className="extracted-style-054">
+            <div className="settings-warning-banner mcp-legacy-warning" role="alert">
+              <AlertCircle size={15} className="settings-warning-icon" />
+              <span className="settings-warning-text">
                 This project's MCP config points at the <strong>old embedded server</strong>, which no longer
                 runs (it now launches the Bridge window instead). Click <strong>Install Saple MCP Config</strong>
                 below to update it to the standalone <strong>saple-mcp</strong> server.
@@ -162,15 +162,15 @@ export const McpTab: React.FC = () => {
             {mcpError && <span className="status-error">Failed: {mcpError}</span>}
           </div>
 
-          <div className="extracted-style-055">
-            <h4 className="extracted-style-056">
+          <div className="settings-section-divider">
+            <h4 className="settings-section-title">
               MCP Server Diagnostics & Tools Validation
             </h4>
             <p className="section-desc">
               Smoke test the MCP JSON-RPC protocol interface to verify registered tools and capabilities.
             </p>
 
-            <div className="extracted-style-057">
+            <div className="settings-inline-12">
               <button onClick={handleRunMcpSmokeTest} disabled={mcpSmokeLoading} className="secondary">
                 <RefreshCw size={14} className={mcpSmokeLoading ? 'spin' : ''} />
                 <span>{mcpSmokeLoading ? 'Testing...' : 'Run Tools Smoke Test'}</span>
@@ -193,10 +193,10 @@ export const McpTab: React.FC = () => {
               <div style={mcpToolsListStyle}>
                 {mcpSmokeResult.tools.map((tool) => (
                   <div key={tool.name} style={mcpToolCardStyle}>
-                    <strong className="extracted-style-058">
+                    <strong className="settings-mono-accent">
                       {tool.name}
                     </strong>
-                    <p className="extracted-style-059">
+                    <p className="settings-help-text">
                       {tool.description}
                     </p>
                   </div>

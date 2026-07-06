@@ -311,7 +311,7 @@ export const FileTree: React.FC = () => {
 
       <div className="file-tree-list" role="tree">
         {error ? (
-          <div className="extracted-style-002 compact-empty">
+          <div className="file-tree-empty-error compact-empty">
             {error}
           </div>
         ) : loading && files.length === 0 ? (
@@ -330,7 +330,7 @@ export const FileTree: React.FC = () => {
               return (
                 <div
                   key={file.path}
-                  className={[`file-tree-node flat-match ${isActive ? 'active' : ''}`, 'extracted-style-277'].filter(Boolean).join(' ')}
+                  className={`file-tree-node flat-match ${isActive ? 'active' : ''}`}
                   onClick={() => file.isDir ? toggleFolder(file.path) : handleFileClick(file.path)}
                 >
                   <span className="node-icon" style={{ color: iconColor }}>

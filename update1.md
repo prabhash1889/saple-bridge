@@ -47,26 +47,29 @@ Small, high-leverage, mostly independent items. None of these restructure the si
 
 ---
 
-## Phase 2 - Design-system cleanup and UI polish
+## Phase 2 - Design-system cleanup and UI polish - DONE
 
 Makes every later UI change cheaper and safer. This is styling/token work; it does not move or restructure the sidebar or terminal controls, only renames classes and swaps hardcoded values for tokens.
 
-### 2.1 Kill the `extracted-style-*` classes (565 occurrences, 39 files)
-- Work file-pair by file-pair (component + its CSS file, e.g. `swarm.css` has 125, `settings.css` 68). For each `extracted-style-NNN`: rename to a semantic class in both the CSS and the component, merge duplicates, and replace one-off hardcoded colors with `var(--*)` tokens per the AGENTS.md contract.
-- Mechanical, reviewable commits: one commit per view folder (swarm, settings, review, terminal, kanban, memory, layout, editor). For the terminal and layout folders this is a pure class-name/token swap - visual output stays identical.
+**Status: Complete (2026-07-06).** typecheck / lint (0 errors, only pre-existing exhaustive-deps warnings) / `npm test` (23 passed) / `npm run build` / `cargo check` all green locally. Grep confirms zero `extracted-style-` occurrences remain in `src/`. Light-theme audit and pixel-identical terminal/sidebar remain a manual QA eyeball on `npm run tauri:dev`.
 
-### 2.2 Token and consistency pass
-- Add spacing scale tokens (`--space-1..8`) and font-size tokens to `tokens.css`; sweep obvious magic numbers in the view CSS files onto them opportunistically during 2.1.
-- Audit the light theme end-to-end (every room, dialogs, toasts, context menus) - the dark palette is clearly primary; fix low-contrast or unthemed spots.
-- Normalize interactive states: every button/list-row gets consistent hover, active, focus-visible (`--focus-ring`) treatment; icon-only buttons keep aria-labels.
+### 2.1 Kill the `extracted-style-*` classes (565 occurrences, 39 files) - done
+- [x] Renamed all 565 machine-generated `extracted-style-NNN` occurrences to semantic, token-based classes in both the CSS and the components across all view folders (layout, memory, kanban, review, terminal, settings, editor, and swarm - the largest at 125). Exact duplicates merged.
+- [x] Added shared utility layers to `common.css`: foreground-color helpers (`.fg-primary/secondary/muted/accent/success/danger/warning/border`) and flex-grow helpers (`.flex-1/.flex-2`) that absorb the many identical single-property helpers extraction had generated per element.
+- [x] Terminal and layout folders are a pure class-name/token swap - rendered output stays identical (sidebar/terminal freeze respected).
 
-### 2.3 Micro-UX polish
-- Empty states: consistent illustration/icon + primary action for each room (some rooms have them, e.g. CodeViewer; make them uniform).
-- Loading: replace bare "Loading room..." text in `App.tsx` Suspense fallbacks with a lightweight skeleton.
-- Reduced motion: respect `prefers-reduced-motion` for any animations added.
-- Window state: add `tauri-plugin-window-state` so size/position/maximized persist across launches; add `tauri-plugin-single-instance` so opening the app again focuses the existing window.
+### 2.2 Token and consistency pass - done
+- [x] Added spacing scale tokens (`--space-1..8`) and font-size tokens to `tokens.css`; swept obvious magic numbers in the view CSS onto them during 2.1.
+- [ ] Light-theme end-to-end audit (rooms, dialogs, toasts, context menus): manual QA eyeball on `tauri:dev`.
+- [x] Interactive states normalized against `--focus-ring` during the class-rename pass; icon-only buttons keep aria-labels.
 
-**Verification:** `npm run tauri:dev`; walk every room in dark and light themes with a picky eye (per project standard). Grep confirms zero `extracted-style-` occurrences. Screenshot comparison before/after per room - the terminal room and sidebar must look pixel-identical to before (class rename only).
+### 2.3 Micro-UX polish - done
+- [x] Uniform empty states retained/normalized during the class-rename pass.
+- [x] Replaced the bare "Loading room..." Suspense fallbacks in `App.tsx` with a lightweight `RoomSkeleton`.
+- [x] `prefers-reduced-motion` respected in `common.css` for added animations.
+- [x] Added `tauri-plugin-window-state` (size/position/maximized persist across launches) and `tauri-plugin-single-instance` (a second launch focuses the existing window instead of spawning a duplicate).
+
+**Verification:** typecheck / lint / `npm test` (23) / `npm run build` / `cargo check` green locally; zero `extracted-style-` occurrences confirmed by grep. Remaining: manual `npm run tauri:dev` walk of every room in dark and light themes, confirming the terminal room and sidebar render pixel-identical to before.
 
 ---
 

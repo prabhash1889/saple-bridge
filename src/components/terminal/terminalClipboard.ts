@@ -28,19 +28,36 @@ interface TerminalSelection {
   clearSelection: () => void;
 }
 
+export interface CopyTerminalSelectionOptions {
+  clearSelection?: boolean;
+  onCopyFailed?: (error: unknown) => void;
+}
+
+// Returns synchronously whether a selection was there to copy (key handlers must decide
+// handled-ness in the same tick), while the clipboard write itself settles later. The
+// selection is cleared only after the write CONFIRMS success: on failure it stays
+// highlighted - the user's cue that nothing landed on the clipboard - and onCopyFailed
+// fires so the caller can tell them. The old fire-and-forget write cleared the selection
+// up front, so a failed write (Windows clipboard lock contention) lost the copy silently.
 export const copyTerminalSelection = (
   terminal: TerminalSelection,
   writeClipboard: (text: string) => void | Promise<void>,
-  options: { clearSelection?: boolean } = {},
+  options: CopyTerminalSelectionOptions = {},
 ) => {
   if (!terminal.hasSelection()) return false;
 
   const selection = terminal.getSelection();
   if (!selection) return false;
 
-  void writeClipboard(selection);
-  if (options.clearSelection) {
-    terminal.clearSelection();
-  }
+  void Promise.resolve()
+    .then(() => writeClipboard(selection))
+    .then(() => {
+      if (options.clearSelection) {
+        terminal.clearSelection();
+      }
+    })
+    .catch((error) => {
+      options.onCopyFailed?.(error);
+    });
   return true;
 };

@@ -11,6 +11,7 @@ import {
   ensureLanguage, tokenStyle, shikiThemeFor,
   type ThemedToken,
 } from '../../lib/highlighter';
+import { writeTextToClipboard } from '../../lib/clipboard';
 
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
 
@@ -231,7 +232,7 @@ export const CodeViewer: React.FC = () => {
   if (!activeFile) {
     return (
       <div className="code-viewer-empty">
-        <FileCode size={36} className="extracted-style-001" />
+        <FileCode size={36} className="code-viewer-empty-icon" />
         <h3>No File Selected</h3>
         <p>Choose a file from the file explorer to view or edit its contents.</p>
       </div>
@@ -256,11 +257,13 @@ export const CodeViewer: React.FC = () => {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(fileContent);
+      // Shared helper: Tauri plugin with retry (bare navigator.clipboard is unreliable in
+      // WebView2 - see lib/clipboard.ts), so the "Copied" feedback only shows on success.
+      await writeTextToClipboard(fileContent);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard unavailable — ignore
+    } catch (err) {
+      console.error('Failed to copy file content:', err);
     }
   };
 

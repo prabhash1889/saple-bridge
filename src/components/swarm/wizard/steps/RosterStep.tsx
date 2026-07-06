@@ -100,14 +100,14 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><Users size={26} /></div>
-        <h2 style={heroTitleStyle}>Build your <span className="extracted-style-214">roster</span></h2>
+        <h2 style={heroTitleStyle}>Build your <span className="fg-accent">roster</span></h2>
         <p style={heroSubtitleStyle}>Pick a preset or customize individual agents. This is the team that will ship your code.</p>
       </div>
 
       {/* Quick presets */}
       <div style={sectionStyle}>
         <div style={sectionLabelStyle}>Quick Presets</div>
-        <div className="extracted-style-215">
+        <div className="swarm-stat-grid">
           {SIZE_PRESETS.map((p) => {
             const selected = sizePresetId === p.id;
             return (
@@ -122,7 +122,7 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
                 }}
               >
                 <span style={{ fontSize: '22px', fontWeight: 700, color: selected ? 'var(--accent)' : 'var(--text-primary)' }}>{p.count}</span>
-                <span className="extracted-style-216">{p.label}</span>
+                <span className="swarm-stat-label">{p.label}</span>
               </button>
             );
           })}
@@ -135,7 +135,7 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
         <div style={chipRowStyle}>
           {PROVIDER_ORDER.map((p) => (
             <button key={p} onClick={() => selectGlobalProvider(p)} style={chipStyle(globalProvider === p)}>
-              {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} className="extracted-style-217" />}
+              {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} className="fg-warning" />}
               {PROVIDER_LABELS[p]}
             </button>
           ))}
@@ -143,7 +143,7 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
       </div>
 
       {/* Composition summary */}
-      <div className="extracted-style-218">
+      <div className="swarm-toolbar">
         {composition.map((c) => (
           <span
             key={c.role}
@@ -156,11 +156,11 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
             {roleIcon(c.role, 12)} {c.count} {ROLE_LABELS[c.role]}{c.count > 1 ? 's' : ''}
           </span>
         ))}
-        <span className="extracted-style-219">{agents.length} total</span>
+        <span className="swarm-toolbar-count">{agents.length} total</span>
       </div>
 
       {/* Agent list */}
-      <div className="extracted-style-220">
+      <div className="swarm-stack-8">
         {agents.map((agent, idx) => (
           <AgentRow
             key={agent.id}
@@ -176,21 +176,21 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
       </div>
 
       <button
-        onClick={addAgent} className="extracted-style-221"
+        onClick={addAgent} className="swarm-add-btn"
       >
         <Plus size={13} /> Add Agent
       </button>
 
       {/* Advanced: start from template */}
-      <div className="extracted-style-222">
+      <div className="swarm-section-footer">
         <button
-          onClick={() => setShowTemplates((v) => !v)} className="extracted-style-223"
+          onClick={() => setShowTemplates((v) => !v)} className="swarm-link-btn"
         >
           {showTemplates ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           Advanced: start from a named template
         </button>
         {showTemplates && (
-          <div className="extracted-style-224">
+          <div className="swarm-card-grid-mt">
             {templates.map((t) => (
               <button
                 key={t.id}
@@ -201,8 +201,8 @@ export const RosterStep: React.FC<WizardStepProps> = ({ state, update }) => {
                   background: startedFromTemplateId === t.id ? 'var(--accent-light)' : 'var(--bg-surface-light)',
                 }}
               >
-                <div className="extracted-style-225">{t.name}</div>
-                <div className="extracted-style-226">{t.description}</div>
+                <div className="swarm-card-title-sm">{t.name}</div>
+                <div className="swarm-card-desc">{t.description}</div>
               </button>
             ))}
           </div>
@@ -225,17 +225,17 @@ interface AgentRowProps {
 const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleExpand, onPatch, onRemove, onToggleDependency }) => {
   const accent = ROLE_COLORS[agent.role];
   return (
-    <div className="extracted-style-227">
+    <div className="swarm-panel-box">
       {/* Collapsed header row */}
-      <div className="extracted-style-228">
-        <span className="extracted-style-229">{index + 1}</span>
+      <div className="swarm-panel-row">
+        <span className="swarm-panel-index">{index + 1}</span>
         <span style={{ color: accent, display: 'inline-flex' }}>{roleIcon(agent.role)}</span>
-        <div className="extracted-style-230">
-          <div className="extracted-style-231">
+        <div className="swarm-panel-main">
+          <div className="swarm-panel-name">
             {agent.name}
           </div>
-          <div className="extracted-style-232">
-            {PROVIDER_LABELS[agent.provider || 'codex']} · {agent.autoApprove ? <span className="extracted-style-233">Auto</span> : 'Manual'}
+          <div className="swarm-panel-meta">
+            {PROVIDER_LABELS[agent.provider || 'codex']} · {agent.autoApprove ? <span className="fg-warning">Auto</span> : 'Manual'}
           </div>
         </div>
         <button onClick={onRemove} title="Remove agent" style={iconBtn}><Trash2 size={13} /></button>
@@ -243,7 +243,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
       </div>
 
       {agent.expanded && (
-        <div className="extracted-style-234">
+        <div className="swarm-panel-footer">
           {/* Name */}
           <div>
             <div style={sectionLabelStyle}>Name</div>
@@ -272,7 +272,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
                   onClick={() => onPatch({ provider: p, model: PROVIDER_DEFAULT_MODEL[p] || 'default' })}
                   style={chipStyle((agent.provider || 'codex') === p)}
                 >
-                  {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} className="extracted-style-235" />}
+                  {EXPERIMENTAL_PROVIDERS.has(p) && <Zap size={11} className="fg-warning" />}
                   {PROVIDER_LABELS[p]}
                 </button>
               ))}
@@ -280,8 +280,8 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
           </div>
 
           {/* Model + auto-approve */}
-          <div className="extracted-style-236">
-            <div className="extracted-style-237">
+          <div className="swarm-form-row">
+            <div className="flex-1">
               <div style={sectionLabelStyle}>Model</div>
               <input value={agent.model} onChange={(e) => onPatch({ model: e.target.value })} style={smallInput} />
             </div>
@@ -312,7 +312,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
           {/* Dependencies */}
           <div>
             <div style={sectionLabelStyle}>Depends On (runs after)</div>
-            <div className="extracted-style-238">
+            <div className="swarm-chip-wrap-8">
               {allAgents.filter((a) => a.id !== agent.id).map((other) => {
                 const isDep = agent.dependencies.includes(other.id);
                 return (
@@ -322,7 +322,7 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
                 );
               })}
               {allAgents.length <= 1 && (
-                <span className="extracted-style-239">No other agents to depend on.</span>
+                <span className="swarm-empty-hint">No other agents to depend on.</span>
               )}
             </div>
           </div>
