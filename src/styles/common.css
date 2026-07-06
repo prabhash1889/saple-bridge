@@ -206,6 +206,21 @@ button.text-btn:hover {
   border: 1px solid rgba(167, 139, 250, 0.3);
 }
 
+/* Foreground-color utilities. These replace the many identical single-property
+   `color: var(--...)` helpers that inline-style extraction generated per element. */
+.fg-primary { color: var(--text-primary); }
+.fg-secondary { color: var(--text-secondary); }
+.fg-muted { color: var(--text-muted); }
+.fg-accent { color: var(--accent); }
+.fg-success { color: var(--color-success); }
+.fg-danger { color: var(--color-danger); }
+.fg-warning { color: var(--color-warning); }
+.fg-border { color: var(--border); }
+
+/* Flex-grow utilities (replace single-property `flex: N` extracted helpers). */
+.flex-1 { flex: 1; }
+.flex-2 { flex: 2; }
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -563,6 +578,7 @@ button.text-btn:hover {
 .file-tree-node.flat-match {
   height: 40px;
   gap: 8px;
+  padding-left: 8px;
 }
 
 .file-tree-node.flat-match .node-search-details {
@@ -1492,20 +1508,15 @@ button.text-btn:hover {
   font-weight: bold;
 }
 
-/* Extracted from static JSX style props during inline-style consolidation. */
-.extracted-style-001 {
+.code-viewer-empty-icon {
   color: var(--text-muted);
   margin-bottom: 12px;
 }
 
-.extracted-style-002 {
+.file-tree-empty-error {
   color: var(--color-danger);
   padding: 8px 12px;
   font-size: 12px;
-}
-
-.extracted-style-277 {
-  padding-left: 8px;
 }
 
 .pane-splitter {

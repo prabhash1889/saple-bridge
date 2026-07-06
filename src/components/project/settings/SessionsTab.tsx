@@ -37,7 +37,7 @@ export const SessionsTab: React.FC = () => {
         ) : sessions.length === 0 ? (
           <div className="compact-empty">No agent sessions recorded in this project yet.</div>
         ) : (
-          <div className="extracted-style-073">
+          <div className="settings-stack-10">
             {sessions.map((session) => {
               const duration = session.completedAt
                 ? Math.round((new Date(session.completedAt).getTime() - new Date(session.startedAt).getTime()) / 1000)
@@ -45,14 +45,14 @@ export const SessionsTab: React.FC = () => {
 
               return (
                 <div
-                  key={session.id} className="extracted-style-074"
+                  key={session.id} className="settings-session-card"
                 >
-                  <div className="extracted-style-075">
+                  <div className="settings-session-card-head">
                     <div>
-                      <strong className="extracted-style-076">
+                      <strong className="settings-session-title">
                         {session.name}
                       </strong>
-                      <span className="extracted-style-077">
+                      <span className="settings-session-id">
                         ({session.id})
                       </span>
                     </div>
@@ -61,9 +61,9 @@ export const SessionsTab: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="extracted-style-078">
+                  <div className="settings-session-grid">
                     <div>
-                      <strong>Provider:</strong> <span className="extracted-style-079">{session.provider} ({session.model})</span>
+                      <strong>Provider:</strong> <span className="settings-mono">{session.provider} ({session.model})</span>
                     </div>
                     <div>
                       <strong>Role:</strong> <span>{session.role}</span>
@@ -73,11 +73,11 @@ export const SessionsTab: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="extracted-style-080">
+                  <div className="settings-session-footer">
                     <span>Started: {new Date(session.startedAt).toLocaleString()}</span>
-                    <div className="extracted-style-081">
+                    <div className="settings-btn-row">
                       <button
-                        className="extracted-style-082 secondary btn-sm"
+                        className="settings-action-chip secondary btn-sm"
                         onClick={async () => {
                           try {
                             const content = await invoke<string>('read_project_file', {
@@ -96,7 +96,7 @@ export const SessionsTab: React.FC = () => {
                       </button>
                       {(session.status === 'stopped' || session.status === 'failed') && (
                         <button
-                          className="extracted-style-083 secondary btn-sm"
+                          className="settings-action-chip secondary btn-sm"
                           onClick={async () => {
                             try {
                               await useTerminalStore.getState().addPane(
@@ -130,16 +130,16 @@ export const SessionsTab: React.FC = () => {
       {activeLogContent !== null && (
         <div className="modal-overlay confirm-overlay" onClick={() => setActiveLogContent(null)}>
           <div
-            className="extracted-style-084 modal-container"
+            className="settings-log-modal modal-container"
             onClick={e => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
           >
             <div className="confirm-header">
-              <h3 className="extracted-style-085">Session Log: {activeLogTitle}</h3>
+              <h3 className="settings-log-title">Session Log: {activeLogTitle}</h3>
               <button className="confirm-close-x" onClick={() => setActiveLogContent(null)} aria-label="Close logs"><X size={16} /></button>
             </div>
-            <div className="extracted-style-086">
+            <div className="settings-log-body">
               {activeLogContent || 'Log is empty.'}
             </div>
             <div className="confirm-footer">

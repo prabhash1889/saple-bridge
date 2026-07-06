@@ -174,7 +174,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
                 setActiveTaskId(linkedTask.id);
                 setActiveView('review');
               }}
-              className="extracted-style-276 terminal-review-open-room secondary"
+              className="terminal-review-open-btn terminal-review-open-room secondary"
             >
               Open Review Room
             </button>

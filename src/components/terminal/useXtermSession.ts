@@ -4,8 +4,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { writeTextToClipboard } from '../../lib/clipboard';
 import { TERMINAL_SCROLLBACK_ROWS } from '../../lib/terminalLimits';
 import { useThemeStore, resolveTheme } from '../../stores/themeStore';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
@@ -34,23 +36,17 @@ import '@xterm/xterm/css/xterm.css';
 // WebView user agent (no extra deps) and pass it to the Terminal below.
 export const IS_WINDOWS_PTY = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent);
 
-const copyTextToClipboard = async (text: string) => {
-  // Clipboard writes go through the Tauri plugin for the same reason reads do (see
-  // lib.rs): WebView2 never auto-grants clipboard permission to config-defined windows,
-  // so navigator.clipboard.writeText intermittently rejects or hangs on a permission
-  // prompt - the cause of flaky terminal copies. The web API stays as a fallback only.
-  try {
-    await writeText(text);
-    return;
-  } catch (err) {
-    console.warn('Plugin clipboard copy failed, falling back to navigator.clipboard:', err);
-  }
+// Writes go through the shared helper (Tauri plugin with retry for Windows clipboard lock
+// contention, navigator.clipboard as fallback) and REJECT on total failure, so
+// copyTerminalSelection keeps the selection highlighted and this toast tells the user -
+// instead of the copy silently vanishing (the "sometimes Ctrl+C doesn't copy" report).
+const copyTextToClipboard = (text: string) => writeTextToClipboard(text);
 
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch (err) {
-    console.error('Failed to copy terminal selection:', err);
-  }
+const notifyCopyFailed = (error: unknown) => {
+  console.error('Failed to copy terminal selection:', error);
+  useNotificationStore
+    .getState()
+    .warning('Copy failed', 'The clipboard was busy or unavailable. The text is still selected - try again.');
 };
 
 // Inert zeroed dimensions used while the terminal has no attached renderer (see
@@ -402,7 +398,14 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       ) {
         event.preventDefault();
         event.stopPropagation();
-        return !copyTerminalSelection(term, copyTextToClipboard, { clearSelection: true });
+        // Return false unconditionally: the user saw a highlighted selection when they
+        // pressed Ctrl+C, so a copy that comes back empty or fails must never fall through
+        // to the raw 0x03 - that would SIGINT the running program instead of copying.
+        copyTerminalSelection(term, copyTextToClipboard, {
+          clearSelection: true,
+          onCopyFailed: notifyCopyFailed,
+        });
+        return false;
       }
 
       if (!isTerminalCopyShortcut(event)) {
@@ -412,7 +415,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       event.preventDefault();
       event.stopPropagation();
 
-      copyTerminalSelection(term, copyTextToClipboard);
+      copyTerminalSelection(term, copyTextToClipboard, { onCopyFailed: notifyCopyFailed });
       return false;
     });
 
@@ -601,7 +604,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
           cols: nextSize.cols,
           rows: nextSize.rows,
         }).catch(e => console.error('PTY resize on layout change failed:', e));
-      } catch (err) {
+      } catch {
         // Ignored when elements are momentarily detached
       }
     };
@@ -652,16 +655,26 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     const handleWindowKeyDown = (event: KeyboardEvent) => {
       if (!isTerminalCopyShortcut(event)) return;
 
+      // Every active pane registers this fallback listener, and stopPropagation() does NOT
+      // silence sibling listeners on the same target (window). Ungated, every pane with a
+      // lingering selection would issue a clipboard write and the async writes would race -
+      // sometimes a stale selection from another pane won, which read as "copy didn't work".
+      // Only the logically focused pane (set on pane click, valid even when DOM focus is
+      // elsewhere) responds, and stopImmediatePropagation keeps the remaining listeners out.
+      if (useTerminalStore.getState().focusedPaneId !== sessionId) return;
+
       const term = terminalRef.current;
-      if (!term || !copyTerminalSelection(term, copyTextToClipboard)) return;
+      if (!term || !copyTerminalSelection(term, copyTextToClipboard, { onCopyFailed: notifyCopyFailed })) {
+        return;
+      }
 
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
     };
 
     window.addEventListener('keydown', handleWindowKeyDown);
     return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [active]);
+  }, [active, sessionId]);
 
   // Acquire/release the WebGL renderer as this pane's workspace gains/loses visibility.
   // Acquisition is deferred one frame so the outgoing workspace's panes release their

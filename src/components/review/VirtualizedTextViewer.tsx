@@ -70,7 +70,7 @@ export const VirtualizedTextViewer: React.FC<{ text: string; mode: 'diff' | 'cod
                 }}
               >
                 {mode === 'code' && (
-                  <span className="extracted-style-118"
+                  <span className="diff-line-number"
                   >
                     {lineNumber}
                   </span>

@@ -108,7 +108,7 @@ export const ProvidersTab: React.FC = () => {
 
             <div className="provider-card-body">
               {SIGN_IN_COMMANDS[p.provider] && (
-                <div className="extracted-style-072 provider-signin-note">
+                <div className="settings-session-desc provider-signin-note">
                   On a paid {p.label} subscription? Use <strong>Sign In</strong> to log in with your plan — no API key required. An API key below is optional and only needed for pay-as-you-go billing.
                 </div>
               )}
