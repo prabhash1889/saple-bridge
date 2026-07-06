@@ -1,33 +1,38 @@
 # Smoke Test Workspace
 
-A minimal workspace fixture for manual and automated QA of Saple Bridge.
+This directory is a small Saple Bridge workspace fixture for manual QA. Open this directory from the desktop app to verify that existing workspace state loads correctly.
 
 ## Contents
 
-- `.saple/config.json` — Workspace config with Codex as default provider.
-- `.saple/tasks.json` — 5 tasks across backlog, progress, review, and done columns.
-- `.saple/agents/sessions.json` — 3 agent sessions (stopped, running, done).
-- `.saple/agents/prompts/session-001.md` — Example prompt file.
-- `.saple/memory/architecture/auth-architecture.md` — Architecture memory note with wikilinks.
-- `.saple/memory/decision/jwt-auth-decision.md` — Decision record with backlinks.
-- `.saple/review/task-003.json` — Pending review record.
-- `.saple/swarm/state.json` — Active swarm with coordinator, builder, reviewer.
-- `.saple/swarm/templates.json` — 5 swarm templates.
+- `.saple/config.json` - workspace config with Codex as the default provider.
+- `.saple/tasks.json` - tasks across backlog, progress, review, and done columns.
+- `.saple/agents/sessions.json` - sample agent sessions.
+- `.saple/agents/prompts/session-001.md` - sample prompt file.
+- `.saple/memory/architecture/auth-architecture.md` - architecture memory note with wikilinks.
+- `.saple/memory/decision/jwt-auth-decision.md` - decision note with backlinks.
+- `.saple/review/task-003.json` - pending review record.
+- `.saple/swarm/state.json` - sample swarm state.
+- `.saple/swarm/templates.json` - sample swarm templates.
 
-## Usage
+## Checklist
 
-Open this directory as a workspace in Saple Bridge. The app should:
+After opening this folder in Saple Bridge, verify:
 
-1. Detect the existing `.saple/config.json`.
-2. Load all tasks, sessions, memory notes, and swarm state.
-3. Show 5 tasks in the Kanban board across all columns.
-4. Show 2 memory notes with wikilink graph edges.
-5. Show 1 pending review in the Review Room.
-6. Show 1 active swarm in the Swarm Room.
-7. Display 3 agent sessions (one running, one stopped, one done).
+1. The app detects the existing `.saple/config.json`.
+2. Tasks load into the Kanban board.
+3. Agent sessions appear with their saved statuses.
+4. Memory notes appear in the memory list.
+5. Wikilinks render in the memory preview and graph.
+6. The Review workspace shows the pending review record.
+7. The Swarm workspace shows the saved swarm state.
+8. Settings can read workspace configuration without rewriting unrelated files.
 
-## Path Notes
+## Path Testing
 
-The workspace path contains no special characters or spaces, making it suitable
-for baseline QA. For space-in-path testing, copy this directory to a path like
-`C:\My Projects\smoke test\` and repeat the QA steps.
+This fixture path intentionally has no spaces or special characters. For path handling checks, copy the directory to a path such as:
+
+```text
+C:\My Projects\smoke test\
+```
+
+Then repeat the checklist.

@@ -1,84 +1,108 @@
-# CLAUDE.md — Saple Bridge
+# CLAUDE.md - Saple Bridge
 
-Guidance for Claude Code when working in this repository.
+Guidance for Claude Code and other coding agents working in this repository.
 
 ## Project
 
-Saple Bridge is the **AI workspace**: terminals, kanban, memory, swarm, review, settings, and an
-embedded MCP server. **Tauri 2 + React 19.** Builds and runs on Windows
-and **macOS 11+** — the PTY layer uses `powershell.exe` on Windows and the user's login shell
-(`$SHELL`) on Unix/macOS; CI produces a signed (ad-hoc) `.dmg` on macOS.
+Saple Bridge is a local-first AI development workspace. It includes terminals, Kanban tasks, markdown memory, swarm coordination, review tooling, settings, and MCP configuration support.
+
+The app uses Tauri 2, React 19, TypeScript, Vite, Zustand, xterm.js, and Rust. It runs on Windows and macOS 11+. Windows is the primary packaging and QA target.
 
 ## Commands
 
 ```powershell
 npm install
-npm run tauri dev                 # Tauri dev (auto-builds+stages the saple-mcp sidecar first)
-npm run build                     # tsc + vite
-npm run tauri build               # installer (auto-builds+stages the saple-mcp sidecar first)
-npm run prepare-sidecar           # (manual) rebuild+stage the saple-mcp sidecar on its own
-
-# Bare `cargo check`/`cargo test` on src-tauri need the sidecar staged once (externalBin check):
-#   npm run prepare-sidecar
-
-cargo check --manifest-path src-tauri/Cargo.toml
-cd src-tauri; cargo test
+npm run dev              # Vite frontend only
+npm run tauri:dev        # Tauri dev app; stages the saple-mcp sidecar first
+npm run typecheck        # TypeScript check
+npm test                 # Vitest suite
+npm run build            # TypeScript + Vite production build
+npm run tauri:build      # Production bundle; stages the sidecar first
+npm run prepare-sidecar  # Manually build and stage ../saple-mcp
 ```
 
-> Local builds work here (Smart App Control disabled) — run `cargo`/`npm` checks before pushing.
+Rust:
 
-## Key Architecture
+```powershell
+cargo check --manifest-path src-tauri/Cargo.toml
+cd src-tauri
+cargo test
+```
 
-1. Open project → `projectStore.ts` loads from `.saple/*` files.
-2. Terminals spawn native PTY sessions (`pty.rs`), stream via events.
-3. Kanban reads/writes `.saple/tasks.json`; Memory reads/writes `.saple/memory/**/*.md`.
-4. Swarm reads/writes `.saple/swarm/state.json`.
-5. API keys in OS keychain (`keychain.rs` via `keyring`).
-6. The `saple-memory` MCP server lives in the standalone **`../saple-mcp`** repo and ships as a
-   Tauri **sidecar** (`bundle.externalBin`). Bridge stages it with `scripts/prepare-sidecar.mjs`,
-   resolves its path via `sidecar_binary_path()` in `project.rs`, and writes `.mcp.json` /
-   `mcp_config.json` so external clients launch it directly (memory-graph + Kanban task + read-only
-   swarm tools, plus MCP `prompts`/`resources`). Bridge itself no longer hosts the server.
-7. Theme (light/dark/system) lives in `themeStore.ts`; a `data-theme` attribute switches CSS
-   variables, with a pre-paint script in `index.html` to avoid FOUC.
-Key files: `src/App.tsx`, `src/components/layout/Sidebar.tsx`,
-`src/stores/{projectStore,terminalStore,kanbanStore,memoryStore,swarmStore,themeStore}.ts`,
-`src-tauri/src/{lib,pty,project,memory,keychain}.rs`. The MCP server is in `../saple-mcp`.
+`cargo check` and `cargo test` do not build the frontend. Tauri dev/build commands run the frontend build steps through the Tauri config.
 
-## Rules
+## Architecture
 
-- **Bridge Rust** owns filesystem access, PTY sessions, keychain, memory graph, snapshots, MCP
-  server. **React** owns user interaction, view routing, provider/project selection, UI state.
-- **Project writes are path-contained** — Rust validates all paths are within the project dir.
-- Cloud API keys live in the OS keychain (`saple_bridge_user`, `saple_provider_<provider>_api_key`)
-  and are proxied through Rust — never persisted in JSON or held in the renderer.
-- No scanning `node_modules`, `dist`, `target`, `.saple`, logs, build output, or generated schemas.
+1. The selected project is loaded by `projectStore` and backed by `.saple/*` files.
+2. Terminal panes are native PTY sessions owned by Rust and streamed to React through Tauri events.
+3. Kanban reads and writes `.saple/tasks.json`.
+4. Memory reads and writes markdown files under `.saple/memory` or compatible memory directories.
+5. Swarm state is stored in `.saple/swarm/state.json`.
+6. API keys are stored in the OS keychain through `keychain.rs`.
+7. Theme mode lives in `themeStore`; CSS variables are selected with `data-theme`.
+8. The `saple-mcp` MCP server is a sibling project at `../saple-mcp` and is bundled as a Tauri sidecar.
+
+Important files:
+
+- `src/App.tsx`
+- `src/components/layout/Sidebar.tsx`
+- `src/stores/projectStore.ts`
+- `src/stores/terminalStore.ts`
+- `src/stores/kanbanStore.ts`
+- `src/stores/memoryStore.ts`
+- `src/stores/swarmStore.ts`
+- `src/stores/reviewStore.ts`
+- `src-tauri/src/lib.rs`
+- `src-tauri/src/pty.rs`
+- `src-tauri/src/project.rs`
+- `src-tauri/src/memory.rs`
+- `src-tauri/src/keychain.rs`
+
+## Boundaries
+
+- Rust owns filesystem access, PTY sessions, keychain access, process lifecycle, memory parsing, snapshots, and sidecar path resolution.
+- React owns user interaction, routing, provider/project selection, rendering, and UI state.
+- Project writes must stay contained inside the selected project directory.
+- Secrets must not be stored in JSON, localStorage, markdown, or component state. Use the OS keychain commands.
+- Frontend writes to project files should use the existing queued write helpers when a store already follows that pattern.
+- New Rust writes to project state should use existing atomic write helpers where practical.
 
 ## Storage
 
-| What | Where | Format |
-|------|-------|--------|
+| Data | Location | Format |
+| --- | --- | --- |
 | Tasks | `.saple/tasks.json` | JSON |
 | Memory | `.saple/memory/**/*.md` | Markdown + frontmatter |
 | Snapshots | `.saple/snapshots/<name>/` | JSON |
 | Swarm state | `.saple/swarm/state.json` | JSON |
-| API keys | OS keychain (`saple_bridge_user`) | — |
-| Theme prefs | localStorage (`saple-bridge-theme-store`) | JSON |
+| Agent sessions | `.saple/agents/sessions.json` | JSON |
+| API keys | OS keychain account `saple_bridge_user` | Secret store |
+| Theme prefs | localStorage key `saple-bridge-theme-store` | JSON |
+
+## Agent Context Files
+
+Before editing a scoped area, read the nearest relevant context file:
+
+- `src/AGENTS.md` - frontend stores and views
+- `src/components/AGENTS.md` - component/view layer
+- `src-tauri/src/AGENTS.md` - Rust commands, PTY, filesystem, keychain, sidecar wiring
 
 ## Git Workflow
 
-- Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`.
-- **Verify locally before pushing:** `npm run build`, `cargo check`, `cd src-tauri; cargo test`.
-- **Default branch:** unless explicitly told otherwise, commit and push directly to the
-  default branch (`master`/`main`) — do not create a feature branch. Branch only when asked.
-- Keep commits focused.
+- Use focused commits.
+- Prefer conventional commit prefixes: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
+- Do not revert unrelated user changes.
+- Verify locally before publishing changes when the relevant toolchain is available.
+- Work on the current branch unless the user asks for a new branch.
 
-## Intent Layer
+## Ignore During Scans
 
-Before modifying code, read the local `AGENTS.md`:
-- `src/AGENTS.md` — AI workspace frontend (views, Zustand stores).
-- `src/components/AGENTS.md` — View + widget layer.
-- `src-tauri/src/AGENTS.md` — PTY sessions, filesystem, keychain, MCP sidecar wiring.
+Do not spend review or search time in:
 
-> The `saple-memory` MCP server lives in the sibling `../saple-mcp` repo and is consumed by Bridge
-> as a bundled Tauri sidecar.
+- `node_modules/`
+- `dist/`
+- `target/`
+- `src-tauri/target/`
+- `.saple/`
+- `build/`
+- logs and generated installer output

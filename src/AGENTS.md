@@ -1,48 +1,55 @@
 # Bridge React
 
-Owns the AI workspace frontend: 8 views (Dashboard, Terminals, Kanban, Memory, Swarm, Review, Editor, Settings) with Zustand state management. Does NOT own filesystem access, PTY spawning, keychain, or memory parsing — those belong to `../src-tauri/src/`.
+This directory owns the Saple Bridge frontend: dashboard, terminals, Kanban, memory, swarm, review, editor, settings, and shared state management.
+
+Filesystem access, PTY spawning, keychain access, and memory parsing belong to `../src-tauri/src/`.
 
 ## Entry Points
 
-- `App.tsx` — View routing and project bootstrapping (reads projectStore on mount)
-- `stores/projectStore.ts` — Project selection, recent projects, sets active view
-- `components/layout/Sidebar.tsx` — Navigation hub between all 6 views
+- `App.tsx` - view routing and project bootstrapping.
+- `stores/projectStore.ts` - project selection, recent projects, and active view state.
+- `components/layout/Sidebar.tsx` - primary navigation.
 
 ## Key Invariants
 
-- **Zustand stores read/write `.saple/*` files** via Tauri commands, never directly.
-- **Terminal panes** are backed by native PTY sessions in `src-tauri/`; React renders xterm.js instances that connect via Tauri events.
-- **Kanban, Memory, Swarm** data lives in `.saple/` JSON files — the store reads on mount and writes on mutation.
-- **All API keys** are stored in the OS keychain (via `keychain.rs`), not in localStorage or Zustand.
-- **Theming is CSS-variable driven**: `themeStore` writes a `data-theme="light|dark"` attribute onto `<html>`; components must consume `var(--*)` tokens (defined in `styles/index.css`) rather than hardcoded hex so both themes work. `App.tsx` applies the theme and tracks OS changes when in `system` mode; `index.html` re-applies it pre-paint to avoid a flash.
+- Zustand stores read and write `.saple/*` files through Tauri commands.
+- React does not directly access the filesystem.
+- Terminal panes render xterm.js instances backed by native PTY sessions in Rust.
+- Kanban, memory, swarm, review, and session data belong to the selected workspace.
+- API keys live in the OS keychain and must not be persisted in frontend state.
+- Theming is CSS-variable driven through `data-theme="light|dark"` on `<html>`.
+- Components should use `var(--*)` tokens instead of hardcoded colors.
 
 ## Store Map
 
-| Store | File | Backed By |
-|---|---|---|
-| projectStore | `stores/projectStore.ts` | localStorage (persist) — also holds `activeView` |
-| terminalStore | `stores/terminalStore.ts` | Tauri events from PTY sessions; mirrors each workspace's pane layout into `terminalLayoutStore` |
-| terminalLayoutStore | `stores/terminalLayoutStore.ts` | localStorage (persist) — saved pane layouts keyed by workspace path, for the "Restore previous terminals" action |
+| Store | File | Backing |
+| --- | --- | --- |
+| projectStore | `stores/projectStore.ts` | localStorage plus active project state |
+| terminalStore | `stores/terminalStore.ts` | Tauri PTY events and commands |
+| terminalLayoutStore | `stores/terminalLayoutStore.ts` | localStorage pane layouts by workspace path |
 | kanbanStore | `stores/kanbanStore.ts` | `.saple/tasks.json` |
-| memoryStore | `stores/memoryStore.ts` | `.saple/memory/**/*.md` |
+| memoryStore | `stores/memoryStore.ts` | workspace memory markdown |
 | swarmStore | `stores/swarmStore.ts` | `.saple/swarm/state.json` |
-| reviewStore | `stores/reviewStore.ts` | git/review Tauri commands |
+| reviewStore | `stores/reviewStore.ts` | git and review Tauri commands |
 | fileStore | `stores/fileStore.ts` | filesystem Tauri commands |
-| providerStore | `stores/providerStore.ts` | keychain + provider config |
+| providerStore | `stores/providerStore.ts` | provider config and keychain status |
 | agentSessionStore | `stores/agentSessionStore.ts` | agent session state |
-| confirmStore | `stores/confirmStore.ts` | in-memory (drives `common/ConfirmDialog`) |
-| notificationStore | `stores/notificationStore.ts` | in-memory (drives `common/ToastHost`) |
-| themeStore | `stores/themeStore.ts` | localStorage (persist) — light/dark/system mode |
+| confirmStore | `stores/confirmStore.ts` | in-memory confirm dialog state |
+| notificationStore | `stores/notificationStore.ts` | in-memory toast state |
+| themeStore | `stores/themeStore.ts` | localStorage theme preference |
 
 ## Patterns
 
-Adding a new view:
-1. Add store in `stores/` if it needs persisted state
-2. Create view component in `components/<view-name>/` (see `components/AGENTS.md`)
-3. Register route + nav item in `App.tsx` and `Sidebar.tsx`
+To add a new view:
 
-## Anti-patterns
+1. Add a store in `stores/` if the view needs shared or persisted state.
+2. Create the view under `components/<view-name>/`.
+3. Register routing in `App.tsx`.
+4. Add navigation in `components/layout/Sidebar.tsx`.
 
-- Never read/write filesystem directly — always go through `@tauri-apps/api` commands (wrapped in `../src-tauri/src/lib.rs`).
-- Don't store secrets in component state or stores — use `keychain.rs` via Tauri invoke.
-- Don't import from `src-tauri/` directly — only through Tauri's `invoke()` IPC.
+## Anti-Patterns
+
+- Do not read or write files directly from React.
+- Do not store secrets in localStorage, Zustand, component state, or markdown.
+- Do not import Rust modules from `src-tauri/`.
+- Do not bypass existing store write queues where they are already used.

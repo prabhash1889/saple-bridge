@@ -1,34 +1,31 @@
-# Agent Skills & Cross-Cutting Rules — Saple Bridge
+# Agent Skills and Repository Rules - Saple Bridge
 
-## Purpose
+This file describes repository-wide agent behavior for Saple Bridge. App-specific context lives in the child `AGENTS.md` files listed below.
 
-Catalog of installed skills and repo-wide agent behavior for this standalone Saple Bridge repo.
-App-specific context lives in the child `AGENTS.md` files (see App Context).
+## Installed Skills
 
-## Installed Skills (`.agents/skills/`)
+| Skill | When to use |
+| --- | --- |
+| `frontend-design` | UI/UX design, visual polish, layout, and styling decisions |
+| `web-design-guidelines` | Accessibility audits and interface review |
+| `playwright-cli` | Browser automation and UI checks |
+| `screenshot` | Desktop or OS-level screenshots |
+| `next-best-practices` | Next.js projects only; do not use for this Vite/Tauri app |
 
-| Skill | When to Use |
-|-------|-------------|
-| `frontend-design` | UI/UX design, visual polish, layout/styling decisions |
-| `web-design-guidelines` | Accessibility audits, UX review, web interface standards |
-| `playwright-cli` | Browser automation, UI interaction checks |
-| `screenshot` | Desktop/OS-level screenshots |
-| `next-best-practices` | Next.js only — **not** used (this app is Vite/Tauri) |
-
-Also use runtime-provided skills whose triggers match (`tauri-development`, `code-review`,
-`security-review`, `verify`, `run`). Prefer the most specific skill that covers the request.
+Runtime-provided skills may also be available. Use the most specific relevant skill and avoid loading unrelated references.
 
 ## Working Rules
 
-- Read `CLAUDE.md` and only the docs relevant to the task.
-- Do not scan `node_modules`, `dist`, `target`, `.saple`, build output, logs, or generated schemas.
-- Do not revert user changes; keep edits scoped and verifiable.
-- **Bridge project writes stay contained inside the selected project directory** (Rust-validated).
-- Cloud keys live in the OS keychain, proxied through Rust — never in JSON or the renderer.
-- Don't use `next-best-practices` for Vite/Tauri code.
+- Read `CLAUDE.md` and the scoped `AGENTS.md` file for the area being changed.
+- Do not scan `node_modules`, `dist`, `target`, `src-tauri/target`, `.saple`, `build`, logs, or generated installer output.
+- Do not revert unrelated user changes.
+- Keep edits scoped and verifiable.
+- Bridge project writes must stay contained inside the selected project directory.
+- Cloud API keys live in the OS keychain and must not be written to JSON, markdown, localStorage, or renderer state.
+- This app is Vite plus Tauri; do not apply Next.js rules to app code.
 
 ## App Context
 
-- Bridge React: `src/AGENTS.md`
-- Bridge Components: `src/components/AGENTS.md`
-- Bridge Rust: `src-tauri/src/AGENTS.md`
+- `src/AGENTS.md` - frontend stores and views.
+- `src/components/AGENTS.md` - component and widget layer.
+- `src-tauri/src/AGENTS.md` - Rust commands, PTY, filesystem, keychain, and sidecar wiring.

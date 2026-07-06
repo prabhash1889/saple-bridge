@@ -1,33 +1,47 @@
 # Bridge Rust
 
-Owns all OS-level integration for the Bridge app: filesystem access (contained within the selected project), native PTY sessions, OS keychain secrets, and memory graph parsing/snapshots. Does NOT own UI rendering, state management, or view routing — those belong to `../src/`.
+This directory owns the OS-level integration for Saple Bridge: contained filesystem access, native PTY sessions, process cleanup, OS keychain access, memory parsing, snapshots, git helpers, diagnostics, and MCP sidecar wiring.
 
-The `saple-memory` MCP server is no longer hosted in this crate. It lives in the standalone **`../../saple-mcp`** repo and ships as a Tauri **sidecar** binary (`bundle.externalBin` in `tauri.conf.json`). Bridge stages it via `scripts/prepare-sidecar.mjs` (run `npm run prepare-sidecar` before `tauri dev`), resolves its on-disk path with `sidecar_binary_path()` in `project.rs`, and writes that path into each project's `.mcp.json` so external clients (Claude Code) launch it directly. `test_mcp_tools` previews the catalog by spawning the sidecar and sending one `tools/list`.
+UI rendering, view routing, and frontend state live in `../../src/`.
+
+## Sidecar MCP Server
+
+The `saple-memory` MCP server is not hosted by this crate. It lives in the sibling `../../saple-mcp` repository and is bundled as a Tauri sidecar binary through `bundle.externalBin`.
+
+Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundled path in `project.rs`, and writes `.mcp.json` or `mcp_config.json` for external clients.
 
 ## Entry Points
 
-- `lib.rs` — Tauri command registration (all commands the React frontend can `invoke()`)
-- `main.rs` — Application entrypoint (thin — delegates to lib.rs)
+- `lib.rs` - Tauri command registration.
+- `main.rs` - application entrypoint.
 
 ## Module Map
 
 | Module | File | Responsibility |
-|---|---|---|
-| PTY | `pty.rs` | Spawn, write, resize, kill native PTY sessions; stream output via Tauri events. Shell is `powershell.exe` on Windows, login `$SHELL` on Unix/macOS; sets `TERM`/`COLORTERM` |
-| Project | `project.rs` | Contained filesystem reads/writes (path-validated against selected project dir) |
-| Memory | `memory.rs` | Parse `.saple/memory/**/*.md` with YAML frontmatter + `[[wikilink]]` graph; snapshot management |
-| MCP wiring | `project.rs` | `sidecar_binary_path()` + `install_mcp_config` (writes `.mcp.json`/`mcp_config.json` pointing at the `saple-mcp` sidecar) + `check_mcp_status` + `test_mcp_tools` (spawns the sidecar for a `tools/list` preview). The server itself is in `../../saple-mcp` |
-| Keychain | `keychain.rs` | OS keychain wrappers via `keyring` crate (user keyring `saple_bridge_user`) — Credential Manager on Windows, login Keychain on macOS. `has_api_key` reports presence as a bool without returning the secret |
+| --- | --- | --- |
+| PTY | `pty.rs` | Spawn, write, resize, and kill native PTY sessions; stream output to React |
+| Project | `project.rs` | Contained project file access and MCP config wiring |
+| Memory | `memory.rs` | Parse memory markdown, graph wikilinks, manage snapshots |
+| Keychain | `keychain.rs` | OS keychain wrapper through the `keyring` crate |
+| Git | `git.rs` | Git status, diff, staging, and commit helpers |
+| Review | `review.rs` | Review records and verification command support |
+| Swarm | `swarm.rs` | Swarm state, mailbox, and handoff file commands |
+| Files | `files.rs` | File tree and text-file helpers |
+| Diagnostics | `diagnostics.rs` | Environment and provider diagnostics |
+| Locking | `fs_lock.rs` | Serialized and atomic file writes |
 
-## Contracts & Invariants
+## Contracts
 
-- **All filesystem paths are validated** against a base project directory — writes are rejected if they escape containment.
-- **PTY session lifecycle** is fully owned by Rust: React sends commands (spawn, write, resize, kill), Rust streams output via Tauri events.
-- **Keychain access** uses the `keyring` crate under user `saple_bridge_user` — never fall back to plaintext.
-- **Memory graph parsing** is done in Rust — React receives structured nodes and edges, not raw markdown.
+- Validate project paths against the selected project directory before reading or writing.
+- Keep PTY process lifecycle in Rust.
+- Store credentials only through the OS keychain account `saple_bridge_user`.
+- Return structured data to React; do not rely on the renderer to validate sensitive paths.
+- Use atomic writes for project state where torn writes would corrupt user data.
+- Treat command execution helpers as an explicit trust boundary.
 
-## Anti-patterns
+## Anti-Patterns
 
-- Never store credentials in files or pass them through to React — keychain only.
-- Don't bypass project path containment for reads/writes.
-- Don't spawn PTY sessions from React — all PTY lifecycle must go through `pty.rs`.
+- Do not store credentials in files.
+- Do not bypass path containment for project reads or writes.
+- Do not let React spawn shell processes directly.
+- Do not add new unvalidated string interpolation into shell commands.
