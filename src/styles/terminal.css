@@ -334,6 +334,78 @@
   background: color-mix(in srgb, var(--terminal-pane-color) 10%, var(--bg-surface-active));
 }
 
+/* Unfocused pane produced output since last focus. */
+.terminal-pane-activity-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--terminal-pane-color, #5D5FEF);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--terminal-pane-color, #5D5FEF) 60%, transparent);
+}
+
+/* PTY child has exited — dim "exited" badge next to the title. */
+.terminal-pane-exit-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.terminal-context-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 168px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.terminal-context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.terminal-context-item:hover:not(:disabled),
+.terminal-context-item:focus-visible {
+  background: rgba(255, 255, 255, 0.075);
+  color: var(--text-primary);
+}
+
+.terminal-context-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.terminal-context-sep {
+  height: 1px;
+  margin: 3px 4px;
+  background: var(--border);
+}
+
 .terminal-xterm-container {
   flex: 1;
   width: 100%;

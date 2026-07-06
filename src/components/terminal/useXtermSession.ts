@@ -3,12 +3,13 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { writeTextToClipboard } from '../../lib/clipboard';
-import { TERMINAL_SCROLLBACK_ROWS } from '../../lib/terminalLimits';
 import { useThemeStore, resolveTheme } from '../../stores/themeStore';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
 import { getTerminalTheme, terminalThemeFor } from './terminalThemes';
@@ -173,6 +174,8 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
 
   const themeMode = useThemeStore((state) => state.mode);
   const fontId = useTerminalFontStore((state) => state.fontId);
+  const fontSize = useTerminalFontStore((state) => state.fontSize);
+  const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
 
   // Keep the live xterm theme in sync with the app theme (xterm needs a JS theme object).
   useEffect(() => {
@@ -188,15 +191,23 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     return () => mql.removeEventListener('change', apply);
   }, [themeMode]);
 
-  // Apply the chosen terminal font live. Changing the face changes the cell metrics, so
-  // re-measure with the fit addon and push the new cols/rows to the PTY (the same path the
-  // ResizeObserver uses) — otherwise the prompt would stay sized to the previous font.
+  // Live scrollback resize (Settings > Workspace). Only the retained-history depth changes,
+  // so no re-fit or PTY resize is needed — xterm reflows its own buffer.
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (term) term.options.scrollback = scrollbackRows;
+  }, [scrollbackRows]);
+
+  // Apply the chosen terminal font + size live. Both change the cell metrics, so re-measure
+  // with the fit addon and push the new cols/rows to the PTY (the same path the
+  // ResizeObserver uses) — otherwise the prompt would stay sized to the previous metrics.
   useEffect(() => {
     const term = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     if (!term) return;
 
     term.options.fontFamily = fontStackFor(fontId);
+    term.options.fontSize = fontSize;
 
     const container = containerRef.current;
     if (!fitAddon || !container || container.clientHeight < 1 || container.clientWidth < 1) {
@@ -219,7 +230,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     } catch (err) {
       console.warn('Font-change refit warning:', err);
     }
-  }, [fontId, sessionId]);
+  }, [fontId, fontSize, sessionId]);
 
   // Drop this pane's WebGL renderer (if any) and free its slot in the global context
   // budget. Idempotent: safe to call from the `active` effect, the context-loss handler,
@@ -312,15 +323,15 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
-      fontSize: 14,
-      // Initial face read straight from the store; the dedicated effect above re-applies
-      // and re-fits when the user picks a different font from the Terminal Controls panel.
+      // Initial face/size/scrollback read straight from the store; the dedicated effects
+      // above re-apply and re-fit when the user changes any of them.
+      fontSize: useTerminalFontStore.getState().fontSize,
       fontFamily: fontStackFor(useTerminalFontStore.getState().fontId),
       fontWeight: 400,
       fontWeightBold: 700,
       letterSpacing: 0,
       lineHeight: 1.15,
-      scrollback: TERMINAL_SCROLLBACK_ROWS,
+      scrollback: useTerminalFontStore.getState().scrollbackRows,
       theme: { ...getTerminalTheme() },
       allowProposedApi: true,
       // Make xterm grow rows into the scrollback the way ConPTY expects, so maximizing the
@@ -335,7 +346,46 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     term.loadAddon(searchAddon);
     searchAddonRef.current = searchAddon;
 
+    // Make URLs in the buffer clickable; open them through the OS default browser via the
+    // opener plugin (never inside the WebView). Underlines the link on hover only.
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        event.preventDefault();
+        void openUrl(uri).catch((err) => console.error('Failed to open URL:', err));
+      }),
+    );
+
     term.attachCustomKeyEventHandler((event) => {
+      // Ctrl+= / Ctrl++ / Ctrl+- / Ctrl+0 adjust the app-wide terminal font size. Handled
+      // here (not in the shell) so the size change never reaches the running program. The
+      // font effect above re-fits every pane to the new metrics.
+      if (
+        event.type === 'keydown' &&
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        !event.altKey
+      ) {
+        const fontStore = useTerminalFontStore.getState();
+        if (event.key === '=' || event.key === '+') {
+          event.preventDefault();
+          event.stopPropagation();
+          fontStore.increaseFontSize();
+          return false;
+        }
+        if (event.key === '-' || event.key === '_') {
+          event.preventDefault();
+          event.stopPropagation();
+          fontStore.decreaseFontSize();
+          return false;
+        }
+        if (event.key === '0') {
+          event.preventDefault();
+          event.stopPropagation();
+          fontStore.resetFontSize();
+          return false;
+        }
+      }
+
       // Ctrl/Cmd+F opens the pane's find bar instead of reaching the shell.
       if (
         event.type === 'keydown' &&

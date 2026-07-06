@@ -1,14 +1,18 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { Check, XCircle } from 'lucide-react';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
+import { writeTextToClipboard } from '../../lib/clipboard';
 import { useXtermSession, IS_WINDOWS_PTY } from './useXtermSession';
+import { copyTerminalSelection } from './terminalClipboard';
 import { TerminalPaneTitlebar } from './TerminalPaneTitlebar';
 import { TerminalSearchBar } from './TerminalSearchBar';
+import { TerminalContextMenu } from './TerminalContextMenu';
 
 interface TerminalPaneProps {
   sessionId: string;
@@ -21,6 +25,8 @@ interface TerminalPaneProps {
 
 const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true }) => {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [hasActivity, setHasActivity] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const setActiveView = useProjectStore((state) => state.setActiveView);
@@ -33,6 +39,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const canAddPane = useTerminalStore((state) => state.canAddPane);
   const sessionInfo = useTerminalStore((state) => state.sessions[sessionId]);
   const isWaitingReview = useTerminalStore((state) => state.reviewPanes[sessionId]);
+  const exited = useTerminalStore((state) => Boolean(state.exitedPanes[sessionId]));
   const resolveReview = useTerminalStore((state) => state.resolveReview);
 
   const setActiveTaskId = useReviewStore((state) => state.setActiveTaskId);
@@ -49,6 +56,25 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     onSearchOpen: () => setSearchOpen(true),
   });
 
+  // Activity dot: while this pane is unfocused, light it on the first output that arrives
+  // and clear it the moment it regains focus. Subscribing (not a store selector) keeps the
+  // per-frame output flush off React's reactive path. Only sets state on the false->true
+  // edge, so a busy pane doesn't re-render every frame.
+  useEffect(() => {
+    if (isFocused) {
+      setHasActivity(false);
+      return;
+    }
+    let lit = false;
+    const unsubscribe = useTerminalStore.getState().subscribeOutput(sessionId, () => {
+      if (!lit) {
+        lit = true;
+        setHasActivity(true);
+      }
+    });
+    return unsubscribe;
+  }, [isFocused, sessionId]);
+
   const closeSearch = () => {
     setSearchOpen(false);
     terminalRef.current?.focus();
@@ -58,6 +84,33 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     if (!isFocused) {
       setFocusedPane(sessionId);
     }
+  };
+
+  const handleContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    if (!isFocused) setFocusedPane(sessionId);
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  const handleContextCopy = () => {
+    const term = terminalRef.current;
+    if (term) copyTerminalSelection(term, writeTextToClipboard);
+  };
+
+  const handleContextPaste = () => {
+    const term = terminalRef.current;
+    if (!term) return;
+    void readText()
+      .then((text) => {
+        if (text) term.paste(text);
+      })
+      .catch(() => {
+        // Clipboard empty or non-text — nothing to paste.
+      });
+  };
+
+  const handleContextClear = () => {
+    terminalRef.current?.clear();
   };
 
   const handleTitleAction = (event: React.MouseEvent<HTMLButtonElement>, action: () => void | Promise<void>) => {
@@ -137,6 +190,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   return (
     <div
       onClick={handleContainerClick}
+      onContextMenu={handleContextMenu}
       className={`terminal-pane ${maximized ? 'terminal-pane-maximized' : ''}`}
       style={{
         '--terminal-pane-color': paneColor,
@@ -147,6 +201,8 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         title={paneTitle}
         maximized={maximized}
         canCreatePane={canCreatePane}
+        hasActivity={hasActivity && !isFocused}
+        exited={exited}
         onTitleAction={handleTitleAction}
         onAddPane={handleAddPane}
         onToggleMaximize={() => toggleMaximizePane(sessionId)}
@@ -160,6 +216,19 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
 
       {searchOpen && (
         <TerminalSearchBar searchAddonRef={searchAddonRef} onClose={closeSearch} />
+      )}
+
+      {contextMenu && (
+        <TerminalContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          canCopy={Boolean(terminalRef.current?.hasSelection())}
+          onCopy={handleContextCopy}
+          onPaste={handleContextPaste}
+          onClear={handleContextClear}
+          onSearch={() => setSearchOpen(true)}
+          onClose={() => setContextMenu(null)}
+        />
       )}
 
       {isWaitingReview && linkedTask && (

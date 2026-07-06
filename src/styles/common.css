@@ -1509,6 +1509,84 @@ button.text-btn:hover {
   border-radius: var(--radius-sm);
 }
 
+/* Keyboard Shortcuts help dialog (opened from the command palette). Reuses .palette-overlay
+   and .palette-kbd; adds its own compact grouped layout. */
+.shortcuts-dialog {
+  background: rgba(24, 24, 27, 0.9);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  max-width: 460px;
+  width: 90%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(20px);
+}
+
+.shortcuts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcuts-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.shortcuts-body {
+  padding: 8px 14px 14px;
+  overflow-y: auto;
+}
+
+.shortcuts-group {
+  margin-top: 12px;
+}
+
+.shortcuts-group-title {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.shortcuts-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.shortcuts-keys {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.input-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .palette-category {
   font-size: 10px;
   font-weight: 600;

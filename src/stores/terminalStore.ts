@@ -75,6 +75,9 @@ interface TerminalState {
   focusedPaneId: string | null;
   maximizedPaneId: string | null;
   reviewPanes: Record<string, boolean>;
+  // Panes whose PTY child has exited (pty-exit). Drives the titlebar "exited" badge so a
+  // dead session reads as ended rather than frozen. Cleared when the pane is removed.
+  exitedPanes: Record<string, boolean>;
   workspacePanes: Record<string, string[]>;
   workspaceFocusedPaneIds: Record<string, string | null>;
   workspaceMaximizedPaneIds: Record<string, string | null>;
@@ -340,6 +343,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
     focusedPaneId: null,
     maximizedPaneId: null,
     reviewPanes: {},
+    exitedPanes: {},
     workspacePanes: {},
     workspaceFocusedPaneIds: {},
     workspaceMaximizedPaneIds: {},
@@ -423,6 +427,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         const { id } = event.payload;
         if (!get().sessions[id]) return;
         get().appendOutput(id, '\r\n\x1b[2m[process exited — close this pane to start a new one]\x1b[0m\r\n');
+        set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
       });
     },
 
@@ -637,9 +642,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         const newPanes = panesForWorkspace.filter((pane) => pane !== paneId);
         const newSessions = { ...state.sessions };
         const newReviewPanes = { ...state.reviewPanes };
+        const newExitedPanes = { ...state.exitedPanes };
 
         delete newSessions[paneId];
         delete newReviewPanes[paneId];
+        delete newExitedPanes[paneId];
         pendingOutputChunks.delete(paneId);
         paneOutputBuffers.delete(paneId);
         paneOutputLengths.delete(paneId);
@@ -675,6 +682,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           panes: isActiveWorkspace ? newPanes : state.panes,
           sessions: newSessions,
           reviewPanes: newReviewPanes,
+          exitedPanes: newExitedPanes,
           workspacePanes: nextWorkspacePanes,
           workspaceFocusedPaneIds: nextWorkspaceFocused,
           workspaceMaximizedPaneIds: nextWorkspaceMaximized,
@@ -717,9 +725,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       set((current) => {
         const newSessions = { ...current.sessions };
         const newReviewPanes = { ...current.reviewPanes };
+        const newExitedPanes = { ...current.exitedPanes };
         for (const paneId of paneIds) {
           delete newSessions[paneId];
           delete newReviewPanes[paneId];
+          delete newExitedPanes[paneId];
           pendingOutputChunks.delete(paneId);
           paneOutputBuffers.delete(paneId);
           paneOutputLengths.delete(paneId);
@@ -741,6 +751,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         return {
           sessions: newSessions,
           reviewPanes: newReviewPanes,
+          exitedPanes: newExitedPanes,
           workspacePanes: newWorkspacePanes,
           workspaceFocusedPaneIds: newWorkspaceFocused,
           workspaceMaximizedPaneIds: newWorkspaceMaximized,
@@ -870,6 +881,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         focusedPaneId: null,
         maximizedPaneId: null,
         reviewPanes: {},
+        exitedPanes: {},
         workspacePanes: {},
         workspaceFocusedPaneIds: {},
         workspaceMaximizedPaneIds: {},

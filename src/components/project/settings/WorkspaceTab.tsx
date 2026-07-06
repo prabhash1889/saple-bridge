@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Save, Terminal } from 'lucide-react';
 import { useProjectStore } from '../../../stores/projectStore';
+import { useTerminalFontStore } from '../../../stores/terminalFontStore';
+import { MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS } from '../../../lib/terminalLimits';
 
 export const WorkspaceTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -13,6 +15,11 @@ export const WorkspaceTab: React.FC = () => {
   const [maxAgents, setMaxAgents] = useState(12);
   const [enableEditMode, setEnableEditMode] = useState(true);
   const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  // Terminal scrollback is an app-wide preference (persisted to localStorage), so it saves
+  // immediately on change rather than through the workspace-config Save button.
+  const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
+  const setScrollbackRows = useTerminalFontStore((state) => state.setScrollbackRows);
 
   useEffect(() => {
     if (workspaceConfig) {
@@ -88,6 +95,19 @@ export const WorkspaceTab: React.FC = () => {
               onChange={e => setMaxAgents(parseInt(e.target.value) || 12)}
               className="settings-input settings-input-narrow"
             />
+          </div>
+          <div className="input-group">
+            <label className="input-label">Terminal Scrollback (rows)</label>
+            <input
+              type="number"
+              min={MIN_SCROLLBACK_ROWS}
+              max={MAX_SCROLLBACK_ROWS}
+              step={1000}
+              value={scrollbackRows}
+              onChange={e => setScrollbackRows(parseInt(e.target.value) || MIN_SCROLLBACK_ROWS)}
+              className="settings-input settings-input-narrow"
+            />
+            <span className="input-hint">Applied live to all panes. App-wide preference.</span>
           </div>
           <div className="settings-checkbox-row input-group checkbox-group">
             <input

@@ -73,24 +73,27 @@ Makes every later UI change cheaper and safer. This is styling/token work; it do
 
 ---
 
-## Phase 3 - Terminal room polish (additive only)
+## Phase 3 - Terminal room polish (additive only) - DONE
 
 **No layout, grid, or session-lifecycle changes.** Every item here layers on top of the existing terminal without moving or restructuring current controls.
 
-### 3.1 Quality-of-life (non-invasive)
-- Clickable URLs via `@xterm/addon-web-links` (open through the existing opener plugin) - pure addon, no UI change.
-- Font-size control (Ctrl+= / Ctrl+- / Ctrl+0 on the focused pane) added to `terminalFontStore` alongside the existing font-family choice - keyboard-only, no new controls.
-- Configurable scrollback limit in Workspace settings (wire through existing `terminalLimits.ts`) - lives in the Settings room, not the terminal chrome.
-- Activity / exit-status indicators: a small unobtrusive dot on `TerminalPaneTitlebar` for unfocused panes that produced output since last focus, and an exit-status badge when a session's process exits (instead of a silently dead pane). These sit inside the existing titlebar - no layout reflow.
+**Status: Complete (2026-07-06).** typecheck / lint (0 errors, only pre-existing exhaustive-deps warnings) / `npm test` (23 passed) / `npm run build` all green locally. No Rust changes, so `cargo` was untouched. All additions are overlays/store fields - the grid, split, maximize, and focus paths are unchanged. Remaining is a manual `npm run tauri:dev` eyeball pass.
 
-### 3.2 Search and copy polish (additive)
-- Ship the in-flight clipboard work; add "Copy last command output" if feasible from the buffer.
-- Add a right-click context menu on panes (Copy / Paste / Clear / Search) so mouse-first users are not stranded - a menu overlay, not a change to existing controls.
-- Add a "Keyboard shortcuts" help dialog reachable from the command palette that documents the existing pane shortcuts (e.g. Ctrl+Alt+Right to cycle). Documentation only; no new bindings that change current behavior.
+### 3.1 Quality-of-life (non-invasive) - done
+- [x] Clickable URLs via `@xterm/addon-web-links@0.12.0` (xterm-6 compatible line). The `WebLinksAddon` handler opens through the existing `@tauri-apps/plugin-opener` `openUrl` (OS browser, never the WebView); `opener:default` capability already present. Pure addon in `useXtermSession`, no UI change.
+- [x] Font-size control (Ctrl+= / Ctrl++ / Ctrl+- / Ctrl+0) added to `terminalFontStore` (`fontSize` + `increase/decrease/resetFontSize`, clamped 8-28). Wired in the pane's `attachCustomKeyEventHandler` so the change never reaches the shell; the existing font effect re-fits every pane and pushes the new cols/rows to the PTY. Keyboard-only, no new controls.
+- [x] Configurable scrollback in `terminalFontStore.scrollbackRows` (clamped via new `MIN/MAX_SCROLLBACK_ROWS` in `terminalLimits.ts`), applied live in `useXtermSession` via `term.options.scrollback`. Control lives in Settings > Workspace (`WorkspaceTab`), not the terminal chrome. Kept app-wide (localStorage, matching the font pref) rather than adding a per-workspace Rust config field - simpler and equally robust; noted in the UI as app-wide.
+- [x] Activity / exit indicators on `TerminalPaneTitlebar`: an unobtrusive dot for unfocused panes that produced output since last focus (tracked via a local `subscribeOutput` listener that only sets state on the false->true edge, so the hot output path stays off React's reactive path), and an "exited" badge driven by a new reactive `exitedPanes` map in `terminalStore` set on the existing `pty-exit` event. Both sit inside the existing titlebar - no reflow.
 
-**Explicitly out of scope** (would restructure the terminal): drag-to-reorder panes, persisting/respawning a per-workspace pane set on open, and any change to the grid or split layout.
+### 3.2 Search and copy polish (additive) - done
+- [x] In-flight clipboard work shipped (already wired: `lib/clipboard.ts` retry helper + `terminalClipboard.ts`).
+- [ ] "Copy last command output" - **skipped.** The output buffer has no per-command boundaries (command detection runs off the *input* path and never maps to output line ranges), so reconstructing a single command's output from the rolling buffer would be unreliable. Deferred rather than shipping a guessy feature; the context-menu "Copy" (selection) covers the common case.
+- [x] Right-click context menu on panes (`TerminalContextMenu`): Copy (selection) / Paste / Search / Clear. A `position: fixed` overlay that closes on outside press or Escape - it never touches the existing titlebar controls.
+- [x] "Keyboard Shortcuts" help dialog (`ShortcutsHelpDialog`) reachable from the command palette (new "Keyboard Shortcuts" command), toggled through a tiny `shortcutsHelpStore` and rendered once at the app root. Documents the existing global + terminal bindings (incl. Ctrl+Alt+Right to cycle). Documentation only; registers no new bindings.
 
-**Verification:** E2E in `npm run tauri:dev` as a user would: open two providers, click URLs, exercise the context menu and font-size shortcuts, verify glyphs/fonts/scrollback. Confirm the grid, splitting, maximize, and focus behavior are byte-for-byte the same as before.
+**Explicitly out of scope** (would restructure the terminal): drag-to-reorder panes, persisting/respawning a per-workspace pane set on open, and any change to the grid or split layout. None touched.
+
+**Verification:** typecheck / lint / `npm test` (23) / `npm run build` green locally. Remaining: manual `npm run tauri:dev` walk - open two providers, click URLs, exercise the context menu and font-size shortcuts, verify glyphs/fonts/scrollback, and confirm the grid, splitting, maximize, and focus behavior are byte-for-byte the same as before.
 
 ---
 

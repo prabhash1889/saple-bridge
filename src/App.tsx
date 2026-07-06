@@ -5,6 +5,7 @@ import { StatusBar } from './components/layout/StatusBar';
 import { ProjectDashboard } from './components/project/ProjectDashboard';
 import { ToastHost } from './components/common/ToastHost';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
+import { ShortcutsHelpDialog } from './components/common/ShortcutsHelpDialog';
 import { RoomSkeleton } from './components/common/RoomSkeleton';
 import { useProjectStore, ViewType } from './stores/projectStore';
 import { useKanbanStore } from './stores/kanbanStore';
@@ -205,6 +206,7 @@ function App() {
       <StatusBar />
       <ToastHost />
       <ConfirmDialog />
+      <ShortcutsHelpDialog />
       {paletteOpen && (
         <Suspense fallback={null}>
           <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />

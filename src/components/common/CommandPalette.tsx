@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Search, Terminal, ClipboardList, Network, Users, 
-  GitPullRequest, Settings, FolderOpen, ShieldCheck, 
-  HelpCircle, Play, ChevronRight, CornerDownLeft, ArrowLeft 
+  GitPullRequest, Settings, FolderOpen, ShieldCheck,
+  HelpCircle, Play, ChevronRight, CornerDownLeft, ArrowLeft, Keyboard
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useKanbanStore, Task } from '../../stores/kanbanStore';
 import { useMemoryStore } from '../../stores/memoryStore';
 import { useNotificationStore } from '../../stores/notificationStore';
+import { useShortcutsHelpStore } from '../../stores/shortcutsHelpStore';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
 import { useFocusTrap } from '../../lib/useFocusTrap';
@@ -187,6 +188,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
         shortcut: 'Ctrl+O',
         icon: FolderOpen,
         action: handleOpenWorkspace,
+      },
+      {
+        id: 'keyboard_shortcuts',
+        name: 'Keyboard Shortcuts',
+        description: 'View all global and terminal keyboard shortcuts',
+        category: 'Help',
+        icon: Keyboard,
+        action: () => {
+          onClose();
+          useShortcutsHelpStore.getState().open();
+        },
       },
     ];
 

@@ -5,6 +5,10 @@ interface TerminalPaneTitlebarProps {
   title: string;
   maximized?: boolean;
   canCreatePane: boolean;
+  // Unfocused pane produced output since it was last focused — shows an unobtrusive dot.
+  hasActivity?: boolean;
+  // PTY child has exited — shows an "exited" badge instead of a silently dead pane.
+  exited?: boolean;
   // Wraps each action: stops propagation and focuses the pane before running it.
   onTitleAction: (event: React.MouseEvent<HTMLButtonElement>, action: () => void | Promise<void>) => void;
   onAddPane: () => void;
@@ -16,6 +20,8 @@ export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
   title,
   maximized,
   canCreatePane,
+  hasActivity,
+  exited,
   onTitleAction,
   onAddPane,
   onToggleMaximize,
@@ -23,7 +29,11 @@ export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
 }) => (
   <div className="terminal-pane-titlebar">
     <div className="terminal-pane-title" title={title}>
+      {hasActivity && (
+        <span className="terminal-pane-activity-dot" title="New output" aria-label="New output since last focus" />
+      )}
       <span>{title}</span>
+      {exited && <span className="terminal-pane-exit-badge">exited</span>}
     </div>
     <div className="terminal-pane-title-actions">
       <button
