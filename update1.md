@@ -119,23 +119,25 @@ Makes every later UI change cheaper and safer. This is styling/token work; it do
 
 ---
 
-## Phase 5 - Task -> Review pipeline
+## Phase 5 - Task -> Review pipeline - DONE
 
-### 5.1 Kanban
-- Keyboard support: arrows to move selection, Enter to open drawer, `E` edit, bracket keys to move between columns (kanban currently is mouse-only apart from dialogs).
-- Task metadata: optional due date and simple checklist/subtasks in `TaskDialog` + `TaskCard` progress chip; stored in `.saple/tasks.json` (backward-compatible optional fields).
-- Column WIP indicator (count/limit) - display only, no hard block.
+**Status: Complete (2026-07-06).** typecheck / lint (0 errors, only pre-existing exhaustive-deps warnings) / `npm test` (35 passed, +6 new: split-diff parser + tasks.json backward compat) / `npm run build` / `cargo check` / `cargo test` (37 passed, +3 new git branch tests) all green locally. Remaining is the manual `npm run tauri:dev` E2E walk below.
 
-### 5.2 Review room
-- Syntax-highlighted, side-by-side diff option: parse the unified diff already fetched by `loadGitDiff` and render split view (reuse Shiki tokenization; keep `VirtualizedTextViewer` for very large diffs).
-- Per-file review state (viewed/unviewed checkmarks) persisted in the review record so reviewers can track progress across files.
-- Verification command presets per workspace (e.g. `npm test`, `cargo test`) stored in workspace config instead of the hardcoded `npm test` default in `ReviewWorkspace.tsx`.
-- Commit UX: show staged-file summary and conventional-commit prefix helper in the commit box.
+### 5.1 Kanban - done
+- [x] Keyboard support in `KanbanBoard`: arrows move a highlighted selection across cards/columns, Enter opens the drawer, `E` edits, `[` / `]` move the selected task between columns. Inactive while a dialog/drawer is open or focus is in a form control; selected card gets an accent outline and scrolls into view.
+- [x] Task metadata: optional `dueDate` (native `<input type="date">`) and `checklist` (edited as plain lines in `TaskDialog`, done-state preserved for unchanged lines) stored in `.saple/tasks.json` as optional fields. `TaskCard` shows a due-date chip (danger-colored when overdue and not done) and a `done/total` checklist progress chip; `TaskDetailDrawer` renders toggleable checklist checkboxes and the due date. Backward compat covered by a `normalizeTask` test asserting old-shape tasks round-trip byte-identical.
+- [x] Column WIP indicator: `count/limit` in the column header pill, warning-colored when over. Display only, no block. Limits are fixed constants (`progress: 5`, `review: 3`) in `KanbanBoard` - move into workspace config if teams need to tune them.
 
-### 5.3 Git surface
-- Branch switcher: add a dropdown in the Review/commit UI (list local branches, checkout via new `git.rs` command with dirty-tree guard). Keep it inside the Review room's existing chrome - do not add persistent branch chrome over the terminal/sidebar.
+### 5.2 Review room - done
+- [x] Side-by-side diff: new "Split Diff" sub-tab rendered by `SplitDiffViewer` on top of a pure `lib/diffSplit.ts` parser (deletions pair with the additions that replaced them, per-side line numbers, hunk headers). Virtualized with the same windowing as `VirtualizedTextViewer`, so large diffs stay cheap - no separate large-diff fallback needed. **Skipped Shiki tokenization** in the split view: ±row coloring covers the review use case at a fraction of the code; add token-level highlighting only if diff readability actually suffers.
+- [x] Per-file viewed checkmarks persisted in the review record (`viewedFiles` on `ReviewRecord`, serde-defaulted so old records still parse) via a new `set_file_viewed` command; `ReviewFileList` shows an eye/check toggle per file and dims viewed paths. Viewed count surfaces in the commit bar when nothing is staged.
+- [x] Verification presets per workspace: `verificationPresets` on `WorkspaceConfig` (serde-defaulted), edited one-per-line in Settings > Workspace, rendered as one-click chips in the Verification tab. First preset becomes the default command; the old language auto-detection remains as fallback when no presets are configured.
+- [x] Commit UX: staged summary (`N staged · +x −y`) and a conventional-commit prefix select (feat/fix/docs/refactor/test/chore) that inserts/replaces the prefix in the commit input.
 
-**Verification:** E2E: create task -> move to review -> inspect split diff -> stage subset -> run verification preset -> commit; confirm `.saple/tasks.json` stays backward compatible (open an old file). Rust tests for the new git commands.
+### 5.3 Git surface - done
+- [x] Branch switcher in the Review room header (inside the room's chrome, no terminal/sidebar changes): dropdown of local branches from a new `git_list_branches` command; checkout via `git_checkout_branch`, which rejects option-like branch names and refuses when the working tree is dirty so it can never clobber un-reviewed changes. Non-git workspaces render nothing. Rust tests cover branch-list parsing, option-name rejection, and the dirty-tree guard (real temp git repo).
+
+**Verification:** typecheck / lint / `npm test` (35) / `npm run build` / `cargo check` / `cargo test` (37) green locally. Remaining: manual `tauri:dev` E2E - create task -> move to review -> inspect split diff -> mark files viewed -> stage subset -> run verification preset -> commit -> switch branch on a clean tree; open a pre-Phase-5 `.saple/tasks.json` and confirm it loads unchanged.
 
 ---
 

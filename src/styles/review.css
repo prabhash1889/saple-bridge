@@ -331,6 +331,17 @@
   align-items: center;
 }
 
+/* Workspace verification-command presets above the input */
+.verification-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.verification-presets .diff-subtab-btn {
+  font-family: var(--font-mono);
+}
+
 .verification-input-row input {
   flex: 1;
   background: var(--bg-card);
@@ -554,4 +565,110 @@
 
 .review-status-label {
   text-transform: capitalize;
+}
+
+/* Side-by-side split diff (SplitDiffViewer) */
+.split-diff-viewer {
+  height: 100%;
+  min-height: 200px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.split-diff-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: fit-content;
+}
+
+/* Later in the file than the diff-line-* color classes, so the flex layout wins. */
+.split-diff-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+}
+
+.split-diff-cell + .split-diff-cell {
+  border-left: 1px solid var(--border);
+}
+
+.split-diff-empty {
+  background: var(--bg-surface-active);
+  opacity: 0.45;
+}
+
+.split-diff-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Per-file viewed checkmark in the changed-files list */
+.file-viewed-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.file-viewed-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-active);
+}
+
+.file-viewed-btn.viewed {
+  color: var(--color-success);
+}
+
+.file-item.viewed .file-path {
+  color: var(--text-muted);
+}
+
+/* Staged summary + conventional-prefix helper in the commit bar */
+.review-staged-summary {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.review-commit-prefix {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 6px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Branch switcher in the Review room header */
+.review-branch-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.review-branch-switcher select {
+  height: 30px;
+  max-width: 220px;
+  padding: 0 8px;
+  background: var(--bg-surface-light);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 12px;
 }

@@ -1,5 +1,5 @@
 import React, { memo, useCallback } from 'react';
-import { Play, Terminal, Edit2, Trash2, Shield, FileText, ListChecks } from 'lucide-react';
+import { Play, Terminal, Edit2, Trash2, Shield, FileText, ListChecks, CalendarClock, CheckSquare } from 'lucide-react';
 import { Task, TaskColumn, useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
@@ -11,11 +11,16 @@ import { useNotificationStore } from '../../stores/notificationStore';
 
 interface TaskCardProps {
   task: Task;
+  selected?: boolean;
   onEdit: (task: Task) => void;
   onClick: (task: Task) => void;
 }
 
-const TaskCardComponent: React.FC<TaskCardProps> = ({ task, onEdit, onClick }) => {
+// ISO yyyy-mm-dd dates compare correctly as strings.
+const isOverdue = (task: Task) =>
+  Boolean(task.dueDate) && task.column !== 'done' && task.dueDate! < new Date().toISOString().slice(0, 10);
+
+const TaskCardComponent: React.FC<TaskCardProps> = ({ task, selected = false, onEdit, onClick }) => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const deleteTask = useKanbanStore((state) => state.deleteTask);
   const updateTask = useKanbanStore((state) => state.updateTask);
@@ -132,12 +137,16 @@ You MUST output one of the following exact review trigger patterns on a line by 
     void moveTask(currentProjectPath, task.id, e.target.value as TaskColumn);
   }, [currentProjectPath, moveTask, task.id]);
 
+  const checklistDone = task.checklist?.filter((item) => item.done).length ?? 0;
+  const checklistTotal = task.checklist?.length ?? 0;
+
   return (
-    <div 
-      draggable 
+    <div
+      draggable
       onDragStart={handleDragStart}
       onClick={() => onClick(task)}
-      style={cardStyle}
+      ref={selected ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
+      style={selected ? { ...cardStyle, borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' } : cardStyle}
     >
       {/* Title & Actions */}
       <div style={cardHeaderStyle}>
@@ -201,6 +210,24 @@ You MUST output one of the following exact review trigger patterns on a line by 
           <span style={metaCountStyle} title={`${task.acceptanceCriteria.length} acceptance criteria`}>
             <ListChecks size={11} />
             {task.acceptanceCriteria.length}
+          </span>
+        )}
+        {checklistTotal > 0 && (
+          <span
+            style={checklistChipStyle(checklistDone === checklistTotal)}
+            title={`${checklistDone} of ${checklistTotal} checklist items done`}
+          >
+            <CheckSquare size={11} />
+            {checklistDone}/{checklistTotal}
+          </span>
+        )}
+        {task.dueDate && (
+          <span
+            style={dueChipStyle(isOverdue(task))}
+            title={isOverdue(task) ? `Overdue: was due ${task.dueDate}` : `Due ${task.dueDate}`}
+          >
+            <CalendarClock size={11} />
+            {task.dueDate}
           </span>
         )}
       </div>
@@ -356,6 +383,17 @@ const metaCountStyle: React.CSSProperties = {
   fontSize: '11px',
   color: 'var(--text-muted)',
 };
+
+const checklistChipStyle = (complete: boolean): React.CSSProperties => ({
+  ...metaCountStyle,
+  color: complete ? 'var(--color-success)' : 'var(--text-muted)',
+});
+
+const dueChipStyle = (overdue: boolean): React.CSSProperties => ({
+  ...metaCountStyle,
+  color: overdue ? 'var(--color-danger)' : 'var(--text-muted)',
+  fontWeight: overdue ? 600 : undefined,
+});
 
 const footerStyle: React.CSSProperties = {
   display: 'flex',

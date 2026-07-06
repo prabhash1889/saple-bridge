@@ -19,6 +19,7 @@ export interface ReviewRecord {
   model: string;
   role: string;
   changedFiles: GitFileStatus[];
+  viewedFiles: string[];
   testOutput?: string;
   notes?: string;
   createdAt: string;
@@ -51,6 +52,7 @@ interface ReviewState {
   loadGitDiff: (projectPath: string, filePath: string) => Promise<string>;
   setActiveTaskId: (taskId: string | null) => void;
   setFileStaged: (projectPath: string, taskId: string, filePath: string, staged: boolean) => Promise<void>;
+  setFileViewed: (projectPath: string, taskId: string, filePath: string, viewed: boolean) => Promise<void>;
   commitStaged: (projectPath: string, message: string) => Promise<string>;
 }
 
@@ -153,6 +155,23 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
               f.path === filePath ? { ...f, staged } : f
             ),
           },
+        },
+      };
+    });
+  },
+
+  // Persist the reviewer's viewed checkmark and mirror it into the record.
+  setFileViewed: async (projectPath, taskId, filePath, viewed) => {
+    await invoke('set_file_viewed', { projectPath, taskId, filePath, viewed });
+    set((state) => {
+      const record = state.reviews[taskId];
+      if (!record) return state;
+      const viewedFiles = record.viewedFiles.filter((p) => p !== filePath);
+      if (viewed) viewedFiles.push(filePath);
+      return {
+        reviews: {
+          ...state.reviews,
+          [taskId]: { ...record, viewedFiles },
         },
       };
     });

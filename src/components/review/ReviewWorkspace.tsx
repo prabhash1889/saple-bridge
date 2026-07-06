@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  GitPullRequest, RotateCcw, CheckCircle2, AlertTriangle, Play, RefreshCw
+  GitPullRequest, RotateCcw, CheckCircle2, AlertTriangle, Play, RefreshCw, GitBranch
 } from 'lucide-react';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -9,6 +9,7 @@ import { useAgentSessionStore } from '../../stores/agentSessionStore';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { VirtualizedTextViewer } from './VirtualizedTextViewer';
+import { SplitDiffViewer } from './SplitDiffViewer';
 import { ReviewFileList } from './ReviewFileList';
 import { ReviewActionsPanel } from './ReviewActionsPanel';
 import { PANE_WIDTH_LIMITS, useWorkspacePaneLayoutStore } from '../../stores/workspacePaneLayoutStore';
@@ -23,6 +24,64 @@ const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Math.round(value)));
 
 const KEYBOARD_RESIZE_STEP = 24;
+
+interface GitBranchInfo {
+  name: string;
+  current: boolean;
+}
+
+// Local-branch dropdown for the Review room header. Checkout is guarded Rust-side:
+// it refuses when the working tree is dirty, so it can never clobber un-reviewed changes.
+const BranchSwitcher: React.FC<{ projectPath: string }> = ({ projectPath }) => {
+  const [branches, setBranches] = useState<GitBranchInfo[]>([]);
+  const [switching, setSwitching] = useState(false);
+
+  const loadBranches = useCallback(async () => {
+    try {
+      setBranches(await invoke<GitBranchInfo[]>('git_list_branches', { projectPath }));
+    } catch {
+      setBranches([]); // Non-git workspace: render nothing.
+    }
+  }, [projectPath]);
+
+  useEffect(() => {
+    void loadBranches();
+  }, [loadBranches]);
+
+  const current = branches.find((b) => b.current)?.name ?? '';
+  if (branches.length === 0) return null;
+
+  const handleCheckout = async (branch: string) => {
+    if (!branch || branch === current) return;
+    setSwitching(true);
+    try {
+      await invoke('git_checkout_branch', { projectPath, branch });
+      useNotificationStore.getState().success(`Switched to branch ${branch}`);
+      await loadBranches();
+      await useProjectStore.getState().refreshWorkspace();
+    } catch (err) {
+      useNotificationStore.getState().error('Branch switch failed', String(err));
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  return (
+    <label className="review-branch-switcher" title="Switch local branch (requires a clean working tree)">
+      <GitBranch size={14} />
+      <select
+        value={current}
+        disabled={switching}
+        onChange={(e) => void handleCheckout(e.target.value)}
+        aria-label="Switch git branch"
+      >
+        {branches.map((b) => (
+          <option key={b.name} value={b.name}>{b.name}</option>
+        ))}
+      </select>
+    </label>
+  );
+};
 
 export const ReviewWorkspace: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -42,6 +101,7 @@ export const ReviewWorkspace: React.FC = () => {
     loadGitDiff,
     setActiveTaskId,
     setFileStaged,
+    setFileViewed,
     commitStaged
   } = useReviewStore();
 
@@ -50,7 +110,7 @@ export const ReviewWorkspace: React.FC = () => {
   const [fileDiff, setFileDiff] = useState<string>('');
   const [loadingDiff, setLoadingDiff] = useState(false);
 
-  const [diffSubTab, setDiffSubTab] = useState<'diff' | 'code'>('diff');
+  const [diffSubTab, setDiffSubTab] = useState<'diff' | 'split' | 'code'>('diff');
   const [fullCode, setFullCode] = useState<string>('');
   const [loadingCode, setLoadingCode] = useState(false);
 
@@ -186,20 +246,28 @@ export const ReviewWorkspace: React.FC = () => {
     }
   }, [selectedFile, currentProjectPath, diffSubTab]);
 
-  // Detect default test command based on language configs
+  // Workspace-configured verification presets (Settings > Workspace); language
+  // auto-detection stays as the fallback when none are configured.
+  const verificationPresets = useProjectStore(
+    (state) => state.workspaceConfig?.verificationPresets ?? [],
+  );
+
   useEffect(() => {
-    if (activeRecord) {
-      const hasCargo = activeRecord.changedFiles.some(f => f.path.endsWith('.rs') || f.path === 'Cargo.toml');
-      const hasPy = activeRecord.changedFiles.some(f => f.path.endsWith('.py') || f.path === 'requirements.txt');
-      if (hasCargo) {
-        setVerificationCmd('cargo test');
-      } else if (hasPy) {
-        setVerificationCmd('pytest');
-      } else {
-        setVerificationCmd('npm test');
-      }
+    if (!activeRecord) return;
+    if (verificationPresets.length > 0) {
+      setVerificationCmd(verificationPresets[0]);
+      return;
     }
-  }, [activeRecord]);
+    const hasCargo = activeRecord.changedFiles.some(f => f.path.endsWith('.rs') || f.path === 'Cargo.toml');
+    const hasPy = activeRecord.changedFiles.some(f => f.path.endsWith('.py') || f.path === 'requirements.txt');
+    if (hasCargo) {
+      setVerificationCmd('cargo test');
+    } else if (hasPy) {
+      setVerificationCmd('pytest');
+    } else {
+      setVerificationCmd('npm test');
+    }
+  }, [activeRecord, verificationPresets]);
 
   if (!currentProjectPath) {
     return (
@@ -302,6 +370,15 @@ export const ReviewWorkspace: React.FC = () => {
         `Failed to ${staged ? 'stage' : 'unstage'} ${filePath}`,
         String(err)
       );
+    }
+  };
+
+  const handleToggleViewed = async (filePath: string, viewed: boolean) => {
+    if (!currentProjectPath || !activeTaskId) return;
+    try {
+      await setFileViewed(currentProjectPath, activeTaskId, filePath, viewed);
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to update viewed state for ${filePath}`, String(err));
     }
   };
 
@@ -482,10 +559,13 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
           <h2>Review Room</h2>
           <p>Inspect changed files, run test verifications, add feedback, and approve/reject agent outputs.</p>
         </div>
-        <button className="secondary-action" onClick={() => setActiveView('kanban')}>
-          <RotateCcw size={16} />
-          Kanban Tasks
-        </button>
+        <div className="review-header-action">
+          <BranchSwitcher projectPath={currentProjectPath} />
+          <button className="secondary-action" onClick={() => setActiveView('kanban')}>
+            <RotateCcw size={16} />
+            Kanban Tasks
+          </button>
+        </div>
       </div>
 
       <div
@@ -591,9 +671,11 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                 <>
                   <ReviewFileList
                     changedFiles={activeRecord?.changedFiles ?? []}
+                    viewedFiles={activeRecord?.viewedFiles ?? []}
                     selectedFile={selectedFile}
                     onSelectFile={setSelectedFile}
                     onToggleStaged={(path, staged) => void handleToggleStaged(path, staged)}
+                    onToggleViewed={(path, viewed) => void handleToggleViewed(path, viewed)}
                     stagedCount={stagedCount}
                     commitMessage={commitMessage}
                     onCommitMessageChange={setCommitMessage}
@@ -628,6 +710,12 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                         Unified Diff
                       </button>
                       <button
+                        className={`diff-subtab-btn ${diffSubTab === 'split' ? 'active' : ''}`}
+                        onClick={() => setDiffSubTab('split')}
+                      >
+                        Split Diff
+                      </button>
+                      <button
                         className={`diff-subtab-btn ${diffSubTab === 'code' ? 'active' : ''}`}
                         onClick={() => setDiffSubTab('code')}
                       >
@@ -637,11 +725,13 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                   )}
 
                   <div className="diff-viewer">
-                    {diffSubTab === 'diff' ? (
+                    {diffSubTab === 'diff' || diffSubTab === 'split' ? (
                       loadingDiff ? (
-                        <div className="compact-empty">Loading unified diff...</div>
+                        <div className="compact-empty">Loading diff...</div>
                       ) : !selectedFile ? (
                         <div className="compact-empty">Select a file to inspect its diff.</div>
+                      ) : diffSubTab === 'split' ? (
+                        <SplitDiffViewer diff={fileDiff} />
                       ) : (
                         <VirtualizedTextViewer text={fileDiff} mode="diff" />
                       )
@@ -659,6 +749,21 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
               ) : (
                 // Tab 2: Verification Output
                 <div className="test-output-viewer">
+                  {verificationPresets.length > 0 && (
+                    <div className="verification-presets">
+                      {verificationPresets.map((preset) => (
+                        <button
+                          key={preset}
+                          className={`diff-subtab-btn ${verificationCmd === preset ? 'active' : ''}`}
+                          onClick={() => setVerificationCmd(preset)}
+                          disabled={runningVerification}
+                          title="Use this verification preset"
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="verification-input-row">
                     <input
                       type="text"

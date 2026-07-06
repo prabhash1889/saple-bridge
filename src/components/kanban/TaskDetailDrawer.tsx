@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { X, Play, Terminal, CheckCircle2, Shield, FileText, CheckSquare, Edit, AlertCircle } from 'lucide-react';
+import { X, Play, Terminal, CheckCircle2, Shield, FileText, CheckSquare, Edit, AlertCircle, ListChecks } from 'lucide-react';
 import { Task, useKanbanStore } from '../../stores/kanbanStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
 import { useReviewStore } from '../../stores/reviewStore';
@@ -99,6 +99,14 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
       console.error('Reject failed:', err);
       useNotificationStore.getState().error(`Reject failed: ${String(err)}`);
     }
+  };
+
+  const handleToggleChecklistItem = (index: number) => {
+    if (!currentProjectPath || !task.checklist) return;
+    const checklist = task.checklist.map((item, i) =>
+      i === index ? { ...item, done: !item.done } : item
+    );
+    void updateTask(currentProjectPath, task.id, { checklist });
   };
 
   const handleViewTerminal = () => {
@@ -248,6 +256,34 @@ Instructions: ${systemPrompt}
               )}
             </div>
 
+            {/* Checklist */}
+            {task.checklist && task.checklist.length > 0 && (
+              <div style={cardSectionStyle}>
+                <h4 style={sectionTitleStyle}>
+                  <ListChecks size={14} /> Checklist ({task.checklist.filter((i) => i.done).length}/{task.checklist.length})
+                </h4>
+                <div className="task-drawer-criteria-list">
+                  {task.checklist.map((item, i) => (
+                    <label key={i} style={{ ...criteriaRowStyle, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={item.done}
+                        onChange={() => handleToggleChecklistItem(i)}
+                        style={checkboxStyle}
+                        disabled={!currentProjectPath}
+                      />
+                      <span
+                        className="task-drawer-criteria-text"
+                        style={item.done ? { textDecoration: 'line-through', color: 'var(--text-muted)' } : undefined}
+                      >
+                        {item.text}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Target Files */}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}><FileText size={14} /> Target Files</h4>
@@ -275,6 +311,13 @@ Instructions: ${systemPrompt}
                 <span style={{ ...metaValStyle, ...getPriorityStyle(task.priority) }}>
                   {task.priority.toUpperCase()}
                 </span>
+
+                {task.dueDate && (
+                  <>
+                    <span style={metaLabelStyle}>Due</span>
+                    <span style={metaValTextStyle}>{task.dueDate}</span>
+                  </>
+                )}
 
                 <span style={metaLabelStyle}>Created</span>
                 <span style={metaValTextStyle}>{formatShortDateTime(task.createdAt)}</span>

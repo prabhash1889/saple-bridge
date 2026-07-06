@@ -71,6 +71,8 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
   
   // Extended fields
   const [priority, setPriority] = useState<TaskPriority>('normal');
+  const [dueDate, setDueDate] = useState('');
+  const [checklist, setChecklist] = useState('');
   const [targetFiles, setTargetFiles] = useState('');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   
@@ -91,6 +93,8 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
       setLabels(taskToEdit.labels.join(', '));
       setTemplate(taskToEdit.template || 'custom');
       setPriority(taskToEdit.priority || 'normal');
+      setDueDate(taskToEdit.dueDate || '');
+      setChecklist(taskToEdit.checklist?.map((item) => item.text).join('\n') || '');
       setTargetFiles(taskToEdit.targetFiles?.join(', ') || '');
       setAcceptanceCriteria(taskToEdit.acceptanceCriteria?.join('\n') || '');
       
@@ -106,6 +110,8 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
       setLabels('');
       setTemplate('custom');
       setPriority('normal');
+      setDueDate('');
+      setChecklist('');
       setTargetFiles('');
       setAcceptanceCriteria('');
       setAgentRole(ROLE_PROMPTS.custom.role);
@@ -156,6 +162,18 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
       .map(c => c.trim())
       .filter(c => c.length > 0);
 
+    // Checklist is edited as plain lines; done state carries over for lines whose
+    // text is unchanged, new/edited lines start unchecked.
+    const previousChecklist = taskToEdit?.checklist || [];
+    const parsedChecklist = checklist
+      .split('\n')
+      .map(c => c.trim())
+      .filter(c => c.length > 0)
+      .map(text => ({
+        text,
+        done: previousChecklist.find(item => item.text === text)?.done ?? false,
+      }));
+
     const agentConfig: AgentConfig = {
       role: agentRole,
       model: agentModel,
@@ -170,6 +188,8 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
         labels: parsedLabels,
         template,
         priority,
+        dueDate: dueDate || undefined,
+        checklist: parsedChecklist.length > 0 ? parsedChecklist : undefined,
         targetFiles: parsedTargetFiles,
         acceptanceCriteria: parsedAcceptanceCriteria,
         agentConfig,
@@ -180,6 +200,8 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
         description,
         column: 'backlog',
         priority,
+        dueDate: dueDate || undefined,
+        checklist: parsedChecklist.length > 0 ? parsedChecklist : undefined,
         labels: parsedLabels,
         template,
         targetFiles: parsedTargetFiles,
@@ -257,13 +279,34 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
               </div>
 
               <div className="task-dialog-field">
-                <label>Labels (comma separated)</label>
-                <input 
-                  value={labels} 
-                  onChange={e => setLabels(e.target.value)} 
-                  placeholder="e.g. backend, auth, ui"
+                <label>Due Date (optional)</label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={e => setDueDate(e.target.value)}
                 />
               </div>
+            </div>
+
+            {/* Labels */}
+            <div className="task-dialog-field">
+              <label>Labels (comma separated)</label>
+              <input
+                value={labels}
+                onChange={e => setLabels(e.target.value)}
+                placeholder="e.g. backend, auth, ui"
+              />
+            </div>
+
+            {/* Checklist */}
+            <div className="task-dialog-field">
+              <label>Checklist (one item per line)</label>
+              <textarea
+                rows={3}
+                value={checklist}
+                onChange={e => setChecklist(e.target.value)}
+                placeholder="e.g. Write migration&#10;Update docs"
+              />
             </div>
 
             {/* Target Files */}

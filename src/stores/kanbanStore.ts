@@ -21,7 +21,8 @@ interface KanbanState {
   reorderTask: (projectPath: string, id: string, targetColumn: TaskColumn, beforeId: string | null) => Promise<void>;
 }
 
-const normalizeTask = (task: Partial<Task>): Task => {
+// Exported for tests (backward-compat guarantee on .saple/tasks.json).
+export const normalizeTask = (task: Partial<Task>): Task => {
   const createdAt = task.createdAt || nowIso();
   return {
     id: task.id || createId('task'),
@@ -32,6 +33,8 @@ const normalizeTask = (task: Partial<Task>): Task => {
     createdAt,
     updatedAt: task.updatedAt || createdAt,
     labels: Array.isArray(task.labels) ? task.labels : [],
+    dueDate: task.dueDate,
+    checklist: Array.isArray(task.checklist) ? task.checklist : undefined,
     template: task.template,
     targetFiles: task.targetFiles || [],
     acceptanceCriteria: task.acceptanceCriteria || [],

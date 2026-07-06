@@ -20,6 +20,10 @@ pub struct ReviewRecord {
     pub model: String,
     pub role: String,
     pub changed_files: Vec<GitFileStatus>,
+    /// Paths the reviewer has marked as viewed. `default` keeps records written
+    /// before this field existed deserializable.
+    #[serde(default)]
+    pub viewed_files: Vec<String>,
     pub test_output: Option<String>,
     pub notes: Option<String>,
     pub created_at: String,
@@ -147,6 +151,7 @@ fn create_review_record_inner(
         model,
         role,
         changed_files,
+        viewed_files: Vec::new(),
         test_output,
         notes: None,
         created_at: now.clone(),
@@ -348,6 +353,42 @@ fn run_verification_command_inner(
     }
 
     Ok(combined)
+}
+
+/// Persist the reviewer's per-file viewed checkmark on the review record.
+fn set_file_viewed_inner(
+    project_path: String,
+    task_id: String,
+    file_path: String,
+    viewed: bool,
+) -> Result<(), String> {
+    let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
+    if !review_file_path.exists() {
+        return Err("Review record not found".to_string());
+    }
+    let content = fs::read_to_string(&review_file_path).map_err(|e| e.to_string())?;
+    let mut record: ReviewRecord = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    record.viewed_files.retain(|p| p != &file_path);
+    if viewed {
+        record.viewed_files.push(file_path);
+    }
+    record.updated_at = now_iso();
+
+    let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+    crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())
+}
+
+#[tauri::command]
+pub async fn set_file_viewed(
+    project_path: String,
+    task_id: String,
+    file_path: String,
+    viewed: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_file_viewed_inner(project_path, task_id, file_path, viewed))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

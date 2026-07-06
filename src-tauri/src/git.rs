@@ -289,6 +289,79 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
         .map_err(|e| e.to_string())?
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub name: String,
+    pub current: bool,
+}
+
+fn git_list_branches_inner(project_path: String) -> Result<Vec<GitBranch>, String> {
+    // for-each-ref emits clean names (no "* " marker parsing, no detached-HEAD line).
+    let output = run_git_with_timeout(
+        &project_path,
+        &["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"],
+        GIT_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(parse_branch_list(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_branch_list(stdout: &str) -> Vec<GitBranch> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let current = line.starts_with('*');
+            let name = line.trim_start_matches(['*', ' ']).trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(GitBranch { name: name.to_string(), current })
+            }
+        })
+        .collect()
+}
+
+/// Switch branches, refusing when the working tree or index is dirty so a checkout
+/// can never clobber or entangle un-reviewed agent changes.
+fn git_checkout_branch_inner(project_path: String, branch: String) -> Result<(), String> {
+    let branch = branch.trim().to_string();
+    if branch.is_empty() || branch.starts_with('-') {
+        return Err(format!("Invalid branch name '{}'", branch));
+    }
+
+    let dirty = git_status_inner(project_path.clone())?;
+    if !dirty.is_empty() {
+        return Err(format!(
+            "Working tree has {} uncommitted change(s). Commit or stash them before switching branches.",
+            dirty.len()
+        ));
+    }
+
+    let output = run_git_with_timeout(&project_path, &["checkout", &branch], GIT_TIMEOUT)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn git_list_branches(project_path: String) -> Result<Vec<GitBranch>, String> {
+    tauri::async_runtime::spawn_blocking(move || git_list_branches_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_checkout_branch(project_path: String, branch: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git_checkout_branch_inner(project_path, branch))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +381,57 @@ mod tests {
     #[test]
     fn passes_through_plain_path() {
         assert_eq!(parse_rename_dest("plain.txt"), "plain.txt");
+    }
+
+    #[test]
+    fn parses_branch_list_with_current_marker() {
+        let branches = parse_branch_list("*main\n feature/x\n release-1.0\n");
+        assert_eq!(branches.len(), 3);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].current);
+        assert_eq!(branches[1].name, "feature/x");
+        assert!(!branches[1].current);
+        assert_eq!(branches[2].name, "release-1.0");
+    }
+
+    #[test]
+    fn rejects_option_like_branch_names() {
+        let err = git_checkout_branch_inner(".".to_string(), "--force".to_string()).unwrap_err();
+        assert!(err.contains("Invalid branch name"));
+        let err = git_checkout_branch_inner(".".to_string(), "  ".to_string()).unwrap_err();
+        assert!(err.contains("Invalid branch name"));
+    }
+
+    #[test]
+    fn checkout_refuses_dirty_tree() {
+        let dir = std::env::temp_dir().join(format!("saple-git-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "init"]);
+        git(&["branch", "other"]);
+
+        // Clean tree: listing works and checkout succeeds.
+        let branches = git_list_branches_inner(path.clone()).unwrap();
+        assert!(branches.iter().any(|b| b.name == "main" && b.current));
+        assert!(branches.iter().any(|b| b.name == "other" && !b.current));
+        git_checkout_branch_inner(path.clone(), "other".to_string()).unwrap();
+
+        // Dirty tree: checkout must refuse.
+        fs::write(dir.join("a.txt"), "two\n").unwrap();
+        let err = git_checkout_branch_inner(path.clone(), "main".to_string()).unwrap_err();
+        assert!(err.contains("uncommitted"), "unexpected error: {}", err);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

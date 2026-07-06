@@ -7,11 +7,13 @@ interface KanbanColumnProps {
   id: TaskColumn;
   title: string;
   tasks: Task[];
+  wipLimit?: number;
+  selectedTaskId?: string | null;
   onEditTask: (task: Task) => void;
   onViewTask: (task: Task) => void;
 }
 
-const KanbanColumnComponent: React.FC<KanbanColumnProps> = ({ id, title, tasks, onEditTask, onViewTask }) => {
+const KanbanColumnComponent: React.FC<KanbanColumnProps> = ({ id, title, tasks, wipLimit, selectedTaskId, onEditTask, onViewTask }) => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const reorderTask = useKanbanStore((state) => state.reorderTask);
 
@@ -74,7 +76,12 @@ const KanbanColumnComponent: React.FC<KanbanColumnProps> = ({ id, title, tasks, 
       {/* Column Header */}
       <div style={headerStyle(id)}>
         <span style={titleStyle}>{title}</span>
-        <span style={counterStyle}>{tasks.length}</span>
+        <span
+          style={counterStyle(wipLimit !== undefined && tasks.length > wipLimit)}
+          title={wipLimit !== undefined ? `${tasks.length} of ${wipLimit} WIP limit` : undefined}
+        >
+          {wipLimit !== undefined ? `${tasks.length}/${wipLimit}` : tasks.length}
+        </span>
       </div>
 
       {/* Task Card List */}
@@ -89,7 +96,7 @@ const KanbanColumnComponent: React.FC<KanbanColumnProps> = ({ id, title, tasks, 
                 style={cardSlotStyle}
               >
                 {indicatorIndex === index && <div style={insertionLineStyle} />}
-                <TaskCard task={task} onEdit={onEditTask} onClick={onViewTask} />
+                <TaskCard task={task} selected={task.id === selectedTaskId} onEdit={onEditTask} onClick={onViewTask} />
               </div>
             ))}
             {indicatorIndex === tasks.length && <div style={insertionLineStyle} />}
@@ -144,15 +151,15 @@ const titleStyle: React.CSSProperties = {
   color: 'var(--text-primary)',
 };
 
-const counterStyle: React.CSSProperties = {
+const counterStyle = (overLimit: boolean): React.CSSProperties => ({
   fontSize: '11px',
   fontWeight: 600,
-  color: 'var(--text-secondary)',
-  backgroundColor: 'var(--bg-surface-active)',
+  color: overLimit ? 'var(--color-warning)' : 'var(--text-secondary)',
+  backgroundColor: overLimit ? 'var(--color-warning-bg)' : 'var(--bg-surface-active)',
   padding: '2px 8px',
   borderRadius: 'var(--radius-full)',
-  border: '1px solid var(--border)',
-};
+  border: `1px solid ${overLimit ? 'var(--color-warning)' : 'var(--border)'}`,
+});
 
 const cardListStyle: React.CSSProperties = {
   display: 'flex',

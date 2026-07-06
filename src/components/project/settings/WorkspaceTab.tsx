@@ -14,6 +14,7 @@ export const WorkspaceTab: React.FC = () => {
   const [defaultProvider, setDefaultProvider] = useState('codex');
   const [maxAgents, setMaxAgents] = useState(12);
   const [enableEditMode, setEnableEditMode] = useState(true);
+  const [verificationPresets, setVerificationPresets] = useState('');
   const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   // Terminal scrollback is an app-wide preference (persisted to localStorage), so it saves
@@ -28,6 +29,7 @@ export const WorkspaceTab: React.FC = () => {
       setDefaultProvider(workspaceConfig.defaultProvider);
       setMaxAgents(workspaceConfig.maxParallelAgents);
       setEnableEditMode(workspaceConfig.enableEditMode ?? true);
+      setVerificationPresets((workspaceConfig.verificationPresets ?? []).join('\n'));
     }
   }, [workspaceConfig]);
 
@@ -38,6 +40,10 @@ export const WorkspaceTab: React.FC = () => {
       defaultProvider,
       maxParallelAgents: maxAgents,
       enableEditMode,
+      verificationPresets: verificationPresets
+        .split('\n')
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0),
     });
     setWsSaveStatus('success');
     setTimeout(() => setWsSaveStatus('idle'), 3000);
@@ -108,6 +114,18 @@ export const WorkspaceTab: React.FC = () => {
               className="settings-input settings-input-narrow"
             />
             <span className="input-hint">Applied live to all panes. App-wide preference.</span>
+          </div>
+          <div className="input-group">
+            <label className="input-label">Review Verification Presets (one command per line)</label>
+            <textarea
+              rows={3}
+              value={verificationPresets}
+              onChange={e => setVerificationPresets(e.target.value)}
+              placeholder={'npm test\ncargo test'}
+              className="settings-input"
+              spellCheck={false}
+            />
+            <span className="input-hint">Shown as one-click presets in the Review room's Verification tab.</span>
           </div>
           <div className="settings-checkbox-row input-group checkbox-group">
             <input

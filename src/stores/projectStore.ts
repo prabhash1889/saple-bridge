@@ -13,6 +13,7 @@ export interface WorkspaceConfig {
   defaultModelByProvider: Record<string, string>;
   maxParallelAgents: number;
   enableEditMode: boolean;
+  verificationPresets: string[];
   createdAt: string;
   updatedAt: string;
 }

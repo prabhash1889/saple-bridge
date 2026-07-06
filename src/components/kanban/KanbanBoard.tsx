@@ -14,6 +14,9 @@ const COLUMNS: { id: TaskColumn; title: string }[] = [
   { id: 'done', title: 'Completed' },
 ];
 
+// ponytail: fixed WIP limits, display-only; move into workspace config if teams need to tune them.
+const WIP_LIMITS: Partial<Record<TaskColumn, number>> = { progress: 5, review: 3 };
+
 const FILTERS_KEY = 'saple.kanban.filters';
 
 interface PersistedFilters {
@@ -50,6 +53,9 @@ export const KanbanBoard: React.FC = () => {
   // Detail Drawer States
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+
+  // Keyboard selection (highlighted card the arrow keys act on)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Filter States (persisted across reloads via localStorage)
   const [filterProvider, setFilterProvider] = useState(() => loadFilters().provider);
@@ -104,6 +110,7 @@ export const KanbanBoard: React.FC = () => {
 
   const handleViewTask = useCallback((task: Task) => {
     setSelectedTask(task);
+    setSelectedTaskId(task.id);
     setIsDrawerOpen(true);
   }, []);
 
@@ -141,6 +148,108 @@ export const KanbanBoard: React.FC = () => {
     return grouped;
   }, [filterPriority, filterProvider, filterRole, searchQuery, tasks]);
 
+
+  // Keyboard support: arrows move the selection across cards/columns, Enter opens the
+  // drawer, E edits, [ / ] move the selected task between columns. Inactive while a
+  // dialog/drawer is open or while typing in a form control.
+  const moveTaskAction = useKanbanStore((state) => state.moveTask);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (isDialogOpen || isDrawerOpen) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+      const colIds = COLUMNS.map((c) => c.id);
+      let colIdx = -1;
+      let rowIdx = -1;
+      if (selectedTaskId) {
+        for (let c = 0; c < colIds.length; c += 1) {
+          const r = tasksByColumn[colIds[c]].findIndex((t) => t.id === selectedTaskId);
+          if (r !== -1) {
+            colIdx = c;
+            rowIdx = r;
+            break;
+          }
+        }
+      }
+
+      const selectAt = (c: number, r: number): boolean => {
+        const list = tasksByColumn[colIds[c]];
+        if (list.length === 0) return false;
+        setSelectedTaskId(list[Math.max(0, Math.min(r, list.length - 1))].id);
+        return true;
+      };
+
+      const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key);
+      if (colIdx === -1) {
+        // No (visible) selection yet: any arrow selects the first visible task.
+        if (isArrow) {
+          e.preventDefault();
+          for (let c = 0; c < colIds.length; c += 1) {
+            if (selectAt(c, 0)) break;
+          }
+        }
+        return;
+      }
+
+      const task = tasksByColumn[colIds[colIdx]][rowIdx];
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          selectAt(colIdx, rowIdx + 1);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          selectAt(colIdx, rowIdx - 1);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          for (let c = colIdx + 1; c < colIds.length; c += 1) {
+            if (selectAt(c, rowIdx)) break;
+          }
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          for (let c = colIdx - 1; c >= 0; c -= 1) {
+            if (selectAt(c, rowIdx)) break;
+          }
+          break;
+        case 'Enter':
+          e.preventDefault();
+          handleViewTask(task);
+          break;
+        case 'e':
+        case 'E':
+          e.preventDefault();
+          handleEditTask(task);
+          break;
+        case ']':
+          if (colIdx < colIds.length - 1 && currentProjectPath) {
+            e.preventDefault();
+            void moveTaskAction(currentProjectPath, task.id, colIds[colIdx + 1]);
+          }
+          break;
+        case '[':
+          if (colIdx > 0 && currentProjectPath) {
+            e.preventDefault();
+            void moveTaskAction(currentProjectPath, task.id, colIds[colIdx - 1]);
+          }
+          break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [
+    isDialogOpen,
+    isDrawerOpen,
+    selectedTaskId,
+    tasksByColumn,
+    currentProjectPath,
+    moveTaskAction,
+    handleViewTask,
+    handleEditTask,
+  ]);
 
   if (!currentProjectPath) {
     return (
@@ -243,6 +352,8 @@ export const KanbanBoard: React.FC = () => {
               id={col.id}
               title={col.title}
               tasks={tasksByColumn[col.id]}
+              wipLimit={WIP_LIMITS[col.id]}
+              selectedTaskId={selectedTaskId}
               onEditTask={handleEditTask}
               onViewTask={handleViewTask}
             />
@@ -257,10 +368,11 @@ export const KanbanBoard: React.FC = () => {
         taskToEdit={taskToEdit}
       />
 
-      {/* Task Details sliding side drawer */}
+      {/* Task Details sliding side drawer. Resolve the live task from the store so
+          in-drawer edits (e.g. checklist toggles) render immediately. */}
       <TaskDetailDrawer
         isOpen={isDrawerOpen}
-        task={selectedTask}
+        task={selectedTask ? (tasks.find((t) => t.id === selectedTask.id) ?? selectedTask) : null}
         onClose={() => { setIsDrawerOpen(false); setSelectedTask(null); }}
         onEdit={handleEditTask}
       />

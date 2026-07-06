@@ -79,6 +79,10 @@ pub struct WorkspaceConfig {
     pub max_parallel_agents: u32,
     #[serde(default = "default_enable_edit_mode")]
     pub enable_edit_mode: bool,
+    /// Per-workspace verification command presets shown in the Review room.
+    /// `default` keeps configs written before this field existed deserializable.
+    #[serde(default)]
+    pub verification_presets: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -233,6 +237,7 @@ fn ensure_project_config_inner(project_path: String) -> Result<WorkspaceConfig, 
             default_model_by_provider: default_model_by_provider(),
             max_parallel_agents: 12,
             enable_edit_mode: true,
+            verification_presets: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
         };
