@@ -127,6 +127,25 @@
   --mem-bug: #EF4444;
   --mem-bug-bg: rgba(239, 68, 68, 0.15);
 
+  /* Spacing scale (4px base). Prefer these over ad-hoc magic-number paddings/gaps. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+
+  /* Font-size scale. Names map to the sizes already used across the view CSS. */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+
   /* Layout Spacing */
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 64px;
