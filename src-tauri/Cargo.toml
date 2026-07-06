@@ -1,6 +1,6 @@
 [package]
 name = "saple-bridge"
-version = "1.0.6"
+version = "1.0.12"
 description = "Saple Bridge — local-first agentic development workspace"
 authors = ["Saple"]
 edition = "2021"
@@ -29,6 +29,12 @@ keyring = "2.1"
 which = "6"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
+# Persist window size/position/maximized across launches.
+tauri-plugin-window-state = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Opening the app again focuses the existing window instead of starting a second process.
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 # PTY process-tree cleanup: each shell is placed in a Job Object so closing a pane kills the

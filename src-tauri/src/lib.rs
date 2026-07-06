@@ -21,8 +21,26 @@ fn select_directory() -> Option<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // The single-instance plugin must be registered FIRST. When a second launch is
+    // attempted, this callback runs in the already-running process: unminimize and focus
+    // the existing window instead of spawning a duplicate.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         .manage(pty::PtyRegistry::new())
+        // Restore the window's last size/position/maximized state on launch and save it on exit.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         // Clipboard reads AND writes go through this plugin (not navigator.clipboard): the

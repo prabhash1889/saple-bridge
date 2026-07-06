@@ -1177,6 +1177,62 @@ button.text-btn:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* Room loading skeleton (Suspense fallback for lazily-loaded rooms) */
+.room-skeleton {
+  height: 100%;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.room-skeleton-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.room-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.skeleton-block {
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    100deg,
+    var(--bg-surface) 30%,
+    var(--bg-surface-light) 50%,
+    var(--bg-surface) 70%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-title { width: 220px; height: 22px; }
+.skeleton-subtitle { width: 320px; max-width: 60%; height: 13px; }
+.skeleton-card { height: 96px; }
+
+@keyframes skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Respect reduced-motion for every animation/transition the app adds. Users who
+   set this OS preference get instant state changes instead of shimmer/slides. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Confirm Dialog Modal Overlay */
 .modal-overlay {
   position: fixed;
