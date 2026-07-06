@@ -4,15 +4,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
-import { useNotificationStore } from '../../stores/notificationStore';
-import { writeTextToClipboard } from '../../lib/clipboard';
+import { TERMINAL_SCROLLBACK_ROWS } from '../../lib/terminalLimits';
 import { useThemeStore, resolveTheme } from '../../stores/themeStore';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
 import { getTerminalTheme, terminalThemeFor } from './terminalThemes';
-import { createWebLinkProvider } from './webLinks';
 import {
   copyTerminalSelection,
   isTerminalCopyShortcut,
@@ -37,17 +34,23 @@ import '@xterm/xterm/css/xterm.css';
 // WebView user agent (no extra deps) and pass it to the Terminal below.
 export const IS_WINDOWS_PTY = typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent);
 
-// Writes go through the shared helper (Tauri plugin with retry for Windows clipboard lock
-// contention, navigator.clipboard as fallback) and REJECT on total failure, so
-// copyTerminalSelection keeps the selection highlighted and this toast tells the user -
-// instead of the copy silently vanishing (the "sometimes Ctrl+C doesn't copy" report).
-const copyTextToClipboard = (text: string) => writeTextToClipboard(text);
+const copyTextToClipboard = async (text: string) => {
+  // Clipboard writes go through the Tauri plugin for the same reason reads do (see
+  // lib.rs): WebView2 never auto-grants clipboard permission to config-defined windows,
+  // so navigator.clipboard.writeText intermittently rejects or hangs on a permission
+  // prompt - the cause of flaky terminal copies. The web API stays as a fallback only.
+  try {
+    await writeText(text);
+    return;
+  } catch (err) {
+    console.warn('Plugin clipboard copy failed, falling back to navigator.clipboard:', err);
+  }
 
-const notifyCopyFailed = (error: unknown) => {
-  console.error('Failed to copy terminal selection:', error);
-  useNotificationStore
-    .getState()
-    .warning('Copy failed', 'The clipboard was busy or unavailable. The text is still selected - try again.');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    console.error('Failed to copy terminal selection:', err);
+  }
 };
 
 // Inert zeroed dimensions used while the terminal has no attached renderer (see
@@ -174,8 +177,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
 
   const themeMode = useThemeStore((state) => state.mode);
   const fontId = useTerminalFontStore((state) => state.fontId);
-  const fontSize = useTerminalFontStore((state) => state.fontSize);
-  const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
 
   // Keep the live xterm theme in sync with the app theme (xterm needs a JS theme object).
   useEffect(() => {
@@ -191,16 +192,15 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     return () => mql.removeEventListener('change', apply);
   }, [themeMode]);
 
-  // Apply the chosen terminal font face + size live. Changing either changes the cell
-  // metrics, so re-measure with the fit addon and push the new cols/rows to the PTY (the same
-  // path the ResizeObserver uses) — otherwise the prompt would stay sized to the previous font.
+  // Apply the chosen terminal font live. Changing the face changes the cell metrics, so
+  // re-measure with the fit addon and push the new cols/rows to the PTY (the same path the
+  // ResizeObserver uses) — otherwise the prompt would stay sized to the previous font.
   useEffect(() => {
     const term = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     if (!term) return;
 
     term.options.fontFamily = fontStackFor(fontId);
-    term.options.fontSize = fontSize;
 
     const container = containerRef.current;
     if (!fitAddon || !container || container.clientHeight < 1 || container.clientWidth < 1) {
@@ -223,15 +223,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     } catch (err) {
       console.warn('Font-change refit warning:', err);
     }
-  }, [fontId, fontSize, sessionId]);
-
-  // Apply the configurable scrollback limit live. xterm accepts a new `scrollback` at runtime
-  // and re-trims its buffer; no refit needed since row/col metrics are unchanged.
-  useEffect(() => {
-    const term = terminalRef.current;
-    if (!term) return;
-    term.options.scrollback = scrollbackRows;
-  }, [scrollbackRows]);
+  }, [fontId, sessionId]);
 
   // Drop this pane's WebGL renderer (if any) and free its slot in the global context
   // budget. Idempotent: safe to call from the `active` effect, the context-loss handler,
@@ -321,19 +313,18 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     if (!containerRef.current) return;
 
     let disposed = false;
-    const initialFontState = useTerminalFontStore.getState();
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
-      // Initial face/size/scrollback read straight from the store; the dedicated effects above
-      // re-apply and re-fit when the user changes them from the Terminal Controls panel.
-      fontSize: initialFontState.fontSize,
-      fontFamily: fontStackFor(initialFontState.fontId),
+      fontSize: 14,
+      // Initial face read straight from the store; the dedicated effect above re-applies
+      // and re-fits when the user picks a different font from the Terminal Controls panel.
+      fontFamily: fontStackFor(useTerminalFontStore.getState().fontId),
       fontWeight: 400,
       fontWeightBold: 700,
       letterSpacing: 0,
       lineHeight: 1.15,
-      scrollback: initialFontState.scrollbackRows,
+      scrollback: TERMINAL_SCROLLBACK_ROWS,
       theme: { ...getTerminalTheme() },
       allowProposedApi: true,
       // Make xterm grow rows into the scrollback the way ConPTY expects, so maximizing the
@@ -360,24 +351,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
         event.preventDefault();
         event.stopPropagation();
         onSearchOpenRef.current();
-        return false;
-      }
-
-      // Ctrl+= / Ctrl+- / Ctrl+0: adjust (or reset) the terminal font size. The size is a
-      // single app-wide preference (like the font face), so every pane re-fits to match.
-      // Both the main row and numpad keys map to the same key value here.
-      if (
-        event.type === 'keydown' &&
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        (event.key === '=' || event.key === '+' || event.key === '-' || event.key === '_' || event.key === '0')
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        const fontStore = useTerminalFontStore.getState();
-        if (event.key === '0') fontStore.resetFontSize();
-        else if (event.key === '-' || event.key === '_') fontStore.decreaseFontSize();
-        else fontStore.increaseFontSize();
         return false;
       }
 
@@ -429,14 +402,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       ) {
         event.preventDefault();
         event.stopPropagation();
-        // Return false unconditionally: the user saw a highlighted selection when they
-        // pressed Ctrl+C, so a copy that comes back empty or fails must never fall through
-        // to the raw 0x03 - that would SIGINT the running program instead of copying.
-        copyTerminalSelection(term, copyTextToClipboard, {
-          clearSelection: true,
-          onCopyFailed: notifyCopyFailed,
-        });
-        return false;
+        return !copyTerminalSelection(term, copyTextToClipboard, { clearSelection: true });
       }
 
       if (!isTerminalCopyShortcut(event)) {
@@ -446,7 +412,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       event.preventDefault();
       event.stopPropagation();
 
-      copyTerminalSelection(term, copyTextToClipboard, { onCopyFailed: notifyCopyFailed });
+      copyTerminalSelection(term, copyTextToClipboard);
       return false;
     });
 
@@ -456,14 +422,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     // teardown/swap can't make a queued Viewport._sync() throw mid-refresh (see
     // guardRenderServiceDimensions) — the cause of the intermittent blank-band artifacts.
     guardRenderServiceDimensions(term);
-
-    // Make http(s) URLs in output clickable, opening them in the OS browser via the opener
-    // plugin (never navigating the WebView itself). See webLinks.ts for the coordinate math.
-    const linkProvider = term.registerLinkProvider(
-      createWebLinkProvider(term, (url) => {
-        openUrl(url).catch((err) => console.error('Failed to open terminal link:', err));
-      }),
-    );
 
     // The WebGL renderer is acquired lazily and only while this pane's workspace is the one
     // on screen (see the `active` effect below). Loading it here at mount — for every pane in
@@ -643,7 +601,7 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
           cols: nextSize.cols,
           rows: nextSize.rows,
         }).catch(e => console.error('PTY resize on layout change failed:', e));
-      } catch {
+      } catch (err) {
         // Ignored when elements are momentarily detached
       }
     };
@@ -681,7 +639,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       resizeObserver.disconnect();
       dataDisposable.dispose();
       titleDisposable.dispose();
-      linkProvider.dispose();
       unsubscribeOutput();
       unloadWebgl();
       searchAddonRef.current = null; // disposed with the terminal
@@ -695,26 +652,16 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     const handleWindowKeyDown = (event: KeyboardEvent) => {
       if (!isTerminalCopyShortcut(event)) return;
 
-      // Every active pane registers this fallback listener, and stopPropagation() does NOT
-      // silence sibling listeners on the same target (window). Ungated, every pane with a
-      // lingering selection would issue a clipboard write and the async writes would race -
-      // sometimes a stale selection from another pane won, which read as "copy didn't work".
-      // Only the logically focused pane (set on pane click, valid even when DOM focus is
-      // elsewhere) responds, and stopImmediatePropagation keeps the remaining listeners out.
-      if (useTerminalStore.getState().focusedPaneId !== sessionId) return;
-
       const term = terminalRef.current;
-      if (!term || !copyTerminalSelection(term, copyTextToClipboard, { onCopyFailed: notifyCopyFailed })) {
-        return;
-      }
+      if (!term || !copyTerminalSelection(term, copyTextToClipboard)) return;
 
       event.preventDefault();
-      event.stopImmediatePropagation();
+      event.stopPropagation();
     };
 
     window.addEventListener('keydown', handleWindowKeyDown);
     return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [active, sessionId]);
+  }, [active]);
 
   // Acquire/release the WebGL renderer as this pane's workspace gains/loses visibility.
   // Acquisition is deferred one frame so the outgoing workspace's panes release their

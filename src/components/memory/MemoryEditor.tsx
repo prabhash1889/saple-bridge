@@ -232,7 +232,7 @@ export const MemoryEditor: React.FC = () => {
       </div>
 
       {/* Split layout: Form on left, note details on right */}
-      <div className="memory-editor-body">
+      <div className="extracted-style-018">
         {/* Editor Form */}
         <form onSubmit={handleSave} style={formStyle}>
           <div style={fieldsGridStyle}>

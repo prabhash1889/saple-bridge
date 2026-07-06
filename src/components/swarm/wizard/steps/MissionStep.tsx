@@ -24,23 +24,23 @@ export const MissionStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><MessageSquare size={24} /></div>
-        <h2 style={heroTitleStyle}>Swarm <span className="fg-accent">mission</span></h2>
+        <h2 style={heroTitleStyle}>Swarm <span className="extracted-style-202">mission</span></h2>
         <p style={heroSubtitleStyle}>Describe what you want this swarm to build or fix. This is shared with all agents as their mission brief.</p>
       </div>
 
-      <div className="swarm-input-wrap">
+      <div className="extracted-style-203">
         <textarea
           value={mission}
           onChange={(e) => update({ mission: e.target.value })}
           placeholder="What should this swarm accomplish? Agents will read this as their mission brief."
           style={{ ...textareaStyle, minHeight: '140px' }}
         />
-        <span className="swarm-input-count">
+        <span className="extracted-style-204">
           {mission.length} chars
         </span>
       </div>
-      <div className="swarm-breadcrumb">
-        <Sparkles size={12} className="fg-accent" />
+      <div className="extracted-style-205">
+        <Sparkles size={12} className="extracted-style-206" />
         Shared with all agents so they can coordinate and stay aligned.
       </div>
 
@@ -52,9 +52,9 @@ export const MissionStep: React.FC<WizardStepProps> = ({ state, update }) => {
         const items = SWARM_SKILLS.filter((s) => s.category === cat);
         if (items.length === 0) return null;
         return (
-          <div key={cat} className="swarm-mb-16">
+          <div key={cat} className="extracted-style-207">
             <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: CATEGORY_COLOR[cat], marginBottom: '8px' }}>{cat}</div>
-            <div className="swarm-card-grid">
+            <div className="extracted-style-208">
               {items.map((skill) => {
                 const selected = skills.includes(skill.id);
                 return (
@@ -79,9 +79,9 @@ export const MissionStep: React.FC<WizardStepProps> = ({ state, update }) => {
                     >
                       {selected && <Check size={11} strokeWidth={3} />}
                     </span>
-                    <span className="swarm-card-min0">
-                      <span className="swarm-card-name">{skill.label}</span>
-                      <span className="swarm-card-detail">{skill.description}</span>
+                    <span className="extracted-style-209">
+                      <span className="extracted-style-210">{skill.label}</span>
+                      <span className="extracted-style-211">{skill.description}</span>
                     </span>
                   </button>
                 );

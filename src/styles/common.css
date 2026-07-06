@@ -206,21 +206,6 @@ button.text-btn:hover {
   border: 1px solid rgba(167, 139, 250, 0.3);
 }
 
-/* Foreground-color utilities. These replace the many identical single-property
-   `color: var(--...)` helpers that inline-style extraction generated per element. */
-.fg-primary { color: var(--text-primary); }
-.fg-secondary { color: var(--text-secondary); }
-.fg-muted { color: var(--text-muted); }
-.fg-accent { color: var(--accent); }
-.fg-success { color: var(--color-success); }
-.fg-danger { color: var(--color-danger); }
-.fg-warning { color: var(--color-warning); }
-.fg-border { color: var(--border); }
-
-/* Flex-grow utilities (replace single-property `flex: N` extracted helpers). */
-.flex-1 { flex: 1; }
-.flex-2 { flex: 2; }
-
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -578,7 +563,6 @@ button.text-btn:hover {
 .file-tree-node.flat-match {
   height: 40px;
   gap: 8px;
-  padding-left: 8px;
 }
 
 .file-tree-node.flat-match .node-search-details {
@@ -1177,62 +1161,6 @@ button.text-btn:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
-/* Room loading skeleton (Suspense fallback for lazily-loaded rooms) */
-.room-skeleton {
-  height: 100%;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  overflow: hidden;
-}
-
-.room-skeleton-header {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.room-skeleton-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
-}
-
-.skeleton-block {
-  border-radius: var(--radius-md);
-  background: linear-gradient(
-    100deg,
-    var(--bg-surface) 30%,
-    var(--bg-surface-light) 50%,
-    var(--bg-surface) 70%
-  );
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.4s ease-in-out infinite;
-}
-
-.skeleton-title { width: 220px; height: 22px; }
-.skeleton-subtitle { width: 320px; max-width: 60%; height: 13px; }
-.skeleton-card { height: 96px; }
-
-@keyframes skeleton-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
-
-/* Respect reduced-motion for every animation/transition the app adds. Users who
-   set this OS preference get instant state changes instead of shimmer/slides. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
 /* Confirm Dialog Modal Overlay */
 .modal-overlay {
   position: fixed;
@@ -1564,15 +1492,20 @@ button.text-btn:hover {
   font-weight: bold;
 }
 
-.code-viewer-empty-icon {
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-001 {
   color: var(--text-muted);
   margin-bottom: 12px;
 }
 
-.file-tree-empty-error {
+.extracted-style-002 {
   color: var(--color-danger);
   padding: 8px 12px;
   font-size: 12px;
+}
+
+.extracted-style-277 {
+  padding-left: 8px;
 }
 
 .pane-splitter {
@@ -1600,112 +1533,4 @@ button.text-btn:hover {
 .pane-splitter:focus-visible::after {
   background: var(--accent);
   opacity: 1;
-}
-
-/* ── Keyboard shortcuts dialog (Phase 3.2) ───────────────────────────────────────── */
-.shortcuts-dialog {
-  background: rgba(24, 24, 27, 0.9);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-  max-width: 560px;
-  width: 90%;
-  max-height: 78vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: slideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-  backdrop-filter: blur(20px);
-}
-
-.shortcuts-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.shortcuts-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.shortcuts-body {
-  padding: 12px 18px 18px;
-  overflow-y: auto;
-}
-
-.shortcuts-group {
-  margin-top: 16px;
-}
-
-.shortcuts-group:first-child {
-  margin-top: 4px;
-}
-
-.shortcuts-group-title {
-  margin: 0 0 8px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.shortcuts-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.shortcuts-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 6px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-}
-
-.shortcuts-row:last-child {
-  border-bottom: none;
-}
-
-.shortcuts-label {
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.shortcuts-keys {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-}
-
-.shortcuts-plus {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.shortcuts-kbd {
-  display: inline-flex;
-  align-items: center;
-  min-width: 20px;
-  height: 22px;
-  padding: 0 6px;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  line-height: 1;
 }

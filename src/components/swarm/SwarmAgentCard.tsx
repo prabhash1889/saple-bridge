@@ -44,15 +44,15 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
       case 'running':
-        return <RefreshCw size={14} className="fg-accent spin" />;
+        return <RefreshCw size={14} className="extracted-style-119 spin" />;
       case 'done':
-        return <CheckCircle size={14} className="fg-success" />;
+        return <CheckCircle size={14} className="extracted-style-120" />;
       case 'failed':
-        return <Square size={14} className="fg-danger" />;
+        return <Square size={14} className="extracted-style-121" />;
       case 'review':
-        return <FileText size={14} className="fg-warning" />;
+        return <FileText size={14} className="extracted-style-122" />;
       default:
-        return <Square size={14} className="fg-muted" />;
+        return <Square size={14} className="extracted-style-123" />;
     }
   };
 
@@ -71,14 +71,14 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
       {/* Top Header */}
       <div style={cardHeaderStyle}>
         <div>
-          <h4 className="swarm-card-title">
+          <h4 className="extracted-style-124">
             {agent.name}
           </h4>
           <span style={roleBadgeStyle(getRoleColor(agent.role))}>{agent.role}</span>
         </div>
         <div style={statusBadgeStyle(agent.status)}>
           {getStatusIcon(agent.status)}
-          <span className="swarm-status-label">{agent.status}</span>
+          <span className="extracted-style-125">{agent.status}</span>
         </div>
       </div>
 
@@ -108,7 +108,7 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
             {mailboxContent ? (
               <pre style={mailboxPreStyle}>{mailboxContent}</pre>
             ) : (
-              <span className="swarm-meta-text">No messages written yet.</span>
+              <span className="extracted-style-126">No messages written yet.</span>
             )}
           </div>
         </div>
@@ -123,7 +123,7 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
               {handoffs.map((h) => (
                 <div key={`${h.from}->${h.to}`} style={handoffItemStyle}>
                   <div style={handoffLabelStyle}>
-                    <ArrowRightLeft size={11} className="fg-accent" />
+                    <ArrowRightLeft size={11} className="extracted-style-127" />
                     <span>
                       {h.direction === 'in' ? `${h.from} → this` : `this → ${h.to}`}
                     </span>

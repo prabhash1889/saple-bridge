@@ -374,50 +374,72 @@
   cursor: not-allowed;
 }
 
-.settings-header-row {
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-026 {
   display: flex;
   gap: 12px;
   align-items: center;
   margin-bottom: 20px;
 }
 
-.settings-list-col {
+.extracted-style-027 {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.settings-info-row {
+.extracted-style-028 {
   display: flex;
   justify-content: space-between;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 
-.settings-block-gap {
+.extracted-style-029 {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extracted-style-030 {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extracted-style-031 {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extracted-style-032 {
   margin-top: 16px;
 }
 
-.settings-subheading {
+.extracted-style-033 {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 8px;
 }
 
-.settings-tight-heading {
+.extracted-style-034 {
   margin-top: 0;
   margin-bottom: 8px;
 }
 
-.settings-detail-list {
+.extracted-style-035 {
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding-left: 8px;
 }
 
-.settings-detail-row {
+.extracted-style-036 {
   display: flex;
   justify-content: space-between;
   padding: 6px 12px;
@@ -425,39 +447,97 @@
   border-radius: var(--radius-sm);
 }
 
-.settings-capitalize {
+.extracted-style-037 {
+  margin-top: 16px;
+}
+
+.extracted-style-038 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.extracted-style-039 {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+}
+
+.extracted-style-040 {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-surface-light);
+  border-radius: var(--radius-sm);
+}
+
+.extracted-style-041 {
   text-transform: capitalize;
 }
 
-.settings-inline-8 {
+.extracted-style-042 {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.settings-mono-muted {
+.extracted-style-043 {
   font-size: 11px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
-.settings-detail-row-plain {
+.extracted-style-044 {
+  margin-top: 16px;
+}
+
+.extracted-style-045 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.extracted-style-046 {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+}
+
+.extracted-style-047 {
   display: flex;
   justify-content: space-between;
   padding: 6px 12px;
   background: var(--bg-surface-light);
 }
 
-.settings-bordered-box {
+.extracted-style-048 {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-surface-light);
+}
+
+.extracted-style-049 {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-surface-light);
+}
+
+.extracted-style-050 {
   padding: 12px;
   border: 1px solid var(--border);
 }
 
-.settings-section-pad {
+.extracted-style-051 {
   padding: 30px;
 }
 
-.settings-warning-banner {
+.extracted-style-052 {
   display: flex;
   gap: 8px;
   align-items: flex-start;
@@ -468,100 +548,104 @@
   background: color-mix(in srgb, var(--warning, #b58900) 12%, transparent);
 }
 
-.settings-warning-icon {
+.extracted-style-053 {
   flex-shrink: 0;
   margin-top: 1px;
   color: var(--warning, #b58900);
 }
 
-.settings-warning-text {
+.extracted-style-054 {
   font-size: 12px;
   line-height: 1.5;
 }
 
-.settings-section-divider {
+.extracted-style-055 {
   margin-top: 24px;
   border-top: 1px solid var(--border);
   padding-top: 20px;
 }
 
-.settings-section-title {
+.extracted-style-056 {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 8px;
 }
 
-.settings-inline-12 {
+.extracted-style-057 {
   display: flex;
   gap: 12px;
   align-items: center;
   margin-bottom: 16px;
 }
 
-.settings-mono-accent {
+.extracted-style-058 {
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 12px;
 }
 
-.settings-help-text {
+.extracted-style-059 {
   margin: 4px 0 0 0;
   font-size: 11.5px;
   color: var(--text-secondary);
 }
 
-.settings-form-col {
+.extracted-style-060 {
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.settings-form-row {
+.extracted-style-061 {
   display: flex;
   gap: 12px;
   align-items: flex-end;
 }
 
-.settings-form-field {
+.extracted-style-062 {
   flex: 1;
   margin: 0;
 }
 
-.settings-field-label {
+.extracted-style-063 {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
-.settings-input-36 {
+.extracted-style-064 {
   height: 36px;
 }
 
-.settings-divider-top {
+.extracted-style-065 {
+  height: 36px;
+}
+
+.extracted-style-066 {
   border-top: 1px solid var(--border);
   padding-top: 20px;
 }
 
-.settings-section-title-spaced {
+.extracted-style-067 {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 12px;
 }
 
-.settings-pad-20 {
+.extracted-style-068 {
   padding: 20px;
 }
 
-.settings-stack-8 {
+.extracted-style-069 {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.settings-session-row {
+.extracted-style-070 {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -571,26 +655,26 @@
   border-radius: var(--radius-md);
 }
 
-.settings-session-name {
+.extracted-style-071 {
   font-size: 13px;
   font-family: var(--font-mono);
   color: var(--text-primary);
 }
 
-.settings-session-desc {
+.extracted-style-072 {
   font-size: 11.5px;
   color: var(--text-secondary);
   margin-bottom: 8px;
   line-height: 1.4;
 }
 
-.settings-stack-10 {
+.extracted-style-073 {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.settings-session-card {
+.extracted-style-074 {
   padding: 12px;
   background: var(--bg-surface-light);
   border: 1px solid var(--border);
@@ -600,25 +684,25 @@
   gap: 10px;
 }
 
-.settings-session-card-head {
+.extracted-style-075 {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.settings-session-title {
+.extracted-style-076 {
   color: var(--text-primary);
   font-size: 13px;
 }
 
-.settings-session-id {
+.extracted-style-077 {
   font-size: 11px;
   color: var(--text-muted);
   font-family: var(--font-mono);
   margin-left: 10px;
 }
 
-.settings-session-grid {
+.extracted-style-078 {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
@@ -626,11 +710,11 @@
   color: var(--text-secondary);
 }
 
-.settings-mono {
+.extracted-style-079 {
   font-family: var(--font-mono);
 }
 
-.settings-session-footer {
+.extracted-style-080 {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -638,19 +722,26 @@
   color: var(--text-muted);
 }
 
-.settings-btn-row {
+.extracted-style-081 {
   display: flex;
   gap: 8px;
 }
 
-.settings-action-chip {
+.extracted-style-082 {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
 }
 
-.settings-log-modal {
+.extracted-style-083 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+}
+
+.extracted-style-084 {
   max-width: 800px;
   width: 95%;
   height: 80vh;
@@ -658,12 +749,12 @@
   flex-direction: column;
 }
 
-.settings-log-title {
+.extracted-style-085 {
   margin: 0;
   font-size: 15px;
 }
 
-.settings-log-body {
+.extracted-style-086 {
   flex: 1;
   padding: 16px;
   background: var(--bg-deep);
@@ -674,7 +765,7 @@
   white-space: pre-wrap;
 }
 
-.settings-checkbox-row {
+.extracted-style-087 {
   flex-direction: row;
   align-items: center;
   gap: 8px;
@@ -682,20 +773,38 @@
   margin-bottom: 14px;
 }
 
-.settings-checkbox {
+.extracted-style-088 {
   margin: 0;
   width: auto;
   cursor: pointer;
 }
 
-.settings-checkbox-label {
+.extracted-style-089 {
   font-weight: normal;
   cursor: pointer;
   margin: 0;
   user-select: none;
 }
 
-.settings-inline-row {
+.extracted-style-278 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.extracted-style-279 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.extracted-style-280 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.extracted-style-281 {
   display: flex;
   align-items: center;
   gap: 4px;

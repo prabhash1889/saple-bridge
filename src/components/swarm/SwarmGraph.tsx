@@ -63,12 +63,12 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
 
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
-      case 'running': return <Bot size={14} className="fg-accent spin" />;
-      case 'done': return <CheckCircle size={14} className="fg-success" />;
-      case 'failed': return <AlertTriangle size={14} className="fg-danger" />;
-      case 'review': return <UserCheck size={14} className="fg-warning" />;
-      case 'blocked': return <Clock size={14} className="fg-muted" />;
-      default: return <Clock size={14} className="fg-muted" />;
+      case 'running': return <Bot size={14} className="extracted-style-128 spin" />;
+      case 'done': return <CheckCircle size={14} className="extracted-style-129" />;
+      case 'failed': return <AlertTriangle size={14} className="extracted-style-130" />;
+      case 'review': return <UserCheck size={14} className="extracted-style-131" />;
+      case 'blocked': return <Clock size={14} className="extracted-style-132" />;
+      default: return <Clock size={14} className="extracted-style-133" />;
     }
   };
 
@@ -170,7 +170,7 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
               stroke={isActive ? 'var(--accent)' : 'var(--border)'}
               strokeWidth={isActive ? 2 : 1.5}
               strokeDasharray={toAgent?.status === 'blocked' ? '4 4' : undefined}
-              markerEnd={isActive ? 'url(#arrow-active)' : 'url(#arrow)'} className="swarm-graph-edge"
+              markerEnd={isActive ? 'url(#arrow-active)' : 'url(#arrow)'} className="extracted-style-134"
             />
           );
         })}
@@ -201,13 +201,13 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
 
                     <div style={nodeMetaStyle}>
                       <span style={roleBadgeStyle(agent.role)}>{agent.role}</span>
-                      <span className="swarm-graph-caption">{agent.model}</span>
+                      <span className="extracted-style-135">{agent.model}</span>
                     </div>
 
                     <div style={nodeFooterStyle}>
                       <div style={nodeStatusStyle(agent.status)}>
                         {getStatusIcon(agent.status)}
-                        <span className="swarm-graph-badge">{agent.status}</span>
+                        <span className="extracted-style-136">{agent.status}</span>
                       </div>
 
                       {agent.status === 'failed' && (

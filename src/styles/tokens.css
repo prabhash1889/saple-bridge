@@ -1,73 +1,17 @@
 /* Design System for Saple Bridge */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* Fonts are bundled locally (Vite hashes and emits them) so the packaged app renders
-   correct typography and terminal glyphs under a strict `font-src 'self'` CSP. Do not
-   reintroduce Google Fonts / CDN @font-face rules - they silently fall back in production. */
-
-/* Inter (sans) */
-@font-face {
-  font-family: 'Inter';
-  src: url('../assets/fonts/inter-400.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Inter';
-  src: url('../assets/fonts/inter-500.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Inter';
-  src: url('../assets/fonts/inter-600.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Inter';
-  src: url('../assets/fonts/inter-700.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* JetBrains Mono (mono fallback) */
-@font-face {
-  font-family: 'JetBrains Mono';
-  src: url('../assets/fonts/jetbrains-mono-400.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  src: url('../assets/fonts/jetbrains-mono-500.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  src: url('../assets/fonts/jetbrains-mono-600.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* JetBrains Mono Nerd Font (terminal primary - carries powerline/Nerd glyphs) */
 @font-face {
   font-family: 'JetBrains Mono Nerd';
-  src: url('../assets/fonts/jetbrains-mono-nerd-400.woff2') format('woff2');
+  src: url('https://cdn.jsdelivr.net/gh/Nick2bad4u/nerd-fonts-woff2@v1.0.0/fonts/woff2/JetBrainsMono/JetBrainsMonoNerdFont-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
+
 @font-face {
   font-family: 'JetBrains Mono Nerd';
-  src: url('../assets/fonts/jetbrains-mono-nerd-700.woff2') format('woff2');
+  src: url('https://cdn.jsdelivr.net/gh/Nick2bad4u/nerd-fonts-woff2@v1.0.0/fonts/woff2/JetBrainsMono/JetBrainsMonoNerdFont-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -127,30 +71,10 @@
   --mem-bug: #EF4444;
   --mem-bug-bg: rgba(239, 68, 68, 0.15);
 
-  /* Spacing scale (4px base). Prefer these over ad-hoc magic-number paddings/gaps. */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-7: 32px;
-  --space-8: 40px;
-
-  /* Font-size scale. Names map to the sizes already used across the view CSS. */
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 18px;
-  --text-2xl: 22px;
-
   /* Layout Spacing */
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 64px;
   --topbar-height: 48px;
-  --topbar-slim-height: 34px;
   --statusbar-height: 28px;
 
   /* Elevation (Shadows) */

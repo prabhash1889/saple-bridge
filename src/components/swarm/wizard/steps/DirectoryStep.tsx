@@ -38,25 +38,25 @@ export const DirectoryStep: React.FC<WizardStepProps> = ({ state, update }) => {
     <div>
       <div style={heroWrapStyle}>
         <div style={heroIconWrapStyle}><FolderOpen size={24} /></div>
-        <h2 style={heroTitleStyle}>Working <span className="fg-accent">directory</span></h2>
+        <h2 style={heroTitleStyle}>Working <span className="extracted-style-174">directory</span></h2>
         <p style={heroSubtitleStyle}>The folder this swarm operates on. Agents spawn their terminals here and read/write files inside it.</p>
       </div>
 
       <div style={sectionLabelStyle}>Directory</div>
-      <div className="swarm-summary-item"
+      <div className="extracted-style-175"
       >
-        <div className="swarm-summary-main">
+        <div className="extracted-style-176">
           <div style={{ fontSize: '13px', fontWeight: 600, color: directory ? 'var(--text-primary)' : 'var(--text-muted)', wordBreak: 'break-all' }}>
             {directory || 'No directory selected'}
           </div>
           {summary && (
-            <div className="swarm-summary-meta">
-              <span className="swarm-inline-4">
-                {summary.writable ? <Check size={12} className="fg-success" /> : <AlertTriangle size={12} className="fg-warning" />}
+            <div className="extracted-style-177">
+              <span className="extracted-style-178">
+                {summary.writable ? <Check size={12} className="extracted-style-179" /> : <AlertTriangle size={12} className="extracted-style-180" />}
                 {summary.writable ? 'Writable' : 'Read-only'}
               </span>
               {summary.isGitRepo && (
-                <span className="swarm-inline-4">
+                <span className="extracted-style-181">
                   <GitBranch size={12} /> {summary.branch || 'git'}
                 </span>
               )}
@@ -65,7 +65,7 @@ export const DirectoryStep: React.FC<WizardStepProps> = ({ state, update }) => {
         </div>
         <button
           onClick={chooseFolder}
-          className="swarm-action-btn primary"
+          className="extracted-style-182 primary"
         >
           <FolderOpen size={13} /> Choose folder
         </button>

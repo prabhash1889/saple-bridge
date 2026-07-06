@@ -14,14 +14,9 @@ import {
   Tag,
   Minimize2,
   Maximize2,
-  Minus,
   Command,
   Terminal as TerminalIcon,
   FolderOpen,
-  LayoutGrid,
-  Database,
-  Users,
-  GitPullRequest,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useKanbanStore } from '../../stores/kanbanStore';
@@ -69,23 +64,11 @@ const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
 ];
 
 
-type NavItem = { id: ViewType; label: string; icon: React.ElementType; accent: string };
-
-const primaryNavItems: NavItem[] = [
+const primaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
   { id: 'dashboard', label: 'Home', icon: Home, accent: 'home' },
 ];
 
-// The five workspace rooms, kept in the same order as Alt+1-9, the command palette,
-// and the dashboard cards. Each requires an open workspace (see `workspaceRooms`).
-const roomNavItems: NavItem[] = [
-  { id: 'terminals', label: 'Terminals', icon: TerminalIcon, accent: 'command' },
-  { id: 'kanban', label: 'Tasks', icon: LayoutGrid, accent: 'tasks' },
-  { id: 'memory', label: 'Memory', icon: Database, accent: 'memory' },
-  { id: 'swarm', label: 'Swarm', icon: Users, accent: 'swarm' },
-  { id: 'review', label: 'Review', icon: GitPullRequest, accent: 'review' },
-];
-
-const secondaryNavItems: NavItem[] = [
+const secondaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
   { id: 'editor', label: 'Files', icon: FileCode, accent: 'editor' },
   { id: 'settings', label: 'Settings', icon: Settings, accent: 'settings' },
 ];
@@ -125,10 +108,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
   const fontId = useTerminalFontStore((state) => state.fontId);
   const setFontId = useTerminalFontStore((state) => state.setFontId);
-  const fontSize = useTerminalFontStore((state) => state.fontSize);
-  const increaseFontSize = useTerminalFontStore((state) => state.increaseFontSize);
-  const decreaseFontSize = useTerminalFontStore((state) => state.decreaseFontSize);
-  const resetFontSize = useTerminalFontStore((state) => state.resetFontSize);
 
   const maxLimit = getMaxPaneLimit();
   const atMax = !canAddPane();
@@ -245,32 +224,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [workspaceMenu]);
 
-  // Shared renderer so the badge logic (open tasks on Tasks/Review, running agents on
-  // Swarm) stays in one place across the primary, rooms, and secondary nav groups.
-  const renderNavItem = (item: NavItem) => {
-    const Icon = item.icon;
-    const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
-    const active = activeView === item.id;
-    const showTaskBadge = (item.id === 'kanban' || item.id === 'review') && openTaskCount > 0;
-    const showAgentBadge = item.id === 'swarm' && runningAgentCount > 0;
-
-    return (
-      <button
-        key={item.id}
-        className={`room-nav-item accent-${item.accent} ${active ? 'active' : ''}`}
-        onClick={() => !disabled && setActiveView(item.id)}
-        disabled={disabled}
-        title={disabled ? `Open a workspace to access ${item.label}` : item.label}
-        aria-label={item.label}
-      >
-        <Icon size={18} />
-        <span>{item.label}</span>
-        {showTaskBadge && <span className="badge review-badge">{openTaskCount}</span>}
-        {showAgentBadge && <span className="badge swarm-badge">{runningAgentCount}</span>}
-      </button>
-    );
-  };
-
   return (
     <aside className="sidebar-area">
       <div className="sidebar-brand workspace-rail-brand">
@@ -283,8 +236,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
       </div>
 
       <nav className="room-nav room-nav-primary" aria-label="Rooms">
-        {primaryNavItems.map(renderNavItem)}
-        {roomNavItems.map(renderNavItem)}
+        {primaryNavItems.map((item) => {
+          const Icon = item.icon;
+          const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
+          const active = activeView === item.id;
+
+          return (
+            <button
+              key={item.id}
+              className={`room-nav-item accent-${item.accent} ${active ? 'active' : ''}`}
+              onClick={() => !disabled && setActiveView(item.id)}
+              disabled={disabled}
+              title={disabled ? `Open a workspace to access ${item.label}` : item.label}
+              aria-label={item.label}
+            >
+              <Icon size={18} />
+              <span>{item.label}</span>
+              {item.id === 'review' && openTaskCount > 0 && (
+                <span className="badge review-badge">{openTaskCount}</span>
+              )}
+              {item.id === 'swarm' && runningAgentCount > 0 && (
+                <span className="badge swarm-badge">{runningAgentCount}</span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
       <section className="recent-workspaces workspace-rail" aria-label="Workspaces">
@@ -299,6 +275,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                 aria-label="Add workspace"
               >
                 <Plus size={12} />
+              </button>
+              <button title="Workspace options" aria-label="Workspace options">
+                <ChevronsUpDown size={12} />
               </button>
             </div>
           </div>
@@ -384,7 +363,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
       {activeView === 'terminals' && panes.length > 0 && (
         <div className="sidebar-terminal-controls">
           <div
-            className="sidebar-collapsible-header sidebar-section-title clickable-header"
+            className="extracted-style-014 sidebar-section-title clickable-header"
             onClick={() => setControlsCollapsed(!controlsCollapsed)}
           >
              <TerminalIcon size={12} className="terminal-icon-glow" />
@@ -405,7 +384,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                     aria-expanded={providerMenuOpen}
                     aria-label="Terminal type for new panes"
                   >
-                    <Bot size={14} className="fg-secondary" />
+                    <Bot size={14} className="extracted-style-015" />
                     <span className="terminal-provider-label">
                       {AI_PROVIDERS.find((option) => option.value === selectedProvider)?.label ?? 'Claude'}
                     </span>
@@ -477,7 +456,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                   <div className="sidebar-control-row terminal-detail-row">
                     {/* Rename Pane */}
                     <div className="sidebar-input-group">
-                      <Edit3 size={13} className="fg-secondary" />
+                      <Edit3 size={13} className="extracted-style-016" />
                       <input
                         value={focusedSession.name}
                         onChange={handleRenamePane}
@@ -529,7 +508,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
                     {/* Terminal font — app-wide; sits to the right of Maximize */}
                     <div className="sidebar-input-group terminal-font-group">
-                      <TerminalIcon size={13} className="fg-secondary" />
+                      <TerminalIcon size={13} className="extracted-style-017" />
                       <select
                         value={fontId}
                         onChange={(e) => setFontId(e.target.value)}
@@ -545,40 +524,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                       </select>
                     </div>
                   </div>
-
-                  {/* Font size — app-wide, mirrors the Ctrl+= / Ctrl+- / Ctrl+0 shortcuts */}
-                  <div className="sidebar-control-row">
-                    <div
-                      className="terminal-fontsize-group"
-                      title="Terminal font size (Ctrl+= / Ctrl+- / Ctrl+0)"
-                    >
-                      <span className="terminal-fontsize-label">Font size</span>
-                      <button
-                        type="button"
-                        className="terminal-fontsize-btn"
-                        onClick={decreaseFontSize}
-                        aria-label="Decrease terminal font size"
-                      >
-                        <Minus size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        className="terminal-fontsize-value"
-                        onClick={resetFontSize}
-                        title="Reset to default font size"
-                      >
-                        {fontSize}px
-                      </button>
-                      <button
-                        type="button"
-                        className="terminal-fontsize-btn"
-                        onClick={increaseFontSize}
-                        aria-label="Increase terminal font size"
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
@@ -588,10 +533,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
       <nav className="room-nav room-nav-secondary" aria-label="Workspace tools">
         {secondaryNavItems.map((item) => {
+          const Icon = item.icon;
+          const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
+          const active = activeView === item.id;
+          const navButton = (
+            <button
+              key={item.id}
+              className={`room-nav-item accent-${item.accent} ${active ? 'active' : ''}`}
+              onClick={() => !disabled && setActiveView(item.id)}
+              disabled={disabled}
+              title={disabled ? `Open a workspace to access ${item.label}` : item.label}
+              aria-label={item.label}
+            >
+              <Icon size={18} />
+              <span>{item.label}</span>
+              {item.id === 'review' && openTaskCount > 0 && (
+                <span className="badge review-badge">{openTaskCount}</span>
+              )}
+              {item.id === 'swarm' && runningAgentCount > 0 && (
+                <span className="badge swarm-badge">{runningAgentCount}</span>
+              )}
+            </button>
+          );
+
           if (item.id === 'settings') {
             return (
               <div key={item.id} className="settings-command-row">
-                {renderNavItem(item)}
+                {navButton}
                 <button
                   className="icon-button sidebar-command-button"
                   onClick={onOpenPalette}
@@ -604,7 +572,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
             );
           }
 
-          return renderNavItem(item);
+          return navButton;
         })}
       </nav>
 

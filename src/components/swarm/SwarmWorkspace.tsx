@@ -261,7 +261,7 @@ export const SwarmWorkspace: React.FC = () => {
 
   if (isEditingTemplate) {
     return (
-      <div className="swarm-scroll-pane">
+      <div className="extracted-style-147">
         <SwarmTemplateEditor
           template={selectedTemplate}
           onSave={() => setIsEditingTemplate(false)}
@@ -314,7 +314,7 @@ export const SwarmWorkspace: React.FC = () => {
         {/* Global Controls */}
         <div style={actionsContainerStyle}>
           {swarmActive ? (
-            <div className="swarm-header-col">
+            <div className="extracted-style-148">
               {status === 'running' ? (
                 <button onClick={handlePause} className="secondary" style={btnStyle}>
                   <Pause size={12} />
@@ -350,12 +350,12 @@ export const SwarmWorkspace: React.FC = () => {
         {/* Header */}
         <div style={headerStyle}>
           <div>
-            <h2 className="swarm-heading">
+            <h2 className="extracted-style-149">
               Swarm Room Orchestrator
             </h2>
             {swarmActive && (
-              <p className="swarm-subheading">
-                Swarm ID: <code className="fg-accent">{swarmId}</code> | Mission: "{mission}"
+              <p className="extracted-style-150">
+                Swarm ID: <code className="extracted-style-151">{swarmId}</code> | Mission: "{mission}"
               </p>
             )}
           </div>
@@ -427,7 +427,7 @@ export const SwarmWorkspace: React.FC = () => {
                 {selectedAgent ? (
                   <div>
                     <div style={rightPanelTitleStyle}>
-                      <Settings size={14} className="fg-muted" />
+                      <Settings size={14} className="extracted-style-152" />
                       <span>Inspect Agent: {selectedAgent.name}</span>
                     </div>
                     <SwarmAgentCard
@@ -446,7 +446,7 @@ export const SwarmWorkspace: React.FC = () => {
                         from its mailbox file mid-run. */}
                     <div style={composeBoxStyle}>
                       <div style={rightPanelTitleStyle}>
-                        <Edit size={13} className="fg-muted" />
+                        <Edit size={13} className="extracted-style-153" />
                         <span>Post to {selectedAgent.name}'s mailbox</span>
                       </div>
                       <textarea
@@ -470,8 +470,8 @@ export const SwarmWorkspace: React.FC = () => {
                   </div>
                 ) : (
                   <div style={emptyInspectStyle}>
-                    <Shield size={32} className="fg-border" />
-                    <p className="swarm-note">
+                    <Shield size={32} className="extracted-style-154" />
+                    <p className="extracted-style-155">
                       Select any agent node to inspect logs and handoffs.
                     </p>
                   </div>
@@ -482,9 +482,9 @@ export const SwarmWorkspace: React.FC = () => {
         ) : (
           /* Empty / Idle State */
           <div style={emptyStateStyle}>
-            <Bot size={54} className="swarm-mb-16 swarm-hero-icon" />
-            <h3 className="swarm-empty-title">Saple Swarm Coordinator</h3>
-            <p className="swarm-empty-desc">
+            <Bot size={54} className="extracted-style-156 swarm-hero-icon" />
+            <h3 className="extracted-style-157">Saple Swarm Coordinator</h3>
+            <p className="extracted-style-158">
               Coordinators analyze missions, breaking down requirements onto a shared workspace filesystem, while Builders and Reviewers run validation test cycles inside parallel terminal streams.
             </p>
 
@@ -498,7 +498,7 @@ export const SwarmWorkspace: React.FC = () => {
               <span>Create Swarm</span>
             </button>
             {!currentProjectPath && (
-              <p className="swarm-empty-hint-lg">
+              <p className="extracted-style-159">
                 Open a workspace to create a swarm.
               </p>
             )}

@@ -105,10 +105,11 @@ html[data-theme="latte"] .terminal-provider-menu {
   grid-template-columns: var(--sidebar-collapsed-width) 1fr;
 }
 
-/* Heavy views (terminals, kanban, etc.) keep the TopBar but shrink it to a slim strip
-   so branch context and the theme toggle stay reachable without eating vertical space. */
-.app-grid.slim-topbar {
-  grid-template-rows: var(--topbar-slim-height) 1fr var(--statusbar-height);
+.app-grid.no-topbar {
+  grid-template-areas: 
+    "sidebar content"
+    "sidebar statusbar";
+  grid-template-rows: 1fr var(--statusbar-height);
 }
 
 
@@ -660,22 +661,6 @@ html[data-theme="latte"] .terminal-provider-menu {
   justify-content: flex-end;
   gap: 8px;
   justify-self: end;
-}
-
-/* Slim TopBar (heavy views): keep workspace name, branch, room title and theme toggle,
-   but drop the verbose subtitle/path and tighten the strip to the slim height. */
-.topbar-area.topbar-slim {
-  height: var(--topbar-slim-height);
-}
-
-.topbar-area.topbar-slim .topbar-workspace .path-truncate,
-.topbar-area.topbar-slim .topbar-room span {
-  display: none;
-}
-
-.topbar-area.topbar-slim .topbar-workspace strong,
-.topbar-area.topbar-slim .topbar-room strong {
-  font-size: 13px;
 }
 
 .statusbar-area {
@@ -1405,11 +1390,24 @@ html[data-theme="latte"] .terminal-provider-menu {
   font-size: 12px;
 }
 
-.sidebar-collapsible-header {
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-014 {
   cursor: pointer;
   user-select: none;
   display: flex;
   align-items: center;
   width: 100%;
   gap: 6px;
+}
+
+.extracted-style-015 {
+  color: var(--text-secondary);
+}
+
+.extracted-style-016 {
+  color: var(--text-secondary);
+}
+
+.extracted-style-017 {
+  color: var(--text-secondary);
 }

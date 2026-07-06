@@ -1,33 +1,14 @@
 import React, { memo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { Check, XCircle } from 'lucide-react';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
-import { useNotificationStore } from '../../stores/notificationStore';
-import { writeTextToClipboard } from '../../lib/clipboard';
 import { useXtermSession, IS_WINDOWS_PTY } from './useXtermSession';
-import { copyTerminalSelection } from './terminalClipboard';
 import { TerminalPaneTitlebar } from './TerminalPaneTitlebar';
 import { TerminalSearchBar } from './TerminalSearchBar';
-import { TerminalPaneContextMenu, type TerminalContextMenuState } from './TerminalPaneContextMenu';
-
-// Custom MIME so a pane drag-to-reorder is never mistaken for droppable text (which would
-// paste the id into the terminal) and so unrelated file/text drags don't highlight panes.
-const PANE_DND_MIME = 'application/x-saple-pane';
-
-// Serialize a terminal's whole buffer (scrollback + viewport) to clean text — no ANSI codes,
-// unlike the raw output buffer — for "Copy all output".
-const serializeTerminalBuffer = (buffer: { length: number; getLine: (i: number) => { translateToString: (trim?: boolean) => string } | undefined }) => {
-  const lines: string[] = [];
-  for (let i = 0; i < buffer.length; i += 1) {
-    lines.push(buffer.getLine(i)?.translateToString(true) ?? '');
-  }
-  return lines.join('\n').replace(/\n+$/, '') + '\n';
-};
 
 interface TerminalPaneProps {
   sessionId: string;
@@ -40,8 +21,6 @@ interface TerminalPaneProps {
 
 const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true }) => {
   const [searchOpen, setSearchOpen] = useState(false);
-  const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(null);
-  const [isDropTarget, setIsDropTarget] = useState(false);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const setActiveView = useProjectStore((state) => state.setActiveView);
@@ -50,13 +29,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const addPane = useTerminalStore((state) => state.addPane);
   const removePane = useTerminalStore((state) => state.removePane);
-  const reorderPane = useTerminalStore((state) => state.reorderPane);
   const toggleMaximizePane = useTerminalStore((state) => state.toggleMaximizePane);
   const canAddPane = useTerminalStore((state) => state.canAddPane);
   const sessionInfo = useTerminalStore((state) => state.sessions[sessionId]);
   const isWaitingReview = useTerminalStore((state) => state.reviewPanes[sessionId]);
-  const hasActivity = useTerminalStore((state) => Boolean(state.activityPanes[sessionId]));
-  const hasExited = useTerminalStore((state) => Boolean(state.exitedPanes[sessionId]));
   const resolveReview = useTerminalStore((state) => state.resolveReview);
 
   const setActiveTaskId = useReviewStore((state) => state.setActiveTaskId);
@@ -101,73 +77,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const handleRemovePane = () => {
     void removePane(sessionId);
   };
-
-  const handleDragStart = (event: React.DragEvent) => {
-    event.dataTransfer.setData(PANE_DND_MIME, sessionId);
-    event.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (event: React.DragEvent) => {
-    if (!event.dataTransfer.types.includes(PANE_DND_MIME)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    if (!isDropTarget) setIsDropTarget(true);
-  };
-
-  const handleDragLeave = () => setIsDropTarget(false);
-
-  const handleDrop = (event: React.DragEvent) => {
-    if (!event.dataTransfer.types.includes(PANE_DND_MIME)) return;
-    event.preventDefault();
-    setIsDropTarget(false);
-    const sourceId = event.dataTransfer.getData(PANE_DND_MIME);
-    if (sourceId && sourceId !== sessionId) reorderPane(sourceId, sessionId);
-  };
-
-  const handleContextMenu = (event: React.MouseEvent) => {
-    // Let native inputs (the search bar) keep their own context menu.
-    if ((event.target as HTMLElement).closest('input')) return;
-    event.preventDefault();
-    setFocusedPane(sessionId);
-    setContextMenu({ x: event.clientX, y: event.clientY });
-  };
-
-  const notifyCopyFailed = () =>
-    useNotificationStore
-      .getState()
-      .warning('Copy failed', 'The clipboard was busy or unavailable. Try again.');
-
-  const handleContextCopy = () => {
-    const term = terminalRef.current;
-    if (term) copyTerminalSelection(term, writeTextToClipboard, { onCopyFailed: notifyCopyFailed });
-  };
-
-  const handleContextCopyAll = () => {
-    const term = terminalRef.current;
-    if (!term) return;
-    const text = serializeTerminalBuffer(term.buffer.active);
-    writeTextToClipboard(text).catch(notifyCopyFailed);
-  };
-
-  const handleContextPaste = () => {
-    const term = terminalRef.current;
-    if (!term) return;
-    readText()
-      .then((text) => {
-        if (text) term.paste(text);
-        term.focus();
-      })
-      .catch(() => {
-        // Clipboard empty or non-text — nothing to paste.
-      });
-  };
-
-  const handleContextClear = () => {
-    terminalRef.current?.clear();
-    terminalRef.current?.focus();
-  };
-
-  const handleContextSearch = () => setSearchOpen(true);
 
   const handleApprove = async () => {
     if (!linkedTask || !currentProjectPath) return;
@@ -228,7 +137,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   return (
     <div
       onClick={handleContainerClick}
-      onContextMenu={handleContextMenu}
       className={`terminal-pane ${maximized ? 'terminal-pane-maximized' : ''}`}
       style={{
         '--terminal-pane-color': paneColor,
@@ -239,18 +147,10 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         title={paneTitle}
         maximized={maximized}
         canCreatePane={canCreatePane}
-        hasActivity={hasActivity}
-        hasExited={hasExited}
-        isDropTarget={isDropTarget}
         onTitleAction={handleTitleAction}
         onAddPane={handleAddPane}
         onToggleMaximize={() => toggleMaximizePane(sessionId)}
         onRemovePane={handleRemovePane}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onDragEnd={handleDragLeave}
       />
 
       <div
@@ -260,19 +160,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
 
       {searchOpen && (
         <TerminalSearchBar searchAddonRef={searchAddonRef} onClose={closeSearch} />
-      )}
-
-      {contextMenu && (
-        <TerminalPaneContextMenu
-          position={contextMenu}
-          hasSelection={Boolean(terminalRef.current?.hasSelection())}
-          onCopy={handleContextCopy}
-          onCopyAll={handleContextCopyAll}
-          onPaste={handleContextPaste}
-          onClear={handleContextClear}
-          onSearch={handleContextSearch}
-          onClose={() => setContextMenu(null)}
-        />
       )}
 
       {isWaitingReview && linkedTask && (
@@ -287,7 +174,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
                 setActiveTaskId(linkedTask.id);
                 setActiveView('review');
               }}
-              className="terminal-review-open-btn terminal-review-open-room secondary"
+              className="extracted-style-276 terminal-review-open-room secondary"
             >
               Open Review Room
             </button>

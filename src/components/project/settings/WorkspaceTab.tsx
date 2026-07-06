@@ -1,19 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Save, Terminal } from 'lucide-react';
 import { useProjectStore } from '../../../stores/projectStore';
-import {
-  MAX_TERMINAL_SCROLLBACK,
-  MIN_TERMINAL_SCROLLBACK,
-  useTerminalFontStore,
-} from '../../../stores/terminalFontStore';
 
 export const WorkspaceTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
   const updateWorkspaceConfig = useProjectStore((state) => state.updateWorkspaceConfig);
-  // Scrollback is an app-wide terminal preference (like the font), persisted immediately.
-  const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
-  const setScrollbackRows = useTerminalFontStore((state) => state.setScrollbackRows);
 
   const [workspaceName, setWorkspaceName] = useState('');
   const [memoryMode, setMemoryMode] = useState<'saple' | 'bridge-compatible' | 'both'>('saple');
@@ -21,18 +13,6 @@ export const WorkspaceTab: React.FC = () => {
   const [maxAgents, setMaxAgents] = useState(12);
   const [enableEditMode, setEnableEditMode] = useState(true);
   const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  // Local draft so intermediate keystrokes aren't clamped mid-typing; committed on blur.
-  const [scrollbackDraft, setScrollbackDraft] = useState(String(scrollbackRows));
-
-  useEffect(() => {
-    setScrollbackDraft(String(scrollbackRows));
-  }, [scrollbackRows]);
-
-  const commitScrollback = () => {
-    const parsed = parseInt(scrollbackDraft, 10);
-    if (Number.isFinite(parsed)) setScrollbackRows(parsed);
-    else setScrollbackDraft(String(scrollbackRows));
-  };
 
   useEffect(() => {
     if (workspaceConfig) {
@@ -57,7 +37,6 @@ export const WorkspaceTab: React.FC = () => {
   };
 
   return (
-    <>
     <section className="surface">
       <div className="section-header">
         <Terminal size={18} className="section-icon" />
@@ -110,14 +89,14 @@ export const WorkspaceTab: React.FC = () => {
               className="settings-input settings-input-narrow"
             />
           </div>
-          <div className="settings-checkbox-row input-group checkbox-group">
+          <div className="extracted-style-087 input-group checkbox-group">
             <input
               type="checkbox"
               id="enableEditMode"
               checked={enableEditMode}
-              onChange={e => setEnableEditMode(e.target.checked)} className="settings-checkbox"
+              onChange={e => setEnableEditMode(e.target.checked)} className="extracted-style-088"
             />
-            <label htmlFor="enableEditMode" className="settings-checkbox-label">
+            <label htmlFor="enableEditMode" className="extracted-style-089">
               Enable File Editing (allows modifying files via file browser)
             </label>
           </div>
@@ -131,35 +110,5 @@ export const WorkspaceTab: React.FC = () => {
         </div>
       )}
     </section>
-
-    <section className="surface">
-      <div className="section-header">
-        <Terminal size={18} className="section-icon" />
-        <span className="section-title">Terminal Preferences</span>
-      </div>
-      <p className="section-desc">
-        Applies to every terminal pane across all workspaces. Saved on this device.
-      </p>
-      <div className="settings-form">
-        <div className="input-group">
-          <label className="input-label" htmlFor="terminal-scrollback">Scrollback (lines)</label>
-          <input
-            id="terminal-scrollback"
-            type="number"
-            min={MIN_TERMINAL_SCROLLBACK}
-            max={MAX_TERMINAL_SCROLLBACK}
-            step={1000}
-            value={scrollbackDraft}
-            onChange={e => setScrollbackDraft(e.target.value)}
-            onBlur={commitScrollback}
-            className="settings-input settings-input-narrow"
-          />
-          <p className="settings-help-text">
-            How many lines of history each pane keeps ({MIN_TERMINAL_SCROLLBACK.toLocaleString()}–{MAX_TERMINAL_SCROLLBACK.toLocaleString()}).
-          </p>
-        </div>
-      </div>
-    </section>
-    </>
   );
 };

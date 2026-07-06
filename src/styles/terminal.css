@@ -1183,25 +1183,26 @@
   }
 }
 
-.terminal-empty-icon {
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-244 {
   color: var(--text-muted);
   margin-bottom: 8px;
 }
 
-.terminal-empty-text {
+.extracted-style-245 {
   color: var(--text-muted);
   font-size: 12px;
   margin-top: 4px;
 }
 
-.terminal-empty-actions {
+.extracted-style-246 {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: 16px;
 }
 
-.terminal-empty-provider-select {
+.extracted-style-247 {
   height: 34px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
@@ -1210,11 +1211,11 @@
   padding: 0 10px;
 }
 
-.terminal-restore-btn {
+.extracted-style-248 {
   margin-top: 10px;
 }
 
-.agents-setup-wrap {
+.extracted-style-249 {
   border: none;
   background: transparent;
   padding: 0 24px;
@@ -1223,29 +1224,29 @@
   margin-top: 40px;
 }
 
-.agents-setup-header {
+.extracted-style-250 {
   text-align: center;
   margin-bottom: 32px;
 }
 
-.agents-setup-title {
+.extracted-style-251 {
   font-size: 28px;
   font-weight: 600;
   margin-bottom: 12px;
   color: var(--text-primary);
 }
 
-.agents-setup-subtitle {
+.extracted-style-252 {
   color: var(--text-secondary);
   font-size: 15px;
   line-height: 1.5;
 }
 
-.agent-progress-block {
+.extracted-style-253 {
   margin-bottom: 24px;
 }
 
-.agent-progress-label {
+.extracted-style-254 {
   display: flex;
   justify-content: space-between;
   margin-bottom: 12px;
@@ -1253,18 +1254,18 @@
   font-size: 13px;
 }
 
-.agent-progress-count {
+.extracted-style-255 {
   font-weight: 600;
 }
 
-.agent-progress-track {
+.extracted-style-256 {
   height: 4px;
   background: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
 }
 
-.agent-quick-fill-row {
+.extracted-style-257 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1272,12 +1273,12 @@
   font-size: 13px;
 }
 
-.agent-quick-fill-label {
+.extracted-style-258 {
   color: var(--text-secondary);
   margin-right: 8px;
 }
 
-.quick-fill-option {
+.extracted-style-259 {
   padding: 6px 12px;
   border-radius: 4px;
   border: 1px solid var(--border);
@@ -1286,32 +1287,50 @@
   cursor: pointer;
 }
 
-.agent-picker-grid-layout {
+.extracted-style-260 {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.extracted-style-261 {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.extracted-style-262 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-bottom: 24px;
 }
 
-.agent-picker-label {
+.extracted-style-263 {
   flex: 1;
   font-weight: 500;
   color: var(--text-primary);
 }
 
-.agent-picker-controls {
+.extracted-style-264 {
   display: flex;
   align-items: center;
   gap: 16px;
   color: var(--text-secondary);
 }
 
-.agents-expand-row {
+.extracted-style-265 {
   text-align: center;
   margin-bottom: 24px;
 }
 
-.agents-expand-toggle {
+.extracted-style-266 {
   background: transparent;
   border: none;
   color: var(--text-secondary);
@@ -1322,28 +1341,28 @@
   font-weight: 600;
 }
 
-.custom-command-row {
+.extracted-style-267 {
   display: flex;
   align-items: flex-start;
   margin-bottom: 16px;
 }
 
-.custom-command-info {
+.extracted-style-268 {
   flex: 1;
 }
 
-.custom-command-title {
+.extracted-style-269 {
   font-weight: 500;
   margin-bottom: 4px;
   color: var(--text-primary);
 }
 
-.custom-command-desc {
+.extracted-style-270 {
   font-size: 13px;
   color: var(--text-secondary);
 }
 
-.custom-command-controls {
+.extracted-style-271 {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -1351,7 +1370,7 @@
   font-size: 13px;
 }
 
-.custom-command-all-btn {
+.extracted-style-272 {
   background: none;
   border: none;
   color: inherit;
@@ -1360,13 +1379,13 @@
   font-weight: 600;
 }
 
-.custom-command-stepper {
+.extracted-style-273 {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.custom-command-input {
+.extracted-style-274 {
   width: 100%;
   background: rgba(0,0,0,0.2);
   border: 1px solid var(--border);
@@ -1376,12 +1395,12 @@
   outline: none;
 }
 
-.agents-setup-footer {
+.extracted-style-275 {
   margin-top: 20px;
   padding-bottom: 20px;
 }
 
-.terminal-review-open-btn {
+.extracted-style-276 {
   margin-right: 8px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -1394,147 +1413,4 @@
   font-size: 12px;
   font-weight: 500;
   transition: background 0.2s;
-}
-
-/* ── Phase 3: pane titlebar indicators, drag-to-reorder, context menu ─────────────── */
-
-/* The title doubles as the drag grip for reordering panes. */
-.terminal-pane-title {
-  cursor: grab;
-}
-
-.terminal-pane-title:active {
-  cursor: grabbing;
-}
-
-/* Drop-target highlight while another pane is dragged over this titlebar. */
-.terminal-pane-titlebar-drop {
-  outline: 1px dashed color-mix(in srgb, var(--terminal-pane-color) 70%, transparent);
-  outline-offset: -2px;
-  background: color-mix(in srgb, var(--terminal-pane-color) 16%, var(--bg-surface-active));
-}
-
-/* "New output since last focus" dot. */
-.terminal-pane-activity-dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--terminal-pane-color);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--terminal-pane-color) 60%, transparent);
-}
-
-/* "Process exited" badge. */
-.terminal-pane-exit-badge {
-  flex: 0 0 auto;
-  margin-left: 2px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-danger, #ef4444) 45%, transparent);
-  background: color-mix(in srgb, var(--color-danger, #ef4444) 16%, transparent);
-  color: color-mix(in srgb, var(--color-danger, #ef4444) 80%, var(--text-primary));
-  font-family: var(--font-sans);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  line-height: 1.4;
-}
-
-/* Right-click pane context menu. */
-.terminal-context-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-}
-
-.terminal-context-menu {
-  position: fixed;
-  z-index: 1001;
-  min-width: 190px;
-  padding: 4px;
-  background: var(--bg-surface-light);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-}
-
-.terminal-context-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-.terminal-context-item:hover:not(:disabled) {
-  background: var(--bg-surface-active);
-  color: var(--text-primary);
-}
-
-.terminal-context-item:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.terminal-context-divider {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border);
-}
-
-/* Font-size stepper in the sidebar Terminal Controls. */
-.terminal-fontsize-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.terminal-fontsize-label {
-  margin-right: auto;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.terminal-fontsize-btn {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.terminal-fontsize-btn:hover {
-  background: var(--bg-surface-active);
-  color: var(--text-primary);
-}
-
-.terminal-fontsize-value {
-  min-width: 42px;
-  padding: 3px 4px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  cursor: pointer;
-}
-
-.terminal-fontsize-value:hover {
-  color: var(--accent);
 }

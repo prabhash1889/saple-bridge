@@ -29,7 +29,7 @@ export const ReviewFileList: React.FC<ReviewFileListProps> = ({
   <>
     <div className="file-list-container">
       {changedFiles.length === 0 ? (
-        <div className="review-file-list-empty compact-empty">No files changed.</div>
+        <div className="extracted-style-108 compact-empty">No files changed.</div>
       ) : (
         changedFiles.map((file) => {
           const fileClass = file.path === selectedFile ? 'active' : '';
@@ -50,7 +50,7 @@ export const ReviewFileList: React.FC<ReviewFileListProps> = ({
               />
               <span className="file-path" title={file.path}>{file.path}</span>
               <div className="file-badges">
-                <span className="review-file-status eyebrow">{file.status}</span>
+                <span className="extracted-style-109 eyebrow">{file.status}</span>
                 {file.insertions !== undefined && (
                   <span className="badge-ins">+{file.insertions}</span>
                 )}

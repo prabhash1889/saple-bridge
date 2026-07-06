@@ -197,11 +197,11 @@ Instructions: ${systemPrompt}
       >
         {/* Header */}
         <div style={headerStyle}>
-          <div className="task-drawer-title-group">
+          <div className="extracted-style-006">
             <span style={statusStyle(task.column)}>{task.column.toUpperCase()}</span>
             <h3 id="task-detail-title" style={titleStyle}>{task.title}</h3>
           </div>
-          <div className="task-drawer-header-actions">
+          <div className="extracted-style-007">
             <button
               onClick={() => { onEdit(task); onClose(); }}
               style={iconBtnStyle}
@@ -235,11 +235,11 @@ Instructions: ${systemPrompt}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}><CheckSquare size={14} /> Acceptance Criteria</h4>
               {task.acceptanceCriteria && task.acceptanceCriteria.length > 0 ? (
-                <div className="task-drawer-criteria-list">
+                <div className="extracted-style-008">
                   {task.acceptanceCriteria.map((c, i) => (
                     <div key={i} style={criteriaRowStyle}>
                       <input type="checkbox" readOnly checked={task.column === 'done'} style={checkboxStyle} />
-                      <span className="task-drawer-criteria-text">{c}</span>
+                      <span className="extracted-style-009">{c}</span>
                     </div>
                   ))}
                 </div>
@@ -252,7 +252,7 @@ Instructions: ${systemPrompt}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}><FileText size={14} /> Target Files</h4>
               {task.targetFiles && task.targetFiles.length > 0 ? (
-                <div className="task-drawer-file-chips">
+                <div className="extracted-style-010">
                   {task.targetFiles.map((file, i) => (
                     <span key={i} style={fileChipStyle}>
                       {file}
@@ -287,7 +287,7 @@ Instructions: ${systemPrompt}
             {/* Labels */}
             <div style={cardSectionStyle}>
               <h4 style={sectionTitleStyle}>Labels</h4>
-              <div className="task-drawer-label-list">
+              <div className="extracted-style-011">
                 {task.labels && task.labels.length > 0 ? (
                   task.labels.map(l => (
                     <span key={l} style={labelBadgeStyle}>{l}</span>
@@ -351,7 +351,7 @@ Instructions: ${systemPrompt}
         {/* Drawer Actions / Footer */}
         <div style={footerStyle}>
           {task.column === 'review' && (
-            <div className="task-drawer-review-actions">
+            <div className="extracted-style-012">
               <button
                 onClick={handleReject}
                 className="secondary-action"
@@ -370,7 +370,7 @@ Instructions: ${systemPrompt}
           )}
 
           {task.column !== 'review' && (
-            <div className="task-drawer-footer-actions">
+            <div className="extracted-style-013">
               {isTerminalRunning ? (
                 <button
                   onClick={handleViewTerminal}

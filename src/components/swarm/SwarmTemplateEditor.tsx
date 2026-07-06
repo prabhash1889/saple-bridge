@@ -117,14 +117,14 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
     <div style={containerStyle}>
       <div style={headerStyle}>
         <div>
-          <h3 className="swarm-panel-title">
+          <h3 className="extracted-style-137">
             Modify Swarm Template Preset
           </h3>
-          <p className="swarm-panel-subtitle">
+          <p className="extracted-style-138">
             Customize the coordinator and builder agents, models, prompts, and dependencies.
           </p>
         </div>
-        <div className="swarm-row-10">
+        <div className="extracted-style-139">
           <button onClick={onCancel} style={btnSecondaryStyle}>Cancel</button>
           <button onClick={handleSave} className="primary" style={btnPrimaryStyle}>
             <Save size={13} />
@@ -142,7 +142,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
 
       <div style={editorFormStyle}>
         <div style={formRowStyle}>
-          <div className="flex-1">
+          <div className="extracted-style-140">
             <label style={labelStyle}>Template Name</label>
             <input 
               type="text" 
@@ -151,7 +151,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
               style={inputStyle}
             />
           </div>
-          <div className="flex-2">
+          <div className="extracted-style-141">
             <label style={labelStyle}>Description</label>
             <input 
               type="text" 
@@ -163,7 +163,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
         </div>
 
         <div style={agentsSectionHeaderStyle}>
-          <h4 className="swarm-col-label">
+          <h4 className="extracted-style-142">
             Agent Nodes Configuration
           </h4>
           <button onClick={handleAddAgent} style={btnAddAgentStyle}>
@@ -195,7 +195,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
               {/* Grid Form */}
               <div style={cardBodyStyle}>
                 <div style={formRowStyle}>
-                  <div className="flex-1">
+                  <div className="extracted-style-143">
                     <label style={labelStyle}>Role</label>
                     <select 
                       value={agent.role} 
@@ -208,7 +208,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
                       <option value="reviewer">Reviewer</option>
                     </select>
                   </div>
-                  <div className="flex-1">
+                  <div className="extracted-style-144">
                     <label style={labelStyle}>Provider</label>
                     <select
                       value={agent.provider || 'codex'}
@@ -220,7 +220,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
                       ))}
                     </select>
                   </div>
-                  <div className="flex-1">
+                  <div className="extracted-style-145">
                     <label style={labelStyle}>Model</label>
                     <input 
                       type="text" 
@@ -260,7 +260,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
                         );
                       })}
                     {agents.length <= 1 && (
-                      <span className="swarm-empty-hint">
+                      <span className="extracted-style-146">
                         No other agents to depend on.
                       </span>
                     )}

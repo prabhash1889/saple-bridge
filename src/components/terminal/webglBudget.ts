@@ -37,6 +37,7 @@ export const webglDiag = (event: string, sessionId: string, extra?: Record<strin
   if (!WEBGL_DIAG) return;
   // performance.now() is monotonic and avoids the Date.now() restrictions elsewhere.
   const t = Math.round(performance.now());
+  // eslint-disable-next-line no-console
   console.log(
     `[webgl-diag +${t}ms] ${event} pane=${sessionId} active=${activeWebglContexts}/${MAX_WEBGL_CONTEXTS} holders=${webglHolders.size}`,
     extra ?? '',

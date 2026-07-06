@@ -129,7 +129,7 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
       >
         {/* Header */}
         <div style={headerStyle}>
-          <span id="swarm-wizard-title" className="swarm-strong">Create Swarm</span>
+          <span id="swarm-wizard-title" className="extracted-style-240">Create Swarm</span>
           <button onClick={onClose} style={closeBtnStyle} title="Close" aria-label="Close swarm wizard"><X size={16} /></button>
         </div>
 
@@ -147,8 +147,8 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
                   disabled={!complete && !active}
                   aria-current={active ? 'step' : undefined}
                 >
-                  <span className="swarm-inline-flex">{complete ? <Check size={13} /> : <Icon size={13} />}</span>
-                  <span className="swarm-uppercase">{s.label}</span>
+                  <span className="extracted-style-241">{complete ? <Check size={13} /> : <Icon size={13} />}</span>
+                  <span className="extracted-style-242">{s.label}</span>
                 </button>
                 {i < STEPS.length - 1 && <div style={connectorStyle(complete)} />}
               </React.Fragment>
@@ -173,7 +173,7 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
               <ChevronLeft size={14} /> Back
             </button>
           )}
-          <span className="swarm-eyebrow">
+          <span className="extracted-style-243">
             STEP {state.step + 1} OF {STEPS.length}
           </span>
           {isLast ? (

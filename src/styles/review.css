@@ -402,44 +402,60 @@
   gap: 4px;
 }
 
-.review-section-heading {
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-090 {
   margin: 0 0 6px 0;
   font-size: 13px;
 }
 
-.review-brief-text {
+.extracted-style-091 {
   margin: 0;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-.review-target-files {
+.extracted-style-092 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+}
+
+.extracted-style-093 {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
 
-.review-target-file-pill {
+.extracted-style-094 {
   font-size: 10px;
   font-family: monospace;
 }
 
-.review-metadata {
+.extracted-style-095 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+}
+
+.extracted-style-096 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+}
+
+.extracted-style-097 {
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-.review-rejection-label {
+.extracted-style-098 {
   font-size: 10px;
   color: var(--color-danger);
 }
 
-.review-decision-actions {
+.extracted-style-099 {
   display: flex;
   gap: 8px;
 }
 
-.review-decision-btn {
+.extracted-style-100 {
   flex: 1;
   padding: 8px;
   display: flex;
@@ -448,24 +464,28 @@
   gap: 6px;
 }
 
-.review-outcome-panel {
+.extracted-style-101 {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.review-outcome-status {
+.extracted-style-102 {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 13px;
 }
 
-.review-outcome-label {
+.extracted-style-103 {
   font-weight: bold;
 }
 
-.review-notes-box {
+.extracted-style-104 {
+  font-weight: bold;
+}
+
+.extracted-style-105 {
   background: var(--bg-card);
   padding: 10px;
   border-radius: 4px;
@@ -473,13 +493,13 @@
   border: 1px solid var(--border);
 }
 
-.review-notes-text {
+.extracted-style-106 {
   margin: 4px 0 0 0;
   white-space: pre-wrap;
   color: var(--text-secondary);
 }
 
-.review-reopen-btn {
+.extracted-style-107 {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -488,60 +508,60 @@
   padding: 8px;
 }
 
-.review-file-list-empty {
+.extracted-style-108 {
   padding: 12px;
 }
 
-.review-file-status {
+.extracted-style-109 {
   font-size: 10px;
 }
 
-.review-task-eyebrow {
+.extracted-style-110 {
   margin-top: 4px;
   font-size: 9px;
 }
 
-.review-empty-fill {
+.extracted-style-111 {
   height: 100%;
   justify-content: center;
 }
 
-.review-task-title {
+.extracted-style-112 {
   margin: 0;
   font-size: 16px;
 }
 
-.review-header-action {
+.extracted-style-113 {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.review-verify-heading {
+.extracted-style-114 {
   display: flex;
   align-items: center;
   gap: 6px;
   font-weight: bold;
 }
 
-.review-verify-file-list {
+.extracted-style-115 {
   margin: 4px 0 0 16px;
   padding: 0;
 }
 
-.review-verify-file-path {
+.extracted-style-116 {
   font-family: monospace;
   font-size: 11px;
 }
 
-.review-verify-btn {
+.extracted-style-117 {
   padding: 6px 12px;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.diff-line-number {
+.extracted-style-118 {
   color: var(--text-muted);
   border-right: 1px solid var(--border);
   display: inline-block;
@@ -552,6 +572,15 @@
   user-select: none;
 }
 
-.review-status-label {
+.extracted-style-282 {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.extracted-style-283 {
   text-transform: capitalize;
 }

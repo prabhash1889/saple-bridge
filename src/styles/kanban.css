@@ -110,68 +110,69 @@
   font-size: 13px;
 }
 
-.kanban-empty-icon {
+/* Extracted from static JSX style props during inline-style consolidation. */
+.extracted-style-003 {
   color: var(--text-muted);
   margin-bottom: 16px;
 }
 
-.kanban-empty-text {
+.extracted-style-004 {
   font-size: 13px;
   color: var(--text-muted);
   margin-top: 4px;
   margin-bottom: 20px;
 }
 
-.kanban-empty-actions {
+.extracted-style-005 {
   display: flex;
   gap: 8px;
 }
 
-.task-drawer-title-group {
+.extracted-style-006 {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.task-drawer-header-actions {
+.extracted-style-007 {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.task-drawer-criteria-list {
+.extracted-style-008 {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-top: 8px;
 }
 
-.task-drawer-criteria-text {
+.extracted-style-009 {
   font-size: 13px;
   color: var(--text-primary);
 }
 
-.task-drawer-file-chips {
+.extracted-style-010 {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
 }
 
-.task-drawer-label-list {
+.extracted-style-011 {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 8px;
 }
 
-.task-drawer-review-actions {
+.extracted-style-012 {
   display: flex;
   gap: 12px;
   width: 100%;
 }
 
-.task-drawer-footer-actions {
+.extracted-style-013 {
   display: flex;
   gap: 12px;
   width: 100%;

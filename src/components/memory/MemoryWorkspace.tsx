@@ -79,7 +79,7 @@ export const MemoryWorkspace: React.FC = () => {
     return (
       <div className="memory-empty-state">
         <div className="memory-empty-card">
-          <FolderOpen size={40} className="memory-empty-icon" />
+          <FolderOpen size={40} className="extracted-style-025" />
           <h3>No Workspace Active</h3>
           <p>
             Open a workspace directory to load and view compounding memory.

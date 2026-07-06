@@ -246,7 +246,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
     try {
       const snapshots = await invoke<string[]>('list_memory_snapshots', { projectPath });
       set({ snapshots });
-    } catch {
+    } catch (err) {
       // ignore
     }
   },
