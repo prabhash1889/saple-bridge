@@ -7,11 +7,12 @@ import { useFileStore } from '../../stores/fileStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useThemeStore, resolveTheme } from '../../stores/themeStore';
 import {
-  detectLang, langLabel, isMarkdown, canHighlight, tokenizeCode, tokenizeSync,
-  ensureLanguage, tokenStyle, shikiThemeFor,
+  detectLang, langLabel, isMarkdown, canHighlight, tokenizeCode,
+  tokenStyle, shikiThemeFor,
   type ThemedToken,
 } from '../../lib/highlighter';
 import { writeTextToClipboard } from '../../lib/clipboard';
+import { CodeMirrorEditor } from './CodeMirrorEditor';
 
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
 
@@ -24,9 +25,11 @@ interface LineMatch {
 
 export const CodeViewer: React.FC = () => {
   const { currentProjectPath, workspaceConfig } = useProjectStore();
-  const { activeFile, fileContent, saveFileContent, openExternal, loading, error, clearError } = useFileStore();
+  const { activeFile, fileContent, saveFileContent, openExternal, loading, error, clearError, dirty, setDirty } = useFileStore();
   const themeMode = useThemeStore(s => s.mode);
   const shikiTheme = shikiThemeFor(resolveTheme(themeMode));
+  // CodeMirror only needs a light/dark split; reuse the same classification as Shiki.
+  const editorTheme: 'light' | 'dark' = shikiTheme === 'light-plus' ? 'light' : 'dark';
 
   const [editMode, setEditMode] = useState(false);
   const [editedContent, setEditedContent] = useState('');
@@ -40,13 +43,8 @@ export const CodeViewer: React.FC = () => {
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
-  // Bumped once the grammar finishes loading, so the edit overlay re-tokenizes.
-  const [warmTick, setWarmTick] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLPreElement>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
 
   const lang = activeFile ? detectLang(activeFile) : undefined;
@@ -63,8 +61,9 @@ export const CodeViewer: React.FC = () => {
     setFindOpen(false);
     setQuery('');
     setMdView('code');
+    setDirty(false);
     clearError();
-  }, [fileContent, activeFile, clearError]);
+  }, [fileContent, activeFile, clearError, setDirty]);
 
   // Highlight on a background pass: render plain text first, swap in Shiki tokens
   // when ready. Re-runs on theme change so colors follow light/dark.
@@ -79,25 +78,6 @@ export const CodeViewer: React.FC = () => {
   }, [fileContent, lang, shikiTheme, showingCode]);
 
   const rawLines = useMemo(() => fileContent.split('\n'), [fileContent]);
-  const editLines = useMemo(() => editedContent.split('\n'), [editedContent]);
-
-  // Warm up the grammar when entering edit mode so the overlay can highlight
-  // synchronously. Usually already loaded from viewing, but cover the cold case.
-  useEffect(() => {
-    if (!editMode || !lang) return;
-    let active = true;
-    ensureLanguage(lang).then(() => { if (active) setWarmTick(t => t + 1); });
-    return () => { active = false; };
-  }, [editMode, lang]);
-
-  // Tokens for the edit overlay — computed synchronously so the highlighted
-  // layer never lags behind what the textarea shows. (warmTick forces a recompute
-  // once the grammar has loaded.)
-  const editTokens = useMemo(() => {
-    if (!editMode || !lang || !canHighlight(editedContent)) return null;
-    return tokenizeSync(editedContent, lang, shikiTheme);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, lang, editedContent, shikiTheme, warmTick]);
 
   // All search hits across the file, computed on the raw text.
   const matches = useMemo(() => {
@@ -218,17 +198,6 @@ export const CodeViewer: React.FC = () => {
     return renderChunk(rawLines[lineIndex] ?? '', 0, undefined, `p${lineIndex}`);
   }, [tokens, matchesByLine, activeMatch, rawLines]);
 
-  // Render one line of the edit overlay's highlight layer (no find marks here).
-  const renderEditLine = useCallback((lineIndex: number): React.ReactNode => {
-    const lineToks = editTokens?.[lineIndex];
-    if (lineToks && lineToks.length) {
-      return lineToks.map((tok, ti) => (
-        <span style={tokenStyle(tok)} key={ti}>{tok.content}</span>
-      ));
-    }
-    return editLines[lineIndex] ?? '';
-  }, [editTokens, editLines]);
-
   if (!activeFile) {
     return (
       <div className="code-viewer-empty">
@@ -267,17 +236,6 @@ export const CodeViewer: React.FC = () => {
     }
   };
 
-  // The textarea is the scroller; mirror its scroll onto the highlight layer
-  // (behind it) and the line-number gutter so all three stay aligned.
-  const syncEditScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
-    const { scrollTop, scrollLeft } = e.currentTarget;
-    if (highlightRef.current) {
-      highlightRef.current.scrollTop = scrollTop;
-      highlightRef.current.scrollLeft = scrollLeft;
-    }
-    if (gutterRef.current) gutterRef.current.scrollTop = scrollTop;
-  };
-
   const canEdit = workspaceConfig?.enableEditMode ?? true;
   const lineCount = tokens ? tokens.length : rawLines.length;
   const tooLarge = !!lang && !canHighlight(fileContent);
@@ -291,6 +249,7 @@ export const CodeViewer: React.FC = () => {
             <FileCode size={13} />
           </span>
           <span className="file-path-text">{activeFile}</span>
+          {dirty && <span className="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes" />}
           <span className="lang-badge">{langLabel(lang)}</span>
           {tooLarge && <span className="lang-note" title="File too large to highlight">no highlight</span>}
         </div>
@@ -361,14 +320,14 @@ export const CodeViewer: React.FC = () => {
             editMode ? (
               <>
                 <button
-                  onClick={() => { setEditMode(false); setEditedContent(fileContent); clearError(); }}
+                  onClick={() => { setEditMode(false); setEditedContent(fileContent); setDirty(false); clearError(); }}
                   className="secondary icon-text-btn"
                   disabled={loading}
                 >
                   <X size={13} />
                   <span>Cancel</span>
                 </button>
-                <button onClick={handleSave} className="primary icon-text-btn" disabled={loading}>
+                <button onClick={handleSave} className="primary icon-text-btn" disabled={loading || !dirty}>
                   <Save size={13} />
                   <span>{loading ? 'Saving...' : 'Save'}</span>
                 </button>
@@ -394,34 +353,17 @@ export const CodeViewer: React.FC = () => {
             <MarkdownPreview content={fileContent} />
           </Suspense>
         ) : editMode ? (
-          <div className="code-edit-wrap">
-            <div className="code-gutter" ref={gutterRef}>
-              {editLines.map((_, i) => (
-                <span key={i} className="gutter-line-num">{i + 1}</span>
-              ))}
-            </div>
-            <div className="code-edit-area">
-              {/* Highlighted layer behind the transparent textarea */}
-              <pre
-                ref={highlightRef}
-                className={wrap ? 'code-edit-highlight wrap' : 'code-edit-highlight'}
-                aria-hidden="true"
-              >
-                {editLines.map((_, i) => (
-                  <div key={i} className="hl-line">{renderEditLine(i)}</div>
-                ))}
-              </pre>
-              <textarea
-                ref={textareaRef}
-                className={wrap ? 'code-edit-input wrap' : 'code-edit-input'}
-                value={editedContent}
-                onChange={e => setEditedContent(e.target.value)}
-                onScroll={syncEditScroll}
-                disabled={loading}
-                spellCheck={false}
-              />
-            </div>
-          </div>
+          <CodeMirrorEditor
+            value={fileContent}
+            filePath={activeFile}
+            theme={editorTheme}
+            wrap={wrap}
+            onChange={(doc) => {
+              setEditedContent(doc);
+              setDirty(doc !== fileContent);
+            }}
+            onSave={handleSave}
+          />
         ) : (
           <>
             {findOpen && (

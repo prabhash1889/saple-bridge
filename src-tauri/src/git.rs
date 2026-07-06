@@ -219,6 +219,13 @@ pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<St
 }
 
 #[tauri::command]
+pub async fn git_status(project_path: String) -> Result<Vec<GitFileStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || git_status_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn git_diff_file(project_path: String, file_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || git_diff_file_inner(project_path, file_path))
         .await

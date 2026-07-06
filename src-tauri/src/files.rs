@@ -324,6 +324,196 @@ pub async fn reveal_in_file_explorer(project_path: String, file_path: String) ->
         .map_err(|e| e.to_string())?
 }
 
+// --- File management (create / rename / delete) ------------------------------
+// All paths route through `get_project_file_path`, which rejects traversal and
+// proves containment against the workspace root, so these can never touch a path
+// outside the selected project.
+
+fn create_file_inner(project_path: String, file_path: String) -> Result<(), String> {
+    let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
+    if full_path.exists() {
+        return Err("A file or folder with that name already exists".to_string());
+    }
+    // create_new so a race can't clobber a file that appeared after the check.
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&full_path)
+        .map_err(|e| format!("Failed to create file: {}", e))?;
+    Ok(())
+}
+
+fn create_directory_inner(project_path: String, dir_path: String) -> Result<(), String> {
+    let full_path = crate::project::get_project_file_path(&project_path, &dir_path)?;
+    if full_path.exists() {
+        return Err("A file or folder with that name already exists".to_string());
+    }
+    fs::create_dir_all(&full_path).map_err(|e| format!("Failed to create folder: {}", e))
+}
+
+fn rename_path_inner(project_path: String, from_path: String, to_path: String) -> Result<(), String> {
+    let from = crate::project::get_project_file_path(&project_path, &from_path)?;
+    if !from.exists() {
+        return Err("Source path no longer exists".to_string());
+    }
+    // Validate the destination for containment even though it doesn't exist yet.
+    let to = crate::project::get_project_file_path(&project_path, &to_path)?;
+    if to.exists() {
+        return Err("A file or folder with that name already exists".to_string());
+    }
+    fs::rename(&from, &to).map_err(|e| format!("Failed to rename: {}", e))
+}
+
+fn delete_path_inner(project_path: String, file_path: String) -> Result<(), String> {
+    let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
+    if !full_path.exists() {
+        return Err("Path no longer exists".to_string());
+    }
+    // Recycle bin rather than permanent delete, so an accidental removal is recoverable.
+    trash::delete(&full_path).map_err(|e| format!("Failed to move to trash: {}", e))
+}
+
+#[tauri::command]
+pub async fn create_file(project_path: String, file_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || create_file_inner(project_path, file_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn create_directory(project_path: String, dir_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || create_directory_inner(project_path, dir_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn rename_path(project_path: String, from_path: String, to_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rename_path_inner(project_path, from_path, to_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_path(project_path: String, file_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_path_inner(project_path, file_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// --- Workspace text search ----------------------------------------------------
+
+const MAX_SEARCH_HITS: usize = 500;
+const MAX_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub path: String,      // Relative path from project root
+    pub line: usize,       // 1-based line number
+    pub column: usize,     // 1-based column of the match start
+    pub line_text: String, // The matching line (trimmed of trailing newline), capped
+}
+
+fn search_dir_recursive(
+    current_dir: &Path,
+    base_path: &Path,
+    needle_lower: &str,
+    results: &mut Vec<SearchHit>,
+    truncated: &mut bool,
+) {
+    if results.len() >= MAX_SEARCH_HITS {
+        *truncated = true;
+        return;
+    }
+    let read_dir = match fs::read_dir(current_dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in read_dir {
+        if results.len() >= MAX_SEARCH_HITS {
+            *truncated = true;
+            return;
+        }
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = metadata.is_dir();
+        let size_bytes = if is_dir { None } else { Some(metadata.len()) };
+        if is_ignored(&name, is_dir, size_bytes) {
+            continue;
+        }
+        if is_dir {
+            search_dir_recursive(&path, base_path, needle_lower, results, truncated);
+        } else {
+            if metadata.len() > MAX_SEARCH_FILE_BYTES {
+                continue;
+            }
+            let content = match fs::read(&path) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => text,
+                    Err(_) => continue, // skip binary / non-UTF-8
+                },
+                Err(_) => continue,
+            };
+            let rel_path = match path.strip_prefix(base_path) {
+                Ok(p) => p.to_string_lossy().to_string().replace('\\', "/"),
+                Err(_) => continue,
+            };
+            for (idx, line) in content.lines().enumerate() {
+                if let Some(col) = line.to_lowercase().find(needle_lower) {
+                    let snippet: String = line.chars().take(400).collect();
+                    results.push(SearchHit {
+                        path: rel_path.clone(),
+                        line: idx + 1,
+                        column: col + 1,
+                        line_text: snippet,
+                    });
+                    if results.len() >= MAX_SEARCH_HITS {
+                        *truncated = true;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub hits: Vec<SearchHit>,
+    pub truncated: bool,
+}
+
+fn search_in_files_inner(project_path: String, query: String) -> Result<SearchResult, String> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return Ok(SearchResult { hits: Vec::new(), truncated: false });
+    }
+    let base = Path::new(&project_path);
+    let canonical_base = base.canonicalize().map_err(|e| format!("Base path error: {}", e))?;
+    let needle_lower = needle.to_lowercase();
+    let mut results = Vec::new();
+    let mut truncated = false;
+    search_dir_recursive(&canonical_base, &canonical_base, &needle_lower, &mut results, &mut truncated);
+    Ok(SearchResult { hits: results, truncated })
+}
+
+#[tauri::command]
+pub async fn search_in_files(project_path: String, query: String) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search_in_files_inner(project_path, query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +537,35 @@ mod tests {
         assert!(results.is_ok());
         let files = results.unwrap();
         assert!(!files.is_empty());
+    }
+
+    #[test]
+    fn create_file_rejects_traversal() {
+        let project_path = env!("CARGO_MANIFEST_DIR").to_string();
+        let err = create_file_inner(project_path, "../escapes.txt".to_string());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn rename_rejects_absolute_dest() {
+        let project_path = env!("CARGO_MANIFEST_DIR").to_string();
+        let abs = if cfg!(windows) { "C:/Windows/x.txt" } else { "/tmp/x.txt" };
+        let err = rename_path_inner(project_path, "Cargo.toml".to_string(), abs.to_string());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn search_finds_known_token() {
+        // Cargo.toml in the crate root always contains the package name "saple-bridge".
+        let project_path = env!("CARGO_MANIFEST_DIR").to_string();
+        let res = search_in_files_inner(project_path, "saple-bridge".to_string()).unwrap();
+        assert!(res.hits.iter().any(|h| h.path == "Cargo.toml"));
+    }
+
+    #[test]
+    fn search_empty_query_returns_nothing() {
+        let project_path = env!("CARGO_MANIFEST_DIR").to_string();
+        let res = search_in_files_inner(project_path, "   ".to_string()).unwrap();
+        assert!(res.hits.is_empty());
     }
 }

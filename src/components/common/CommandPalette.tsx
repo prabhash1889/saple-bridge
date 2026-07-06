@@ -10,6 +10,7 @@ import { useKanbanStore, Task } from '../../stores/kanbanStore';
 import { useMemoryStore } from '../../stores/memoryStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useShortcutsHelpStore } from '../../stores/shortcutsHelpStore';
+import { useFileStore } from '../../stores/fileStore';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
 import { useFocusTrap } from '../../lib/useFocusTrap';
@@ -235,6 +236,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
             setMode('tasks');
             setSearch('');
             setSelectedIndex(0);
+          },
+        },
+        {
+          id: 'search_in_files',
+          name: 'Search in Files',
+          description: 'Full-text search across the workspace in the Files room',
+          category: 'Files',
+          icon: Search,
+          action: () => {
+            useFileStore.getState().requestSearch();
+            setActiveView('editor');
+            onClose();
           },
         },
         {

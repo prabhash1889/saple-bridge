@@ -97,21 +97,25 @@ Makes every later UI change cheaper and safer. This is styling/token work; it do
 
 ---
 
-## Phase 4 - Editor and Files room
+## Phase 4 - Editor and Files room - DONE
 
-### 4.1 CodeMirror 6 editor
-- Replace the textarea+overlay editing path in `src/components/editor/CodeViewer.tsx` with CodeMirror 6 (`@codemirror/state`, `@codemirror/view`, language packs loaded lazily per file type). Gains: proper undo/redo, search/replace, bracket matching, multi-cursor, huge-file viewport rendering.
-- Keep Shiki for the read-only viewing path initially (it is already good), or unify on CodeMirror read-only mode if it proves visually equal - decide during implementation, prefer one engine long-term.
-- Preserve existing behaviors: markdown Code/Preview toggle, `enableEditMode` workspace flag, Open Externally, copy, wrap toggle.
-- Add Ctrl+S save and a dirty indicator; warn on navigating away with unsaved changes (use existing `confirmStore`).
+**Status: Complete (2026-07-06).** typecheck / lint (0 errors, only pre-existing exhaustive-deps warnings) / `npm test` (29 passed, +6 new fileStore tab tests) / `npm run build` / `cargo check` / `cargo test` (34 passed, +4 new file-op/search tests) all green locally. Remaining is a manual `npm run tauri:dev` eyeball of editing, tabs, tree ops, and search.
 
-### 4.2 Files room capability
-- Multi-file tabs across the top of the editor pane (open files list in `fileStore`, most-recent-first, middle-click close).
-- Git-aware `FileTree`: modified/added/untracked badges using existing `git.rs` status command.
-- File operations in the tree (new file/folder, rename, delete to recycle bin) - Rust commands in `files.rs` with the existing path-containment validation; confirm destructive ops via `confirmStore`.
-- Workspace-wide text search: Rust-side search command (walk + match, respect `.gitignore`, cap results) with a search panel in the Files room; reuse for a "Search in files" command-palette entry.
+### 4.1 CodeMirror 6 editor - done
+- [x] Replaced the textarea+overlay edit path in `CodeViewer.tsx` with a dedicated `CodeMirrorEditor.tsx` (`@codemirror/state`, `@codemirror/view`, `codemirror` `basicSetup`, `@codemirror/commands` `indentWithTab`). This brings persistent undo/redo, `Ctrl+F` search/replace, bracket matching, multi-cursor, and viewport rendering for large files - all from the batteries-included setup rather than hand-rolled. Language packs (`@codemirror/lang-*`) load lazily per file extension via a `Compartment`, so each grammar is a separate chunk.
+- [x] Kept Shiki for the read-only viewing path (per the plan's "keep Shiki initially" note) - only edit mode swapped engines, which isolates the change and leaves the viewer untouched. Long-term unification onto one engine is still open.
+- [x] Preserved existing behaviors: markdown Code/Preview toggle, `enableEditMode` flag (still enforced Rust-side in `write_text_file`), Open Externally, copy, wrap toggle (live `EditorView.lineWrapping` compartment), and light/dark theme (reuses the same classification as Shiki via `@codemirror/theme-one-dark`).
+- [x] `Ctrl+S` saves from inside the editor; a dirty dot shows in the header and on the active tab; the Save button disables when clean. Switching files or closing a dirty tab prompts through `confirmStore`. The dead edit-overlay CSS/Shiki-sync code was removed.
 
-**Verification:** unit tests for fileStore tab logic; E2E: edit/save/undo across large files (>5k lines), tabs, tree operations, search; `cargo test` for the new Rust search/file-op commands including containment tests.
+### 4.2 Files room capability - done
+- [x] Multi-file tabs (`EditorTabs.tsx`) across the top of the editor pane, backed by `fileStore.openFiles` (most-recent-first, de-duplicated). Middle-click or the ✕ closes a tab; closing the active tab activates its neighbor.
+- [x] Git-aware `FileTree`: modified/added/untracked/deleted badges (M/A/U/D, color-coded) from a new `git_status` Tauri command wrapping the existing `git_status_inner`. Non-git workspaces degrade silently to no badges.
+- [x] File operations in the tree via right-click context menu + toolbar (new file/folder, rename, delete). New Rust commands in `files.rs` (`create_file`, `create_directory`, `rename_path`, `delete_path`) all route through `get_project_file_path` for path-containment; delete uses the `trash` crate (recycle bin, recoverable) and is confirmed via `confirmStore`. Tabs follow renames and close on delete.
+- [x] Workspace-wide text search: a Rust `search_in_files` command (walks the tree, reuses the tree's ignore list for `node_modules`/`target`/`.git`/binaries, skips non-UTF-8 and >1MB files, caps at 500 hits with a `truncated` flag) surfaced in a `FileSearchPanel` reached from a Files/Search toggle in the room, plus a "Search in Files" command-palette entry that navigates in and opens the panel.
+
+**Known limitation:** the unsaved-changes guard covers in-room navigation (switching files, closing tabs) but not switching to another room, which unmounts the editor and discards edits silently. Intercepting global room navigation would be invasive against the current nav wiring; deferred rather than shipped half-wired.
+
+**Verification:** typecheck / lint / `npm test` (29) / `npm run build` / `cargo check` / `cargo test` (34) green locally. New tests: `fileStore.test.ts` (tab open/close/dirty-guard/rename-follow/delete-descendants) and Rust `files::tests` (create-traversal reject, rename absolute-dest reject, search hit/empty). Remaining: manual `tauri:dev` walk - edit/save/undo a large file, exercise tabs, tree new/rename/delete, and full-text search.
 
 ---
 
