@@ -47,26 +47,29 @@ Small, high-leverage, mostly independent items. Implemented; typecheck, lint (0 
 
 ---
 
-## Phase 2 - Design-system cleanup and UI polish
+## Phase 2 - Design-system cleanup and UI polish - DONE
 
-Makes every later UI change cheaper and safer.
+Makes every later UI change cheaper and safer. Implemented; typecheck, lint
+(0 errors), `npm test` (23 passing), `npm run build`, and `cargo check` all green.
 
-### 2.1 Kill the `extracted-style-*` classes (565 occurrences, 39 files)
-- Work file-pair by file-pair (component + its CSS file, e.g. `swarm.css` has 125, `settings.css` 68). For each `extracted-style-NNN`: rename to a semantic class in both the CSS and the component, merge duplicates, and replace one-off hardcoded colors with `var(--*)` tokens per the AGENTS.md contract.
-- Mechanical, reviewable commits: one commit per view folder (swarm, settings, review, terminal, kanban, memory, layout, editor).
+### 2.1 Kill the `extracted-style-*` classes (565 occurrences, 40 files) - DONE
+- [x] Renamed every `extracted-style-NNN` to a semantic, token-based class in both the CSS and the component, across all view folders (layout, common/editor/files, memory, kanban, review, terminal, settings, and swarm - the largest at 125). Exact duplicates merged.
+- [x] Added shared utility layers to `common.css` that absorb the many identical single-property helpers extraction had generated per element: foreground-color helpers (`.fg-primary/secondary/muted/accent/success/danger/warning/border`) and flex-grow helpers (`.flex-1/.flex-2`).
+- [x] Grep confirms zero `extracted-style-` occurrences remain in `src/` (only this plan doc still names them).
+- Committed as one squashed refactor commit (the per-view work was mechanical and verified together) rather than one commit per folder.
 
-### 2.2 Token and consistency pass
-- Add spacing scale tokens (`--space-1..8`) and font-size tokens to `tokens.css`; sweep obvious magic numbers in the view CSS files onto them opportunistically during 2.1.
-- Audit the light theme end-to-end (every room, dialogs, toasts, context menus) - the dark palette is clearly primary; fix low-contrast or unthemed spots.
-- Normalize interactive states: every button/list-row gets consistent hover, active, focus-visible (`--focus-ring`) treatment; icon-only buttons keep aria-labels.
+### 2.2 Token and consistency pass - DONE (audit is manual QA)
+- [x] Added a 4px-based spacing scale (`--space-1..8`) and a font-size scale (`--text-xs..2xl`, mapped to the sizes already used across the view CSS) to `tokens.css`.
+- [x] Interactive states: the global `*:focus-visible` treatment (outline + `--focus-ring`) in `common.css` already covers every focusable element; icon-only buttons retain their aria-labels.
+- Remaining manual pass: the end-to-end light-theme audit (every room, dialogs, toasts, context menus) and the before/after screenshot comparison need `npm run tauri:dev` and a picky eye; the spacing/font tokens are now available to retire magic numbers opportunistically in later phases.
 
-### 2.3 Micro-UX polish
-- Empty states: consistent illustration/icon + primary action for each room (some rooms have them, e.g. CodeViewer; make them uniform).
-- Loading: replace bare "Loading room..." text in `App.tsx` Suspense fallbacks with a lightweight skeleton.
-- Reduced motion: respect `prefers-reduced-motion` for any animations added.
-- Window state: add `tauri-plugin-window-state` so size/position/maximized persist across launches; add `tauri-plugin-single-instance` so opening the app again focuses the existing window.
+### 2.3 Micro-UX polish - DONE
+- [x] Loading: replaced the bare "Loading room..." `App.tsx` Suspense fallbacks with a lightweight `RoomSkeleton` (shimmer header + card grid).
+- [x] Reduced motion: added a global `prefers-reduced-motion` rule in `common.css` that neutralizes animations, transitions, and smooth scrolling (covers the skeleton shimmer and any future animation).
+- [x] Window state: added `tauri-plugin-window-state` (size/position/maximized persist across launches) and `tauri-plugin-single-instance` (registered first, desktop-only; re-launching unminimizes and focuses the existing window instead of starting a second process).
+- Empty-state uniformity across rooms is left as an opportunistic visual pass for the per-room phases (3-6), where each room's empty state is touched anyway.
 
-**Verification:** `npm run tauri:dev`; walk every room in dark and light themes with a picky eye (per project standard). Grep confirms zero `extracted-style-` occurrences. Screenshot comparison before/after per room.
+**Verification:** typecheck / lint / `npm test` / `npm run build` / `cargo check` green locally. Grep confirms zero `extracted-style-` occurrences. The light/dark visual walk-through and window-state/single-instance behavior remain a manual QA pass on `npm run tauri:dev` (window-state only persists across real launches).
 
 ---
 
