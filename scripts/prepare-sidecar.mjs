@@ -11,7 +11,8 @@
 // TARGET (build.rs), and the bundle layout all in agreement.
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, existsSync, readFileSync, renameSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -69,5 +70,25 @@ mkdirSync(binDir, { recursive: true });
 
 const src = join(releaseDir, srcName);
 const dest = join(binDir, destName);
-copyFileSync(src, dest);
-console.log(`\n✓ Staged sidecar → src-tauri/binaries/${destName}\n`);
+
+const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+
+// Skip the copy when the staged sidecar is already byte-identical — the common case on
+// incremental dev runs, and it sidesteps EBUSY when something (the app, an MCP client) is
+// running the staged binary.
+if (existsSync(dest) && sha256(src) === sha256(dest)) {
+  console.log(`\n✓ Sidecar already up to date → src-tauri/binaries/${destName}\n`);
+} else {
+  try {
+    copyFileSync(src, dest);
+  } catch (err) {
+    if (err.code !== 'EBUSY' && err.code !== 'EPERM') throw err;
+    // The staged binary is locked by a running process. Windows can't overwrite a running
+    // exe, but it CAN be renamed away — move it aside and stage the fresh build in its place.
+    const aside = `${dest}.stale-${Date.now()}`;
+    renameSync(dest, aside);
+    copyFileSync(src, dest);
+    console.log(`(previous sidecar was in use; moved aside to ${aside})`);
+  }
+  console.log(`\n✓ Staged sidecar → src-tauri/binaries/${destName}\n`);
+}
