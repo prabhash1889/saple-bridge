@@ -7,7 +7,7 @@ import { useProjectStore } from '../../../../stores/projectStore';
 import { PROVIDER_LABELS, EXPERIMENTAL_PROVIDERS } from '../providerMeta';
 import { ROLE_LABELS, ROLE_COLORS } from '../constants';
 import { getSkillById } from '../skills';
-import { heroWrapStyle, heroIconWrapStyle, heroTitleStyle, heroSubtitleStyle, sectionLabelStyle, warningBannerStyle } from '../wizardStyles';
+import { heroWrapStyle, heroIconWrapStyle, heroTitleStyle, heroSubtitleStyle, sectionLabelStyle, warningBannerStyle, errorBannerStyle } from '../wizardStyles';
 
 export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
   const { swarmName, directory, mission, agents, skills, contextFiles } = state;
@@ -17,12 +17,14 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
 
   useEffect(() => { void refreshReadiness(); }, [refreshReadiness]);
 
-  // Derive readiness from the live providers list so this re-renders on refresh.
+  // Derive readiness from the live providers list so this re-renders on refresh. A CLI
+  // sign-in (subscription/OAuth login) counts the same as a stored API key — mirroring
+  // providerStore.isReady — so a `claude`/`codex` login doesn't warn about "no credentials".
   const isReady = (p: AgentProvider): boolean => {
     const entry = providers.find((x) => x.provider === p);
     if (!entry) return false;
     if (p === 'custom') return entry.enabled;
-    return entry.authenticated === true && entry.enabled;
+    return (entry.authenticated === true || entry.signedIn === true) && entry.enabled;
   };
 
   const distinctProviders = useMemo(
@@ -32,6 +34,11 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
 
   const unready = distinctProviders.filter((p) => !isReady(p) && !EXPERIMENTAL_PROVIDERS.has(p));
   const experimentalInUse = distinctProviders.filter((p) => EXPERIMENTAL_PROVIDERS.has(p));
+  // CLI definitively not on PATH (check ran and failed). These block launch — a missing
+  // binary can never work, and today it just produces instantly-failed agents.
+  const missingClis = distinctProviders.filter(
+    (p) => providers.find((x) => x.provider === p)?.installed === false,
+  );
 
   return (
     <div>
@@ -41,6 +48,14 @@ export const LaunchStep: React.FC<WizardStepProps> = ({ state }) => {
         <p style={heroSubtitleStyle}>Confirm the setup below, then launch the swarm. Agents start as soon as their dependencies allow.</p>
       </div>
 
+      {missingClis.length > 0 && (
+        <div style={errorBannerStyle}>
+          <AlertTriangle size={14} className="swarm-inline-icon" />
+          <span>
+            CLI not installed for {missingClis.map((p) => PROVIDER_LABELS[p]).join(', ')}. Launch is blocked — install the CLI or switch those agents to another provider in the Roster step.
+          </span>
+        </div>
+      )}
       {unready.length > 0 && (
         <div style={warningBannerStyle}>
           <AlertTriangle size={14} className="swarm-inline-icon" />

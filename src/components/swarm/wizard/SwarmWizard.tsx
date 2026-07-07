@@ -3,8 +3,11 @@ import {
   Users, MessageSquare, FolderOpen, FileText, Tag, Rocket, Check, AlertCircle, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { WizardState, WizardStepProps } from '../../../types/wizard';
+import type { AgentProvider } from '../../../types/provider';
 import { useSwarmStore } from '../../../stores/swarmStore';
+import { useProviderStore } from '../../../stores/providerStore';
 import { SIZE_PRESETS, generateRoster, hasDependencyCycle } from './constants';
+import { PROVIDER_LABELS } from './providerMeta';
 import { errorBannerStyle } from './wizardStyles';
 import { RosterStep } from './steps/RosterStep';
 import { MissionStep } from './steps/MissionStep';
@@ -17,6 +20,9 @@ import { useFocusTrap } from '../../../lib/useFocusTrap';
 interface SwarmWizardProps {
   projectPath: string | null;
   onClose: () => void;
+  // Template to seed the roster with (from the Swarm room's template picker). The user can
+  // still switch presets/templates freely inside the Roster step.
+  initialTemplateId?: string | null;
 }
 
 const STEPS = [
@@ -28,19 +34,26 @@ const STEPS = [
   { key: 'launch', label: 'Launch', icon: Rocket },
 ] as const;
 
-export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }) => {
-  const [state, setState] = useState<WizardState>(() => ({
-    step: 0,
-    sizePresetId: 'squad',
-    globalProvider: 'claude',
-    agents: generateRoster(SIZE_PRESETS[0], 'claude'),
-    startedFromTemplateId: null,
-    mission: '',
-    skills: [],
-    directory: projectPath || '',
-    contextFiles: [],
-    swarmName: '',
-  }));
+export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose, initialTemplateId }) => {
+  const [state, setState] = useState<WizardState>(() => {
+    const template = initialTemplateId
+      ? useSwarmStore.getState().templates.find((t) => t.id === initialTemplateId)
+      : undefined;
+    return {
+      step: 0,
+      sizePresetId: template ? null : 'squad',
+      globalProvider: 'claude',
+      agents: template
+        ? template.agents.map((a) => ({ ...a, autoApprove: false }))
+        : generateRoster(SIZE_PRESETS[0], 'claude'),
+      startedFromTemplateId: template?.id ?? null,
+      mission: '',
+      skills: [],
+      directory: projectPath || '',
+      contextFiles: [],
+      swarmName: '',
+    };
+  });
   const [error, setError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -85,6 +98,16 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose }
 
   const handleLaunch = async () => {
     if (!state.directory.trim()) { setError('Choose a working directory first.'); return; }
+    // Preflight hard-block: a provider whose CLI is definitively not installed can only
+    // produce instantly-failed agents. (Soft issues — no stored credentials — stay warnings.)
+    const { providers } = useProviderStore.getState();
+    const missingClis = Array.from(
+      new Set(state.agents.map((a) => (a.provider || 'codex') as AgentProvider)),
+    ).filter((p) => providers.find((x) => x.provider === p)?.installed === false);
+    if (missingClis.length > 0) {
+      setError(`CLI not installed for ${missingClis.map((p) => PROVIDER_LABELS[p]).join(', ')} — install it or change those agents' provider in the Roster step.`);
+      return;
+    }
     setLaunching(true);
     setError(null);
     try {
