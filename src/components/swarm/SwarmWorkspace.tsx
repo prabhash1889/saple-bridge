@@ -13,6 +13,7 @@ const handoffKey = (from: string, to: string) => `${from}->${to}`;
 
 // Strip ANSI escape sequences (CSI, OSC, single-char escapes) and bare carriage returns so raw
 // PTY output reads as plain text in the inspect panel's tail view.
+// eslint-disable-next-line no-control-regex -- matching terminal escape bytes is the point
 const ANSI_RE = /(?:\u001b\[[0-9;?]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-Z\\-_])/g;
 const stripAnsi = (raw: string) => raw.replace(ANSI_RE, '').replace(/\r/g, '');
 
