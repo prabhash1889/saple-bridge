@@ -25,6 +25,9 @@ export interface SwarmAgent {
   taskId?: string;
   terminalId?: string;
   autoApprove?: boolean; // Auto-advance from 'review' to 'done' without human approval
+  // Human-readable reason for the current status ("exited with code 1", "terminal lost on
+  // restart", ...). Set together with the status transition that caused it; cleared on the next.
+  statusReason?: string;
 }
 
 export interface SwarmTemplate {
@@ -49,7 +52,6 @@ interface SwarmState {
 
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
   saveSwarmState: (projectPath: string) => Promise<void>;
-  startSwarm: (projectPath: string, templateId: string, mission: string, customAgents?: SwarmAgent[]) => Promise<void>;
   startSwarmFromWizard: (input: WizardLaunchInput) => Promise<void>;
   pauseSwarm: (projectPath: string) => Promise<void>;
   resumeSwarm: (projectPath: string) => Promise<void>;
@@ -308,7 +310,7 @@ ${skillsSection}${contextSection}
     await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, taskId: session.id });
   } catch (error) {
     console.error(`Failed to launch agent ${agent.id}:`, error);
-    await updateAgentStatus(projectPath, agent.id, 'failed');
+    await updateAgentStatus(projectPath, agent.id, 'failed', { statusReason: `Launch failed: ${error}` });
   }
 };
 
@@ -335,6 +337,28 @@ export const useSwarmStore = create<SwarmState>()(
         try {
           const content = await invoke<string>('read_swarm_state', { projectPath });
           const parsed = JSON.parse(content);
+
+          // Crash/restart reconciliation: state.json can say an agent is running while its PTY
+          // no longer exists (app restarted mid-run). Left alone, those zombies stay "running"
+          // forever and dependents never start. Downgrade them to failed (Relaunch stays one
+          // click away) and pause a running swarm so continuing is a deliberate Resume.
+          const loadedAgents: SwarmAgent[] = parsed.agents || [];
+          const liveSessions = useTerminalStore.getState().sessions;
+          let orphaned = false;
+          const reconciledAgents = loadedAgents.map((agent) => {
+            if (agent.status !== 'running' && agent.status !== 'starting') return agent;
+            if (agent.terminalId && liveSessions[agent.terminalId]) return agent;
+            orphaned = true;
+            return {
+              ...agent,
+              status: 'failed' as AgentStatus,
+              terminalId: undefined,
+              statusReason: 'Agent terminal was lost (app restarted mid-run) — relaunch to continue.',
+            };
+          });
+          const loadedStatus = parsed.status || 'idle';
+          const status = orphaned && loadedStatus === 'running' ? 'paused' : loadedStatus;
+
           set({
             loadedProjectPath: projectPath,
             swarmId: parsed.swarmId || null,
@@ -342,11 +366,14 @@ export const useSwarmStore = create<SwarmState>()(
             mission: parsed.mission || '',
             skills: parsed.skills || [],
             contextFiles: parsed.contextFiles || [],
-            status: parsed.status || 'idle',
-            swarmActive: parsed.status === 'running' || parsed.status === 'paused',
+            status,
+            swarmActive: status === 'running' || status === 'paused',
             activeTemplateId: parsed.templateId || null,
-            activeAgents: parsed.agents || [],
+            activeAgents: reconciledAgents,
           });
+          if (orphaned) {
+            await get().saveSwarmState(projectPath);
+          }
         } catch {
           // Reset if file not found
           set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null });
@@ -376,41 +403,6 @@ export const useSwarmStore = create<SwarmState>()(
         } catch (error) {
           console.error('Failed to save swarm state:', error);
         }
-      },
-
-      startSwarm: async (projectPath, templateId, mission, customAgents) => {
-        const { templates } = get();
-        const template = templates.find(t => t.id === templateId);
-        
-        let agentsToUse: SwarmAgent[] = [];
-        if (customAgents) {
-          agentsToUse = customAgents;
-        } else if (template) {
-          agentsToUse = template.agents.map(a => ({
-            ...a,
-            status: a.dependencies.length > 0 ? 'waiting' : 'idle' as AgentStatus
-          }));
-        }
-
-        // Initialize directories
-        try {
-          await invoke('ensure_workspace_dirs', { projectPath });
-        } catch (error) {
-          console.error('Failed to ensure workspace dirs:', error);
-        }
-
-        const newSwarmId = createId('swarm');
-        set({
-          swarmId: newSwarmId,
-          mission,
-          activeTemplateId: templateId,
-          activeAgents: agentsToUse,
-          status: 'running',
-          swarmActive: true
-        });
-
-        await get().saveSwarmState(projectPath);
-        await get().checkAndRunNextAgents(projectPath);
       },
 
       startSwarmFromWizard: async (input) => {
@@ -513,7 +505,8 @@ export const useSwarmStore = create<SwarmState>()(
         }
         set(state => ({
           activeAgents: state.activeAgents.map(a =>
-            a.id === agentId ? { ...a, status: effectiveStatus, ...extra } : a
+            // statusReason belongs to one transition; reset it unless this one supplies its own.
+            a.id === agentId ? { ...a, status: effectiveStatus, statusReason: undefined, ...extra } : a
           )
         }));
         if (
@@ -621,20 +614,13 @@ export const useSwarmStore = create<SwarmState>()(
         const agent = get().activeAgents.find(a => a.id === agentId);
         if (!agent) return;
 
-        // Kill terminal first
-        if (agent.terminalId) {
-          try {
-            await useTerminalStore.getState().removePane(agent.terminalId);
-          } catch (e) {
-            console.error('Failed to kill terminal on relaunch:', e);
-          }
-        }
-
-        // Reset status to starting and clear blocked statuses of dependent agents
+        // Reset state BEFORE killing the old terminal: the kill fires a pty-exit event, and the
+        // exit fallback in terminalStore must not find this agent still linked to the dying pane
+        // (it would mark it failed mid-relaunch). Clearing terminalId first makes that lookup miss.
         set(state => {
           const resetAgents = state.activeAgents.map(a => {
             if (a.id === agentId) {
-              return { ...a, status: 'starting' as AgentStatus, terminalId: undefined, taskId: undefined };
+              return { ...a, status: 'starting' as AgentStatus, terminalId: undefined, taskId: undefined, statusReason: undefined };
             }
             // If another agent had a dependency on this one and was blocked, reset it to waiting/idle
             if (a.status === 'blocked' && a.dependencies.includes(agentId)) {
@@ -644,6 +630,14 @@ export const useSwarmStore = create<SwarmState>()(
           });
           return { activeAgents: resetAgents };
         });
+
+        if (agent.terminalId) {
+          try {
+            await useTerminalStore.getState().removePane(agent.terminalId);
+          } catch (e) {
+            console.error('Failed to kill terminal on relaunch:', e);
+          }
+        }
 
         await get().saveSwarmState(projectPath);
         

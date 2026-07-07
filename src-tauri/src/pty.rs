@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // On Windows, killing a PTY's immediate child (powershell.exe) with TerminateProcess does NOT
 // terminate the processes it spawned — the AI CLI (node/claude/python/…) and its own children
@@ -200,11 +200,15 @@ struct PtyOutputPayload {
 }
 
 // Emitted once when a session's reader thread ends (child exited, PTY closed, or the read pipe
-// gave up). The frontend uses it to show a visible "process exited" notice so an ended session
-// is obvious rather than looking like a frozen pane.
+// gave up). The frontend uses it to show a visible "process exited" notice, and — for
+// swarm/task agent panes — as the completion fallback when no lifecycle marker was printed.
+// `exit_code` is `None` when the child's status can no longer be determined (e.g. the session
+// was already torn down by `kill_pty`).
 #[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct PtyExitPayload {
     id: String,
+    exit_code: Option<u32>,
 }
 
 // Emit the valid UTF-8 prefix of `pending`, keeping any incomplete trailing
@@ -404,13 +408,34 @@ pub async fn spawn_pty(
                 }
             };
 
+            // Headless agent panes (prompt piped in) must let the shell EXIT when the CLI
+            // finishes, so `pty-exit` fires and the swarm scheduler gets a real completion
+            // signal even when the agent never printed a lifecycle marker. Interactive
+            // provider panes keep the shell alive after the CLI ends, as before.
+            let headless = pipe_file.is_some();
             if cfg!(target_os = "windows") {
-                cmd.arg("-NoExit");
+                if !headless {
+                    cmd.arg("-NoExit");
+                }
                 cmd.arg("-Command");
-                cmd.arg(run_cmd);
+                if headless {
+                    // Propagate the CLI's exit code through powershell.exe. $LASTEXITCODE is
+                    // null when no native command ran at all (e.g. CLI not found) — that's a
+                    // failure, not a clean exit, so map it to 1.
+                    cmd.arg(format!(
+                        "{}; if ($null -eq $LASTEXITCODE) {{ exit 1 }} else {{ exit $LASTEXITCODE }}",
+                        run_cmd
+                    ));
+                } else {
+                    cmd.arg(run_cmd);
+                }
             } else {
                 cmd.arg("-lc");
-                cmd.arg(format!("{}; exec {}", run_cmd, shell));
+                if headless {
+                    cmd.arg(run_cmd);
+                } else {
+                    cmd.arg(format!("{}; exec {}", run_cmd, shell));
+                }
             }
             launched_command = true;
         } else if let Some(ref custom_cmd) = custom_command {
@@ -603,9 +628,26 @@ pub async fn spawn_pty(
         // `Some(deadline)` = inside a coalescing window; `None` = idle.
         let mut window_end: Option<Instant> = None;
         // Emitted once when the reader ends (child gone / PTY closed / pipe dead) so the frontend
-        // surfaces a "process exited" notice instead of a silent pane the user mistakes for a freeze.
+        // surfaces a "process exited" notice instead of a silent pane the user mistakes for a
+        // freeze. The child's exit code is looked up from the registry when still possible: the
+        // reader can hit EOF a beat before the OS marks the child reapable, so poll briefly
+        // instead of reporting "unknown" for a perfectly normal exit. A session already removed
+        // by kill_pty reports None — its exit code is irrelevant to the (gone) frontend pane.
         let emit_exit = |app_handle: &AppHandle, id: &str| {
-            let _ = app_handle.emit("pty-exit", PtyExitPayload { id: id.to_string() });
+            let exit_code = app_handle.try_state::<PtyRegistry>().and_then(|registry| {
+                let session_arc = registry.sessions.lock().unwrap().get(id).cloned()?;
+                for _ in 0..10 {
+                    if let Ok(Some(status)) = session_arc.lock().ok()?.child.try_wait() {
+                        return Some(status.exit_code());
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+                None
+            });
+            let _ = app_handle.emit(
+                "pty-exit",
+                PtyExitPayload { id: id.to_string(), exit_code },
+            );
         };
         loop {
             if window_end.is_none() {

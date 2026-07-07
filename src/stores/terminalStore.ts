@@ -7,6 +7,7 @@ import { useAgentSessionStore } from './agentSessionStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
+import { hasReviewSignal, mightContainSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
 
@@ -194,34 +195,6 @@ const notifyOutputListeners = (events: TerminalOutputEvent[]) => {
       listener(event);
     }
   }
-};
-
-// Agent lifecycle markers are matched against a rolling per-pane tail (see
-// `appendSignalTail`) so a marker split across two PTY bursts — e.g. `[AGENT_` in one
-// chunk and `DONE]` in the next — is still detected. The regexes are line-anchored
-// (`/m`) so a marker only fires when an agent emits it on its own line, not when it's
-// echoed mid-sentence or printed back inside a command the user typed.
-const SIGNAL_DONE_RE = /^\s*\[(?:AGENT_DONE|TASK_COMPLETE|TASK_DONE)\]\s*$/m;
-const SIGNAL_FAILED_RE = /^\s*\[(?:AGENT_FAILED|TASK_FAILED)\]\s*$/m;
-const SIGNAL_REVIEW_RE =
-  /^\s*(?:\[(?:AGENT_REVIEW|REVIEW_REQUESTED)\]|##\s*REVIEW REQUIRED|Task complete\. Review required\.)\s*$/m;
-
-const hasReviewSignal = (tail: string) => SIGNAL_REVIEW_RE.test(tail);
-
-// Cheap substring pre-filter run before the regex battery: every lifecycle marker contains one
-// of these literals (`[` for the bracketed markers, `#` for `## REVIEW REQUIRED`, or the
-// `Task complete` phrase). Ordinary terminal output has none, so this short-circuits the regex
-// tests for the overwhelmingly common no-marker case on the per-event hot path.
-const mightContainSignal = (tail: string) =>
-  tail.includes('[') || tail.includes('#') || tail.includes('Task complete');
-
-// `reviewMatched` is the already-computed `hasReviewSignal` result, threaded in so the review
-// regex isn't run a second time here (it used to re-test SIGNAL_REVIEW_RE redundantly).
-const getSwarmStatusFromOutput = (tail: string, reviewMatched: boolean) => {
-  if (SIGNAL_DONE_RE.test(tail)) return 'done' as const;
-  if (SIGNAL_FAILED_RE.test(tail)) return 'failed' as const;
-  if (reviewMatched) return 'review' as const;
-  return null;
 };
 
 const providerLabel = (provider?: AiProvider) => {
@@ -423,11 +396,39 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       // obvious instead of looking like a frozen terminal. Ignore it for panes the user already
       // closed (session gone). This goes through the normal output path, not the signal tail, so
       // the injected notice is never mistaken for an agent marker.
-      ptyExitUnlisten = await listen<{ id: string }>('pty-exit', (event) => {
-        const { id } = event.payload;
+      ptyExitUnlisten = await listen<{ id: string; exitCode?: number | null }>('pty-exit', (event) => {
+        const { id, exitCode } = event.payload;
         if (!get().sessions[id]) return;
         get().appendOutput(id, '\r\n\x1b[2m[process exited — close this pane to start a new one]\x1b[0m\r\n');
         set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
+
+        const projectPath = useProjectStore.getState().currentProjectPath;
+        if (!projectPath) return;
+
+        // Completion fallback: lifecycle markers are the fast path, process exit is the safety
+        // net. A swarm agent still running/starting when its PTY exits gets a terminal state
+        // instead of hanging the swarm forever — clean/unknown exit parks it in review (human
+        // confirms; auto-approve agents advance straight to done), a non-zero exit fails it.
+        swarmStorePromise ??= import('./swarmStore');
+        swarmStorePromise
+          .then(({ useSwarmStore }) => {
+            const agent = useSwarmStore.getState().activeAgents.find((a) => a.terminalId === id);
+            if (!agent || (agent.status !== 'running' && agent.status !== 'starting')) return;
+            const { status, statusReason } = exitFallbackTransition(exitCode);
+            void useSwarmStore.getState().updateAgentStatus(projectPath, agent.id, status, { statusReason });
+          })
+          .catch((err) => console.error('Failed to import swarmStore dynamically:', err));
+
+        // Same safety net for Kanban task panes: an agent that exits cleanly without printing a
+        // review marker still moves its task to the review column instead of sitting "in
+        // progress" against a dead terminal. Non-zero/unknown exits leave the column untouched.
+        if (exitCode === 0) {
+          const task = useKanbanStore.getState().tasks.find((t) => t.terminalId === id);
+          if (task && task.column === 'progress') {
+            void useKanbanStore.getState().updateTask(projectPath, task.id, { column: 'review' });
+            notifyTaskReadyForReview(task.title);
+          }
+        }
       });
     },
 

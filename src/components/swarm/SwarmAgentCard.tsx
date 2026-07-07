@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft } from 'lucide-react';
+import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft, XCircle, Info } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
 import { MarkdownPreview } from '../editor/MarkdownPreview';
 
@@ -18,6 +18,7 @@ interface SwarmAgentCardProps {
   onViewTerminal: (terminalId: string) => void;
   onRelaunch: (agentId: string) => void;
   onForceComplete: (agentId: string) => void;
+  onReject: (agentId: string) => void;
   onStop: (agentId: string) => void;
   mailboxContent?: string;
   loadingMailbox?: boolean;
@@ -36,6 +37,7 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   onViewTerminal,
   onRelaunch,
   onForceComplete,
+  onReject,
   onStop,
   mailboxContent = '',
   loadingMailbox = false,
@@ -81,6 +83,14 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
           <span className="swarm-status-label">{agent.status}</span>
         </div>
       </div>
+
+      {/* Why the agent is in its current state (exit fallback, recovery, operator action). */}
+      {agent.statusReason && (
+        <div style={statusReasonStyle}>
+          <Info size={12} className="fg-muted" />
+          <span>{agent.statusReason}</span>
+        </div>
+      )}
 
       {/* Details / System Prompt */}
       <div style={bodyStyle}>
@@ -163,8 +173,8 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
           )}
 
           {(agent.status === 'failed' || agent.status === 'stopped' || agent.status === 'blocked') && (
-            <button 
-              onClick={() => onRelaunch(agent.id)} 
+            <button
+              onClick={() => onRelaunch(agent.id)}
               className="primary"
               style={btnControlStyle}
             >
@@ -173,13 +183,35 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
             </button>
           )}
 
-          {agent.status !== 'done' && agent.status !== 'waiting' && agent.status !== 'blocked' && (
-            <button 
-              onClick={() => onForceComplete(agent.id)} 
+          {/* Review gate: dependents wait until a human approves or rejects. */}
+          {agent.status === 'review' && (
+            <>
+              <button
+                onClick={() => onForceComplete(agent.id)}
+                style={btnCompleteStyle}
+              >
+                <CheckCircle size={12} />
+                <span>Approve</span>
+              </button>
+              <button
+                onClick={() => onReject(agent.id)}
+                className="danger"
+                style={btnControlStyle}
+              >
+                <XCircle size={12} />
+                <span>Reject</span>
+              </button>
+            </>
+          )}
+
+          {/* Stall escape hatch for a live agent; review/failed/stopped have their own controls. */}
+          {(agent.status === 'running' || agent.status === 'starting') && (
+            <button
+              onClick={() => onForceComplete(agent.id)}
               style={btnCompleteStyle}
             >
               <CheckCircle size={12} />
-              <span>Force Complete</span>
+              <span>Mark Done</span>
             </button>
           )}
         </div>
@@ -214,6 +246,19 @@ const cardHeaderStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'flex-start',
+};
+
+const statusReasonStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: '6px',
+  fontSize: '11px',
+  lineHeight: '1.4',
+  color: 'var(--text-secondary)',
+  backgroundColor: 'var(--bg-surface-light)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '6px 8px',
 };
 
 const roleBadgeStyle = (color: string): React.CSSProperties => ({

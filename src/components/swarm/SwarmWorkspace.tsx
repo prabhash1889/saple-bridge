@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send } from 'lucide-react';
+import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send, Terminal as TerminalIcon } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -10,6 +10,41 @@ import { SwarmTemplateEditor } from './SwarmTemplateEditor';
 import { SwarmWizard } from './wizard/SwarmWizard';
 
 const handoffKey = (from: string, to: string) => `${from}->${to}`;
+
+// Strip ANSI escape sequences (CSI, OSC, single-char escapes) and bare carriage returns so raw
+// PTY output reads as plain text in the inspect panel's tail view.
+const ANSI_RE = /(?:\u001b\[[0-9;?]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-Z\\-_])/g;
+const stripAnsi = (raw: string) => raw.replace(ANSI_RE, '').replace(/\r/g, '');
+
+const TAIL_CHARS = 4000;
+
+// Live tail of an agent's terminal, fed from the same buffer/subscription xterm panes use.
+// Lets the operator see what an agent is actually doing without leaving the Swarm room.
+const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => {
+  const [tail, setTail] = useState('');
+  const scrollRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    const { getBufferedOutput, subscribeOutput } = useTerminalStore.getState();
+    let text = stripAnsi(getBufferedOutput(terminalId)).slice(-TAIL_CHARS);
+    setTail(text);
+    return subscribeOutput(terminalId, (event) => {
+      text = (text + stripAnsi(event.data)).slice(-TAIL_CHARS);
+      setTail(text);
+    });
+  }, [terminalId]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [tail]);
+
+  return (
+    <pre ref={scrollRef} style={terminalTailStyle}>
+      {tail || 'No output yet.'}
+    </pre>
+  );
+};
 
 export const SwarmWorkspace: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -29,7 +64,8 @@ export const SwarmWorkspace: React.FC = () => {
   const writeMailbox = useSwarmStore((state) => state.writeMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
-  const [selectedTemplateId, setSelectedTemplateId] = useState('full_stack');
+  // null until the user picks a template; the wizard then opens pre-seeded with it.
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'graph' | 'grid'>('graph');
@@ -80,9 +116,18 @@ export const SwarmWorkspace: React.FC = () => {
     useProjectStore.getState().setActiveView('terminals');
   };
 
+  // Review gate: reject fails the agent (dependents block, Relaunch stays available).
+  const handleAgentReject = async (agentId: string) => {
+    if (!currentProjectPath) return;
+    await updateAgentStatus(currentProjectPath, agentId, 'failed', { statusReason: 'Rejected by operator.' });
+  };
+
   const handleAgentStop = async (agentId: string) => {
     if (!currentProjectPath) return;
     const agent = activeAgents.find(a => a.id === agentId);
+    // Mark stopped BEFORE killing the pane: the kill fires pty-exit, and the exit fallback
+    // must see a deliberate stop, not a running agent whose process died (-> failed).
+    await updateAgentStatus(currentProjectPath, agentId, 'stopped', { statusReason: 'Stopped by operator.' });
     if (agent?.terminalId) {
       try {
         await useTerminalStore.getState().removePane(agent.terminalId);
@@ -90,7 +135,6 @@ export const SwarmWorkspace: React.FC = () => {
         console.error('Failed to remove pane:', e);
       }
     }
-    await updateAgentStatus(currentProjectPath, agentId, 'stopped');
   };
 
   const polledAgentIds = useMemo(() => {
@@ -411,6 +455,7 @@ export const SwarmWorkspace: React.FC = () => {
                           onViewTerminal={handleViewTerminal}
                           onRelaunch={(id) => currentProjectPath && relaunchAgent(currentProjectPath, id)}
                           onForceComplete={(id) => currentProjectPath && forceCompleteAgent(currentProjectPath, id)}
+                          onReject={handleAgentReject}
                           onStop={handleAgentStop}
                           mailboxContent={mailboxContents[agent.id]}
                           loadingMailbox={loadingMailboxIds.has(agent.id)}
@@ -436,11 +481,24 @@ export const SwarmWorkspace: React.FC = () => {
                       onViewTerminal={handleViewTerminal}
                       onRelaunch={(id) => currentProjectPath && relaunchAgent(currentProjectPath, id)}
                       onForceComplete={(id) => currentProjectPath && forceCompleteAgent(currentProjectPath, id)}
+                      onReject={handleAgentReject}
                       onStop={handleAgentStop}
                       mailboxContent={mailboxContents[selectedAgent.id]}
                       loadingMailbox={loadingMailboxIds.has(selectedAgent.id)}
                       handoffs={handoffsByAgent[selectedAgent.id]}
                     />
+
+                    {/* Live tail of the agent's terminal so its actual work is visible
+                        without leaving the room. "View Terminal" stays the full view. */}
+                    {selectedAgent.terminalId && (
+                      <div style={composeBoxStyle}>
+                        <div style={rightPanelTitleStyle}>
+                          <TerminalIcon size={13} className="fg-muted" />
+                          <span>Terminal Output (live)</span>
+                        </div>
+                        <AgentTerminalTail terminalId={selectedAgent.terminalId} />
+                      </div>
+                    )}
 
                     {/* Operator → agent mailbox compose. Posts a message the agent can read
                         from its mailbox file mid-run. */}
@@ -507,7 +565,11 @@ export const SwarmWorkspace: React.FC = () => {
       </div>
 
       {wizardOpen && (
-        <SwarmWizard projectPath={currentProjectPath} onClose={() => setWizardOpen(false)} />
+        <SwarmWizard
+          projectPath={currentProjectPath}
+          onClose={() => setWizardOpen(false)}
+          initialTemplateId={selectedTemplateId}
+        />
       )}
     </div>
   );
@@ -694,6 +756,21 @@ const rightPanelTitleStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: '6px',
   marginBottom: '8px',
+};
+
+const terminalTailStyle: React.CSSProperties = {
+  backgroundColor: 'var(--bg-deep)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '8px 10px',
+  maxHeight: '220px',
+  overflowY: 'auto',
+  fontSize: '11px',
+  fontFamily: 'var(--font-mono, monospace)',
+  color: 'var(--text-secondary)',
+  margin: 0,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 };
 
 const composeBoxStyle: React.CSSProperties = {
