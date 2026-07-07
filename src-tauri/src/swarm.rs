@@ -156,6 +156,69 @@ fn validate_dependency_graph_inner(agents: Vec<SwarmAgentRust>) -> Result<bool, 
             }
         }
     }
-    
+
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent(id: &str, deps: &[&str]) -> SwarmAgentRust {
+        SwarmAgentRust {
+            id: id.into(),
+            name: id.into(),
+            role: "builder".into(),
+            model: "default".into(),
+            system_prompt: String::new(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            status: "idle".into(),
+            task_id: None,
+            terminal_id: None,
+        }
+    }
+
+    #[test]
+    fn acyclic_graph_is_valid() {
+        let agents = vec![agent("a", &[]), agent("b", &["a"]), agent("c", &["a", "b"])];
+        assert_eq!(validate_dependency_graph_inner(agents), Ok(true));
+    }
+
+    #[test]
+    fn direct_cycle_is_invalid() {
+        let agents = vec![agent("a", &["b"]), agent("b", &["a"])];
+        assert_eq!(validate_dependency_graph_inner(agents), Ok(false));
+    }
+
+    #[test]
+    fn self_dependency_is_invalid() {
+        assert_eq!(
+            validate_dependency_graph_inner(vec![agent("a", &["a"])]),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn longer_cycle_behind_a_valid_prefix_is_invalid() {
+        let agents = vec![
+            agent("root", &[]),
+            agent("a", &["root", "c"]),
+            agent("b", &["a"]),
+            agent("c", &["b"]),
+        ];
+        assert_eq!(validate_dependency_graph_inner(agents), Ok(false));
+    }
+
+    #[test]
+    fn dependency_on_unknown_agent_is_not_a_cycle() {
+        assert_eq!(
+            validate_dependency_graph_inner(vec![agent("a", &["ghost"])]),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn empty_roster_is_valid() {
+        assert_eq!(validate_dependency_graph_inner(vec![]), Ok(true));
+    }
 }
