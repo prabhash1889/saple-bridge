@@ -53,6 +53,19 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Tauri's build.rs checks that the externalBin sidecar file exists, even for a
+      # bare `cargo check`/`test` (it's never run or bundled here). The real sidecar is
+      # built from the sibling ../saple-mcp repo, which CI doesn't check out, so stage an
+      # empty placeholder with the target-triple name to satisfy the existence check.
+      # ponytail: placeholder is enough for check/test; real sidecar staging lives in the tauri:build path.
+      - name: Stage placeholder sidecar
+        shell: pwsh
+        run: |
+          $triple = (rustc -vV | Select-String '^host:\s*(.+)$').Matches.Groups[1].Value.Trim()
+          $name = if ($triple -like '*windows*') { "saple-mcp-$triple.exe" } else { "saple-mcp-$triple" }
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          New-Item -ItemType File -Force -Path "src-tauri/binaries/$name" | Out-Null
+
       - name: Cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
