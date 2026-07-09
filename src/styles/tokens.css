@@ -82,7 +82,11 @@
   --bg-surface-active: #22262C;
   --bg-overlay: rgba(11, 12, 14, 0.85);
   --bg-deep: #07090D;
-  --bg-terminal: #050607;
+  /* Terminal surface is fixed across every app theme: it matches xterm's built-in default
+     black so the terminal reads like a native CLI, independent of the application theme.
+     Not overridden in any theme block below - the terminal pane background stays constant
+     while its titlebar (app-theme CSS vars) follows the selected theme. */
+  --bg-terminal: #000000;
 
   --text-primary: #F3F4F6;
   --text-secondary: #9CA3AF;
@@ -178,7 +182,6 @@ html[data-theme="light"] {
   --bg-surface-active: #DFE2E8;
   --bg-overlay: rgba(233, 235, 239, 0.85);
   --bg-deep: #DEE1E7;
-  --bg-terminal: #F4F5F7;
 
   --text-primary: #1A1D22;
   --text-secondary: #4B5563;
@@ -220,7 +223,6 @@ html[data-theme="ember"] {
   --bg-surface-active: #2A231B;
   --bg-overlay: rgba(12, 10, 9, 0.85);
   --bg-deep: #080605;
-  --bg-terminal: #1A150F;
 
   --text-primary: #F6F2EC;
   --text-secondary: #A8A095;
@@ -248,7 +250,6 @@ html[data-theme="mocha"] {
   --bg-surface-active: #514B43;
   --bg-overlay: rgba(38, 35, 31, 0.85);
   --bg-deep: #2A2722;
-  --bg-terminal: #383430;
 
   --text-primary: #ECE6DC;
   --text-secondary: #B6AE9F;
@@ -276,7 +277,6 @@ html[data-theme="nord"] {
   --bg-surface-active: #4C566A;
   --bg-overlay: rgba(46, 52, 64, 0.85);
   --bg-deep: #272C36;
-  --bg-terminal: #2E3440;
 
   --text-primary: #ECEFF4;
   --text-secondary: #D8DEE9;
@@ -330,7 +330,6 @@ html[data-theme="dracula"] {
   --bg-surface-active: #44475A;
   --bg-overlay: rgba(40, 42, 54, 0.85);
   --bg-deep: #1E1F29;
-  --bg-terminal: #282A36;
 
   --text-primary: #F8F8F2;
   --text-secondary: #C5C7D6;
@@ -384,7 +383,6 @@ html[data-theme="tokyonight"] {
   --bg-surface-active: #292E42;
   --bg-overlay: rgba(26, 27, 38, 0.85);
   --bg-deep: #16161E;
-  --bg-terminal: #1A1B26;
 
   --text-primary: #C0CAF5;
   --text-secondary: #A9B1D6;
@@ -439,7 +437,6 @@ html[data-theme="solarized"] {
   --bg-surface-active: #E6DFC8;
   --bg-overlay: rgba(253, 246, 227, 0.85);
   --bg-deep: #E3DCC6;
-  --bg-terminal: #FDF6E3;
 
   --text-primary: #586E75;
   --text-secondary: #657B83;
@@ -497,7 +494,6 @@ html[data-theme="latte"] {
   --bg-surface-active: #CCD0DA;
   --bg-overlay: rgba(239, 241, 245, 0.85);
   --bg-deep: #DCE0E8;
-  --bg-terminal: #EFF1F5;
 
   --text-primary: #4C4F69;
   --text-secondary: #5C5F77;

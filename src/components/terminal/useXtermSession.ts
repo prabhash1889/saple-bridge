@@ -10,9 +10,7 @@ import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { writeTextToClipboard } from '../../lib/clipboard';
-import { useThemeStore, resolveTheme } from '../../stores/themeStore';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
-import { getTerminalTheme, terminalThemeFor } from './terminalThemes';
 import {
   copyTerminalSelection,
   isTerminalCopyShortcut,
@@ -172,24 +170,9 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
   const onSearchOpenRef = useRef(onSearchOpen);
   onSearchOpenRef.current = onSearchOpen;
 
-  const themeMode = useThemeStore((state) => state.mode);
   const fontId = useTerminalFontStore((state) => state.fontId);
   const fontSize = useTerminalFontStore((state) => state.fontSize);
   const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
-
-  // Keep the live xterm theme in sync with the app theme (xterm needs a JS theme object).
-  useEffect(() => {
-    const apply = () => {
-      if (terminalRef.current) {
-        terminalRef.current.options.theme = { ...terminalThemeFor(resolveTheme(themeMode)) };
-      }
-    };
-    apply();
-    if (themeMode !== 'system') return;
-    const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    mql.addEventListener('change', apply);
-    return () => mql.removeEventListener('change', apply);
-  }, [themeMode]);
 
   // Live scrollback resize (Settings > Workspace). Only the retained-history depth changes,
   // so no re-fit or PTY resize is needed — xterm reflows its own buffer.
@@ -332,7 +315,9 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       letterSpacing: 0,
       lineHeight: 1.15,
       scrollback: useTerminalFontStore.getState().scrollbackRows,
-      theme: { ...getTerminalTheme() },
+      // No `theme` override: the terminal renders xterm's built-in default palette (black
+      // surface, standard ANSI colors) like a native CLI, decoupled from the app theme. The
+      // pane surface (--bg-terminal) is pinned to the same black so the two stay seamless.
       allowProposedApi: true,
       // Make xterm grow rows into the scrollback the way ConPTY expects, so maximizing the
       // window keeps the existing output instead of replacing it with empty rows.
