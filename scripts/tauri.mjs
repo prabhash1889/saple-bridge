@@ -47,28 +47,38 @@ function parseTargetTriple(list) {
   return null;
 }
 
-// --- build: bump version -------------------------------------------------
+// --- build: bump version (local QA builds only) ---------------------------
 const confPath = join(root, 'src-tauri', 'tauri.conf.json');
 const pkgPath = join(root, 'package.json');
 const cargoPath = join(root, 'src-tauri', 'Cargo.toml');
 
 const conf = JSON.parse(readFileSync(confPath, 'utf8'));
-const [major, minor, patch] = String(conf.version).split('.').map((n) => parseInt(n, 10) || 0);
-const newVersion = `${major}.${minor}.${patch + 1}`;
+let newVersion = String(conf.version);
 
-conf.version = newVersion;
-writeFileSync(confPath, JSON.stringify(conf, null, 2) + '\n');
+// In CI (the tag-driven release workflow, where tauri-action invokes this script through the
+// package.json `tauri` script) the version is whatever `npm run release` committed and tagged —
+// bumping here would make the built version drift +1 from the tag and from latest.json.
+// The auto-bump is a convenience for local throwaway QA builds only.
+if (process.env.CI) {
+  console.log(`\n→ CI build: using committed version v${newVersion} (no auto-bump)\n`);
+} else {
+  const [major, minor, patch] = newVersion.split('.').map((n) => parseInt(n, 10) || 0);
+  newVersion = `${major}.${minor}.${patch + 1}`;
 
-const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-pkg.version = newVersion;
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  conf.version = newVersion;
+  writeFileSync(confPath, JSON.stringify(conf, null, 2) + '\n');
 
-// Keep Cargo.toml in the bump loop too — the first `version = "..."` line is the [package]
-// version at the top of the manifest (dependency versions use inline-table syntax).
-const cargoToml = readFileSync(cargoPath, 'utf8');
-writeFileSync(cargoPath, cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${newVersion}"`));
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  pkg.version = newVersion;
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 
-console.log(`\n→ Building Saple Bridge v${newVersion}\n`);
+  // Keep Cargo.toml in the bump loop too — the first `version = "..."` line is the [package]
+  // version at the top of the manifest (dependency versions use inline-table syntax).
+  const cargoToml = readFileSync(cargoPath, 'utf8');
+  writeFileSync(cargoPath, cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${newVersion}"`));
+
+  console.log(`\n→ Building Saple Bridge v${newVersion}\n`);
+}
 
 // --- run the actual build ------------------------------------------------
 runTauri(args);
