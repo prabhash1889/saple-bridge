@@ -2,12 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   hasReviewSignal,
   mightContainSignal,
+  mightContainAgentMarker,
   getSwarmStatusFromOutput,
   exitFallbackTransition,
 } from './agentSignals';
 
 // Convenience: run the same pipeline the pty-output listener runs.
-const detect = (tail: string) => getSwarmStatusFromOutput(tail, hasReviewSignal(tail));
+const detect = (tail: string, marker?: string) =>
+  getSwarmStatusFromOutput(tail, hasReviewSignal(tail, marker), marker);
 
 describe('lifecycle marker detection', () => {
   it('detects each done marker on its own line', () => {
@@ -42,6 +44,51 @@ describe('lifecycle marker detection', () => {
 
   it('done takes precedence over review when both are present', () => {
     expect(detect('[REVIEW_REQUESTED]\n[AGENT_DONE]\n')).toBe('done');
+  });
+});
+
+describe('scoped (per-agent) marker detection', () => {
+  const marker = 'a1b2c3d4';
+
+  it('detects an agent-scoped marker on its own line', () => {
+    expect(detect(`done\n[AGENT_DONE:${marker}]\n`, marker)).toBe('done');
+    expect(detect(`boom\n[AGENT_FAILED:${marker}]\n`, marker)).toBe('failed');
+    expect(detect(`\n[REVIEW_REQUESTED:${marker}]\n`, marker)).toBe('review');
+  });
+
+  it('ignores a BARE marker for a scoped agent (anti-spoof)', () => {
+    expect(detect('done\n[AGENT_DONE]\n', marker)).toBeNull();
+    expect(detect('\n[REVIEW_REQUESTED]\n', marker)).toBeNull();
+    expect(detect('\n## REVIEW REQUIRED\n', marker)).toBeNull();
+  });
+
+  it("ignores ANOTHER agent's scoped marker", () => {
+    expect(detect(`\n[AGENT_DONE:deadbeef]\n`, marker)).toBeNull();
+  });
+
+  it('still requires the marker to be alone on its line', () => {
+    expect(detect(`when done print [AGENT_DONE:${marker}] here\n`, marker)).toBeNull();
+  });
+
+  it('detects a scoped marker split across two PTY bursts', () => {
+    const chunk1 = `wrapping up\n[AGENT_DONE:`;
+    const chunk2 = `${marker}]\n`;
+    expect(detect(chunk1, marker)).toBeNull();
+    expect(detect(chunk1 + chunk2, marker)).toBe('done');
+  });
+
+  it('falls back to bare matching when the marker is missing or malformed', () => {
+    expect(detect('\n[AGENT_DONE]\n', undefined)).toBe('done');
+    expect(detect('\n[AGENT_DONE]\n', 'bad token!')).toBe('done');
+  });
+});
+
+describe('mightContainAgentMarker pre-filter', () => {
+  it('passes marker keywords and rejects ordinary bracketed output', () => {
+    expect(mightContainAgentMarker('[AGENT_DONE:abc]')).toBe(true);
+    expect(mightContainAgentMarker('[TASK_FAILED]')).toBe(true);
+    expect(mightContainAgentMarker('## REVIEW REQUIRED')).toBe(true);
+    expect(mightContainAgentMarker('const x = arr[0];')).toBe(false);
   });
 });
 

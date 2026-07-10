@@ -25,12 +25,14 @@ vi.mock('@tauri-apps/api/core', () => ({
 const addPaneMock = vi.hoisted(() => vi.fn());
 const removePaneMock = vi.hoisted(() => vi.fn());
 const terminalSessions = vi.hoisted(() => ({} as Record<string, unknown>));
+const maxPaneLimitRef = vi.hoisted(() => ({ value: 16 }));
 vi.mock('./terminalStore', () => ({
   useTerminalStore: {
     getState: () => ({
       addPane: addPaneMock,
       removePane: removePaneMock,
       updateSession: vi.fn(),
+      getMaxPaneLimit: () => maxPaneLimitRef.value,
       sessions: terminalSessions,
     }),
   },
@@ -88,6 +90,7 @@ beforeEach(() => {
   invokeMock.mockReset().mockResolvedValue(undefined);
   addPaneMock.mockReset().mockResolvedValue('pane-1');
   removePaneMock.mockReset().mockResolvedValue(undefined);
+  maxPaneLimitRef.value = 16;
   for (const key of Object.keys(terminalSessions)) delete terminalSessions[key];
   seed([]);
 });
@@ -155,6 +158,26 @@ describe('runAgentScan scheduling', () => {
 
     expect(getAgent('root').status).toBe('idle');
     expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('caps concurrent launches at the parallel-agent limit', async () => {
+    maxPaneLimitRef.value = 2;
+    seed([agent('a'), agent('b'), agent('c'), agent('d')]);
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+    await vi.waitFor(() => {
+      const active = useSwarmStore
+        .getState()
+        .activeAgents.filter((x) => x.status === 'running' || x.status === 'starting');
+      expect(active.length).toBe(2);
+    });
+
+    // The over-limit agents stay unstarted until a slot frees; only two panes were spawned.
+    const idle = useSwarmStore
+      .getState()
+      .activeAgents.filter((x) => x.status === 'idle' || x.status === 'waiting');
+    expect(idle.length).toBe(2);
+    expect(addPaneMock).toHaveBeenCalledTimes(2);
   });
 });
 
