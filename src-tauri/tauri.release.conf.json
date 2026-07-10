@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_PUBLIC_KEY",
+      "endpoints": [
+        "https://github.com/prabhash1889/saple-bridge/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,71 @@
+name: Release
+
+# Cut a release by pushing a version tag (see `npm run release`, which bumps + tags + pushes):
+#   git tag v1.1.0 && git push --follow-tags
+# This builds the signed, updater-ready Windows bundle and publishes a DRAFT GitHub release with
+# `latest.json`. Installed apps only see the update once you review and publish that draft.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# The release job needs to create the GitHub release and upload the installer + latest.json.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish (Windows)
+    runs-on: windows-latest
+    steps:
+      # Two sibling checkouts: prepare-sidecar.mjs builds ../saple-mcp relative to the bridge root,
+      # so the layout on disk must be <workspace>/saple-bridge and <workspace>/saple-mcp.
+      - name: Checkout saple-bridge
+        uses: actions/checkout@v4
+        with:
+          path: saple-bridge
+
+      - name: Checkout saple-mcp (sidecar source)
+        uses: actions/checkout@v4
+        with:
+          repository: prabhash1889/saple-mcp
+          path: saple-mcp
+          # saple-mcp is a separate repo; the default GITHUB_TOKEN can't read it. Provide a PAT
+          # (repo scope) or deploy key as the SAPLE_MCP_TOKEN secret. Drop this line if it's public.
+          token: ${{ secrets.SAPLE_MCP_TOKEN }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: saple-bridge/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: saple-bridge/src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: saple-bridge
+
+      # tauri-action runs `tauri build` (which runs beforeBuildCommand: stage the real sidecar +
+      # build the frontend), signs the updater artifacts, uploads the installer, and generates
+      # latest.json. The release overlay adds createUpdaterArtifacts + the updater feed so the base
+      # config (and local `npm run tauri:build`) stays signing-free.
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: saple-bridge
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Saple Bridge ${{ github.ref_name }}'
+          releaseDraft: true
+          args: --config src-tauri/tauri.release.conf.json

@@ -3,6 +3,7 @@ import { CheckCircle, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
+import { UpdatesSection } from './UpdatesSection';
 
 // Shape of the `run_diagnostics` Rust command result, limited to the fields this tab reads.
 interface DiagnosticsResult {
@@ -30,6 +31,8 @@ export const DiagnosticsTab: React.FC = () => {
   const errorNotification = (msg: string, desc?: string) => useNotificationStore.getState().error(msg, desc);
 
   return (
+    <>
+    <UpdatesSection />
     <section className="surface">
       <div className="section-header">
         <ShieldCheck size={18} className="section-icon" />
@@ -168,5 +171,6 @@ export const DiagnosticsTab: React.FC = () => {
         </div>
       )}
     </section>
+    </>
   );
 };

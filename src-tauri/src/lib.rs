@@ -36,6 +36,13 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }));
+        // In-app updater + the process plugin its restart-after-update needs. Registration is
+        // config-agnostic: with no `plugins.updater` feed configured (local/dev builds) the
+        // plugin loads fine and `check()` simply errors, which the Settings UI surfaces. The
+        // feed + signing only exist in release builds via the tauri.release.conf.json overlay.
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
     }
 
     builder
