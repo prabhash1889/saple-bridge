@@ -6,7 +6,7 @@ import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
-import { hasReviewSignal, mightContainSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
+import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
 
@@ -308,6 +308,33 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
     });
   };
 
+  // A PTY that never started (bad provider CLI, keychain error, ConPTY failure) used to leave a
+  // blank pane and only a console.error — indistinguishable from a frozen terminal. Surface the
+  // failure the same way a `pty-exit` does: print a visible notice into the pane and mark it
+  // exited, so the pane reads as failed rather than hung. A swarm agent whose pane never started
+  // is failed (not left "running" forever), so its dependents stop waiting on a dead terminal.
+  const failPaneSpawn = (id: string, err: unknown) => {
+    console.error(`Failed to spawn PTY session ${id}:`, err);
+    get().appendOutput(
+      id,
+      `\r\n\x1b[31m[failed to start terminal: ${String(err)} — close this pane and try again]\x1b[0m\r\n`,
+    );
+    set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
+
+    const projectPath = useProjectStore.getState().currentProjectPath;
+    if (!projectPath) return;
+    swarmStorePromise ??= import('./swarmStore');
+    swarmStorePromise
+      .then(({ useSwarmStore }) => {
+        const agent = useSwarmStore.getState().activeAgents.find((a) => a.terminalId === id);
+        if (!agent || (agent.status !== 'running' && agent.status !== 'starting')) return;
+        void useSwarmStore.getState().updateAgentStatus(projectPath, agent.id, 'failed', {
+          statusReason: `Terminal failed to start: ${String(err)}`,
+        });
+      })
+      .catch((e) => console.error('Failed to import swarmStore dynamically:', e));
+  };
+
   return {
     panes: [],
     sessions: {},
@@ -361,12 +388,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         const signalTail = appendSignalTail(id, data);
         if (!mightContainSignal(signalTail)) return;
 
-        const reviewMatched = hasReviewSignal(signalTail);
-        const nextSwarmStatus = getSwarmStatusFromOutput(signalTail, reviewMatched);
-        if (!reviewMatched && !nextSwarmStatus) return;
-
         const projectPath = useProjectStore.getState().currentProjectPath;
 
+        // Review-request + kanban run on the bare (unscoped) markers: task panes and interactive
+        // terminals have no per-agent marker to scope against.
+        const reviewMatched = hasReviewSignal(signalTail);
         if (reviewMatched) {
           get().requestReview(id);
           const task = useKanbanStore.getState().tasks.find((t) => t.terminalId === id);
@@ -376,14 +402,22 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           }
         }
 
-        if (projectPath && nextSwarmStatus) {
+        // Swarm completion is matched against the LINKED agent's own marker, so an agent can't be
+        // advanced by another pane's output or by echoing the generic marker name. Only reach for
+        // swarm state when the tail actually holds a marker keyword (skips `arr[0]`-style typing).
+        if (projectPath && mightContainAgentMarker(signalTail)) {
           swarmStorePromise ??= import('./swarmStore');
           swarmStorePromise
             .then(({ useSwarmStore }) => {
               const linkedAgent = useSwarmStore.getState().activeAgents.find((agent) => agent.terminalId === id);
-              if (linkedAgent && linkedAgent.status !== nextSwarmStatus) {
-                void useSwarmStore.getState().updateAgentStatus(projectPath, linkedAgent.id, nextSwarmStatus);
-              }
+              if (!linkedAgent) return;
+              const scopedReview = hasReviewSignal(signalTail, linkedAgent.marker);
+              const nextSwarmStatus = getSwarmStatusFromOutput(signalTail, scopedReview, linkedAgent.marker);
+              if (!nextSwarmStatus || linkedAgent.status === nextSwarmStatus) return;
+              // Mirror the pane's review badge for a scoped review marker (the bare-marker path
+              // above misses `[REVIEW_REQUESTED:<token>]`).
+              if (nextSwarmStatus === 'review') get().requestReview(id);
+              void useSwarmStore.getState().updateAgentStatus(projectPath, linkedAgent.id, nextSwarmStatus);
             })
             .catch((err) => console.error('Failed to import swarmStore dynamically:', err));
         }
@@ -506,7 +540,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       }));
 
       invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand }).catch((err) => {
-        console.error(`Failed to spawn PTY session ${id}:`, err);
+        failPaneSpawn(id, err);
       });
 
       captureLayout(workspaceKey, workspacePath);
@@ -571,7 +605,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         model: newSession.model,
         customCommand: newSession.customCommand,
       }).catch((err) => {
-        console.error(`Failed to spawn split PTY session ${id}:`, err);
+        failPaneSpawn(id, err);
       });
 
       captureLayout(workspaceKey, workspacePath);

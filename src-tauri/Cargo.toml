@@ -1,6 +1,6 @@
 [package]
 name = "saple-bridge"
-version = "1.0.15"
+version = "1.0.16"
 description = "Saple Bridge — local-first agentic development workspace"
 authors = ["Saple"]
 edition = "2021"
@@ -27,6 +27,9 @@ uuid = { version = "1", features = ["v4"] }
 rfd = "0.15.0"
 keyring = "2.1"
 which = "6"
+# Filesystem walker shared with ripgrep: respects .gitignore/.ignore, prunes VCS/build dirs, and
+# walks in parallel. Backs the file tree and workspace search (see `files.rs`).
+ignore = "0.4"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
 # Persist window size/position/maximized across launches.

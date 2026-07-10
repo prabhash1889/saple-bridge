@@ -169,7 +169,7 @@ pub fn parse_memory_file(content: &str, relative_path: &str) -> ParsedMemory {
     fn parse_inline_list(val: &str) -> Vec<String> {
         val.trim_matches(|c| c == '[' || c == ']')
             .split(',')
-            .map(|s| yaml_unquote(s))
+            .map(yaml_unquote)
             .filter(|s| !s.is_empty())
             .collect()
     }
@@ -185,12 +185,10 @@ pub fn parse_memory_file(content: &str, relative_path: &str) -> ParsedMemory {
 
         if in_frontmatter && frontmatter_count == 1 {
             if let Some(list_key) = current_list {
-                let item = if trimmed.starts_with("- ") {
-                    Some(yaml_unquote(&trimmed[2..]))
-                } else if trimmed.starts_with("  - ") {
-                    Some(yaml_unquote(&trimmed[4..]))
+                let item = if let Some(rest) = trimmed.strip_prefix("- ") {
+                    Some(yaml_unquote(rest))
                 } else {
-                    None
+                    trimmed.strip_prefix("  - ").map(yaml_unquote)
                 };
                 if let Some(item) = item {
                     if list_key == "tags" { tags.push(item); } else { aliases.push(item); }
@@ -239,8 +237,8 @@ pub fn parse_memory_file(content: &str, relative_path: &str) -> ParsedMemory {
     let mut first_h1 = String::new();
     for line in body.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            first_h1 = trimmed[2..].trim().to_string();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            first_h1 = rest.trim().to_string();
             break;
         }
     }
@@ -376,7 +374,7 @@ fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
                 let path = entry.path();
                 if path.is_dir() {
                     walk_dir(&path, base_dir, nodes, pending_links, id_lookup)?;
-                } else if path.extension().map_or(false, |ext| ext == "md") {
+                } else if path.extension().is_some_and(|ext| ext == "md") {
                     if let Ok(content) = fs::read_to_string(&path) {
                         let relative_path = path.strip_prefix(base_dir).unwrap_or(&path).to_string_lossy().to_string();
                         let (node, links) = parse_markdown_memory(&content, &relative_path);
@@ -790,7 +788,7 @@ fn find_note_file_inner(memory_dir: &Path, id: &str) -> Option<(PathBuf, MemoryN
                         if let Some(res) = walk(&path, id) {
                             return Some(res);
                         }
-                    } else if path.extension().map_or(false, |ext| ext == "md") {
+                    } else if path.extension().is_some_and(|ext| ext == "md") {
                         if let Ok(content) = fs::read_to_string(&path) {
                             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                             let (node, _) = parse_markdown_memory(&content, &filename);
@@ -878,7 +876,7 @@ fn collect_notes(dir: &Path, base: &Path, out: &mut Vec<(MemoryNode, String, Vec
             let path = entry.path();
             if path.is_dir() {
                 collect_notes(&path, base, out);
-            } else if path.extension().map_or(false, |e| e == "md") {
+            } else if path.extension().is_some_and(|e| e == "md") {
                 if let Ok(content) = fs::read_to_string(&path) {
                     let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
                     let (node, links) = parse_markdown_memory(&content, &rel);
@@ -992,7 +990,7 @@ fn get_unlinked_mentions_inner(project_path: String, id: String) -> Result<Vec<U
         let mut best: Option<(usize, usize)> = None;
         for name in &names_lower {
             if let Some(pos) = find_whole_word(&masked_lower, name) {
-                if best.map_or(true, |(b, _)| pos < b) {
+                if best.is_none_or(|(b, _)| pos < b) {
                     best = Some((pos, name.len()));
                 }
             }

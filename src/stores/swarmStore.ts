@@ -28,6 +28,11 @@ export interface SwarmAgent {
   // Human-readable reason for the current status ("exited with code 1", "terminal lost on
   // restart", ...). Set together with the status transition that caused it; cleared on the next.
   statusReason?: string;
+  // Per-agent completion-marker token. Minted at seed time and embedded in the agent's prompt so
+  // its `[AGENT_DONE:<marker>]`/etc. signals can't be triggered by another pane's output or by
+  // narrating the generic marker name. Absent on agents seeded before scoped markers existed —
+  // those fall back to bare-marker matching.
+  marker?: string;
 }
 
 export interface SwarmTemplate {
@@ -80,7 +85,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Lead Coordinator',
         role: 'coordinator',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: [],
         systemPrompt: 'You are the Swarm Coordinator. Analyze the high-level request, break it down into modular frontend/backend tasks, write them to .saple/swarm/tasks.json, and coordinate builders.',
       },
@@ -89,7 +94,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Frontend Builder',
         role: 'builder',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['coord'],
         systemPrompt: 'You are the Frontend Builder. Implement UI elements and state logic. Read your sub-task details from .saple/swarm/tasks.json, write the React code, and write tests.',
       },
@@ -98,7 +103,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Backend Builder',
         role: 'builder',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['coord'],
         systemPrompt: 'You are the Backend Builder. Implement API endpoints, database structures, and backend business logic. Read your sub-task from .saple/swarm/tasks.json.',
       },
@@ -107,7 +112,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Validation Reviewer',
         role: 'reviewer',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['fe_builder', 'be_builder'],
         systemPrompt: 'You are the Code Reviewer. Validate that both frontend and backend builders have completed their tasks, verify the code syntax and structure, run compilation tests, and signal approval.',
       }
@@ -123,7 +128,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Log Scout',
         role: 'scout',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: [],
         systemPrompt: 'You are the Scout. Analyze error logs, find the file and lines responsible for the failure, and write detailed recommendations to .saple/swarm/bug_report.json.',
       },
@@ -132,7 +137,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Bug Fixer',
         role: 'builder',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['scout'],
         systemPrompt: 'You are the Bug Fixer. Read the bug report in .saple/swarm/bug_report.json and implement the corrective fix in the target code file.',
       },
@@ -141,7 +146,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'QA Verifier',
         role: 'reviewer',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['bug_fixer'],
         systemPrompt: 'You are the QA Verifier. Check the bug fix, run automated tests or compile checks to verify that the bug is fixed and no regressions were introduced.',
       }
@@ -157,7 +162,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Security Auditor',
         role: 'reviewer',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: [],
         systemPrompt: 'Inspect the git diff of the workspace for safety vulnerabilities, hardcoded credentials, or violations of project standards. Output findings in auditor_report.md.',
       },
@@ -166,7 +171,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Release Gatekeeper',
         role: 'reviewer',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['auditor'],
         systemPrompt: 'Read the findings in auditor_report.md. If there are no blockers, output [AGENT_DONE]. Otherwise, output [AGENT_FAILED] with mitigation instructions.',
       }
@@ -182,7 +187,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Codebase Researcher',
         role: 'scout',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: [],
         systemPrompt: 'Search the codebase, list relevant files, read their dependencies, and explain the current architecture. Save your findings in research_notes.md.',
       },
@@ -191,7 +196,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Lead Architect Planner',
         role: 'coordinator',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['researcher'],
         systemPrompt: 'Read research_notes.md and outline a step-by-step implementation plan.md for adding the requested feature. Ensure clear module boundaries.',
       }
@@ -207,7 +212,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Coverage Analyzer',
         role: 'scout',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: [],
         systemPrompt: 'Scan the project files, find files lacking tests or functions that have high complexity, and list them in gaps.json.',
       },
@@ -216,7 +221,7 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Unit Test Writer',
         role: 'builder',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['analyzer'],
         systemPrompt: 'Read gaps.json. Write comprehensive unit tests for the targeted files. Ensure mocks are set up correctly.',
       },
@@ -225,13 +230,22 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
         name: 'Test Executable Runner',
         role: 'reviewer',
         provider: 'codex',
-        model: 'gpt-4o',
+        model: 'default',
         dependencies: ['writer'],
         systemPrompt: 'Run the project test suite. Verify that all unit tests pass, and report coverage metrics. If errors arise, coordinate fixes.',
       }
     ]
   }
 ];
+
+// A short random token that scopes an agent's completion markers to itself. 8 hex chars is
+// plenty to make accidental collisions with real output effectively impossible, while staying
+// short enough to read in the terminal. Charset stays within agentSignals' MARKER_TOKEN_RE.
+const createMarker = (): string => {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid.replace(/-/g, '').slice(0, 8);
+  return Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
+};
 
 // Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
 // updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
@@ -256,6 +270,24 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
       ? `\n## Provided Context Files\nRead these files for additional context:\n${contextFiles.map((f) => `- ${f.path}`).join('\n')}\n`
       : '';
 
+    // Scope this agent's completion markers to its own token so its status can't be flipped by
+    // another pane's output or by echoing the generic marker name. Older agents (restored from a
+    // pre-marker state.json) have no token — they keep using the bare markers.
+    const marker = agent.marker;
+    const signalsSection = marker
+      ? `## Review / Completion Signals
+Emit EXACTLY ONE of these on its own line when you finish. The \`:${marker}\` suffix identifies
+you — a signal without it is ignored, so always include it verbatim:
+- Success: \`[AGENT_DONE:${marker}]\`
+- Human review needed: \`[REVIEW_REQUESTED:${marker}]\`
+- Fatal failure: \`[AGENT_FAILED:${marker}]\`
+`
+      : `## Review / Completion Signals
+- When you are finished, output \`[AGENT_DONE]\` or \`[TASK_COMPLETE]\` to signify success.
+- If you require human review, output \`[REVIEW_REQUESTED]\` or \`## REVIEW REQUIRED\`.
+- If you encounter a fatal failure, output \`[AGENT_FAILED]\` or \`[TASK_FAILED]\`.
+`;
+
     // Generate prompt content
     const promptContent = `# Swarm Agent Mission Instructions
 
@@ -272,11 +304,7 @@ ${agent.systemPrompt}
 - Mailbox Path: .saple/swarm/mailbox/${agent.id}.md (Write your updates/output here)
 - Handoff Path: .saple/swarm/handoffs/${agent.id}-to-[next_agent].json
 ${skillsSection}${contextSection}
-## Review / Completion Signals
-- When you are finished, output \`[AGENT_DONE]\` or \`[TASK_COMPLETE]\` to signify success.
-- If you require human review, output \`[REVIEW_REQUESTED]\` or \`## REVIEW REQUIRED\`.
-- If you encounter a fatal failure, output \`[AGENT_FAILED]\` or \`[TASK_FAILED]\`.
-`;
+${signalsSection}`;
 
     const promptFile = `.saple/agents/prompts/swarm_${agent.id}.md`;
     await invoke('write_project_file', {
@@ -438,6 +466,7 @@ export const useSwarmStore = create<SwarmState>()(
           systemPrompt: a.systemPrompt,
           dependencies: a.dependencies,
           autoApprove: a.autoApprove,
+          marker: createMarker(),
           status: a.dependencies.length > 0 ? 'waiting' : ('idle' as AgentStatus),
         }));
 
@@ -580,8 +609,15 @@ export const useSwarmStore = create<SwarmState>()(
           return;
         }
 
-        // 3. Start agents whose dependencies are all done
+        // 3. Start agents whose dependencies are all done, bounded by the configured
+        // parallel-agent limit. Without this cap a wide swarm (many dependency-ready agents)
+        // would spawn every CLI at once, blowing past maxParallelAgents and swamping the machine.
+        // Over-limit agents stay 'waiting'/'idle' and launch on a later scan — each completion
+        // fires checkAndRunNextAgents, which frees a slot and picks up the next one.
+        const maxParallel = useTerminalStore.getState().getMaxPaneLimit();
+        let activeCount = updatedAgents.filter(a => a.status === 'starting' || a.status === 'running').length;
         for (let i = 0; i < updatedAgents.length; i++) {
+          if (activeCount >= maxParallel) break;
           const agent = updatedAgents[i];
           if (agent.status === 'waiting' || agent.status === 'idle') {
             const allDepsDone = agent.dependencies.every(depId => {
@@ -592,10 +628,11 @@ export const useSwarmStore = create<SwarmState>()(
             if (allDepsDone) {
               updatedAgents[i] = { ...agent, status: 'starting' };
               stateChanged = true;
-              
+              activeCount++;
+
               set({ activeAgents: updatedAgents });
               await get().saveSwarmState(projectPath);
-              
+
               // Launch async process
               launchAgentProcess(projectPath, agent).catch(err => {
                 console.error(`Error launching agent ${agent.id}:`, err);
@@ -652,8 +689,10 @@ export const useSwarmStore = create<SwarmState>()(
       },
 
       addCustomAgent: (agent) => {
+        // Ensure every agent carries a completion-marker token even when added outside the wizard.
+        const withMarker = agent.marker ? agent : { ...agent, marker: createMarker() };
         set(state => ({
-          activeAgents: [...state.activeAgents, agent]
+          activeAgents: [...state.activeAgents, withMarker]
         }));
       },
 
