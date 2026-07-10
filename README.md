@@ -14,6 +14,7 @@ The app is built with Tauri 2, React 19, TypeScript, Vite, Zustand, xterm.js, an
 - Review git changes, stage files, and commit from the review workspace.
 - Store provider API keys in the OS keychain instead of project files.
 - Install MCP config files that point external clients at the bundled `saple-mcp` sidecar.
+- Update itself in place on Windows: Settings -> Diagnostics -> App Updates checks the signed release feed, downloads, and restarts into the new version.
 
 ## Requirements
 
@@ -61,8 +62,9 @@ npm run typecheck        # TypeScript check
 npm test                 # Vitest suite
 npm run build            # TypeScript + Vite production build
 npm run tauri:dev        # Tauri desktop dev app
-npm run tauri:build      # Tauri production bundle
+npm run tauri:build      # Tauri production bundle (local QA; auto-bumps patch version)
 npm run prepare-sidecar  # Build and stage ../saple-mcp manually
+npm run release          # Cut a release: bump, commit, tag, push (CI builds and signs)
 ```
 
 Rust checks and tests:
@@ -140,9 +142,33 @@ For cross-compilation, set `SAPLE_MCP_TARGET=<target-triple>` or pass `--target 
 
 Open `smoke-test-workspace/` in the desktop app and confirm that tasks, memory notes, review records, agent sessions, and swarm state load. See [smoke-test-workspace/README.md](smoke-test-workspace/README.md) for the checklist.
 
+## Releases and Auto-Update
+
+Releases are tag-driven and built in CI. Windows users get in-app updates; macOS is manual install only for now.
+
+How it works:
+
+1. `npm run release` (or `npm run release minor|major|x.y.z`) bumps the version in `tauri.conf.json`, `package.json`, and `Cargo.toml`, commits, tags `v<version>`, and pushes.
+2. The tag push triggers `.github/workflows/release.yml`, which checks out the sibling `saple-mcp` repo, builds the bundles, signs the updater artifacts, and creates a **draft** GitHub release with the installers and `latest.json`.
+3. Review the draft on GitHub and publish it. Publishing is what makes the update visible to installed apps: the updater endpoint points at `releases/latest/download/latest.json`, and drafts are not "latest".
+4. Installed apps check the feed from Settings -> Diagnostics -> App Updates, verify the signature against the public key baked into the app, download, install, and restart.
+
+Version rules:
+
+- The release version is whatever `npm run release` commits and tags. CI builds exactly that version.
+- Local `npm run tauri:build` auto-bumps the patch version for throwaway QA builds; those builds never reach users and do not sign updater artifacts.
+
+Release infrastructure (one-time setup, already done):
+
+- Updater signing keypair generated with `npx tauri signer generate`. The public key lives in `src-tauri/tauri.release.conf.json`; the private key and its password must stay out of the repo. Losing them means installed apps can never be updated again, so keep backups.
+- GitHub Actions secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and `SAPLE_MCP_TOKEN` (fine-grained PAT with read access to the private `saple-mcp` repo).
+- `src-tauri/tauri.release.conf.json` is a release-only config overlay: it adds `createUpdaterArtifacts` and the updater feed on top of `tauri.conf.json`, so local builds stay signing-free.
+
+Known limitation: installers are not Authenticode-signed, so Windows SmartScreen shows a "Windows protected your PC" warning on first run of a downloaded installer. Users click "More info" -> "Run anyway". Removing the warning requires a Windows code-signing certificate (or Azure Trusted Signing); the Tauri updater signature is a separate mechanism and does not affect SmartScreen. In-place updates applied through the app do not re-trigger the full first-run experience.
+
 ## Release Checklist
 
-Before publishing a release build:
+Before cutting a release:
 
 ```powershell
 npm run typecheck
@@ -152,8 +178,10 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cd src-tauri
 cargo test
 cd ..
-npm run tauri:build
+npm run release
 ```
+
+Then watch the Release workflow in GitHub Actions, verify the draft release has the installer, its `.sig`, and `latest.json`, and publish it.
 
 Manual checks on the target platform:
 
