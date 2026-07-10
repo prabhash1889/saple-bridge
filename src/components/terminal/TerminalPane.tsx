@@ -40,7 +40,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const focusedPaneId = useTerminalStore((state) => state.focusedPaneId);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const addPane = useTerminalStore((state) => state.addPane);
-  const removePane = useTerminalStore((state) => state.removePane);
+  const confirmRemovePane = useTerminalStore((state) => state.confirmRemovePane);
   const toggleMaximizePane = useTerminalStore((state) => state.toggleMaximizePane);
   const canAddPane = useTerminalStore((state) => state.canAddPane);
   const sessionInfo = useTerminalStore((state) => state.sessions[sessionId]);
@@ -164,7 +164,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   };
 
   const handleRemovePane = () => {
-    void removePane(sessionId);
+    confirmRemovePane(sessionId);
   };
 
   const handleApprove = async () => {

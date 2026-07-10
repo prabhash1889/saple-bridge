@@ -100,7 +100,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
   );
   const addPane = useTerminalStore((state) => state.addPane);
   const splitPane = useTerminalStore((state) => state.splitPane);
-  const removePane = useTerminalStore((state) => state.removePane);
+  const confirmRemovePane = useTerminalStore((state) => state.confirmRemovePane);
   const updateSession = useTerminalStore((state) => state.updateSession);
   const canAddPane = useTerminalStore((state) => state.canAddPane);
   const getMaxPaneLimit = useTerminalStore((state) => state.getMaxPaneLimit);
@@ -150,9 +150,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
   const handleClosePane = useCallback(() => {
     if (focusedPaneId) {
-      removePane(focusedPaneId);
+      confirmRemovePane(focusedPaneId);
     }
-  }, [focusedPaneId, removePane]);
+  }, [focusedPaneId, confirmRemovePane]);
 
   const handleRenamePane = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (focusedPaneId) {

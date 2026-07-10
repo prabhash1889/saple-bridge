@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useConfirmStore } from './confirmStore';
 import { useKanbanStore } from './kanbanStore';
 import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
@@ -97,6 +98,7 @@ interface TerminalState {
   addPane: (cwd: string, aiProvider?: AiProvider, model?: string, promptFile?: string, customCommand?: string) => Promise<string>;
   splitPane: (paneId: string, cwd: string) => Promise<string>;
   removePane: (paneId: string) => Promise<void>;
+  confirmRemovePane: (paneId: string) => void;
   closeWorkspaceTerminals: (workspaceKey: string) => Promise<void>;
   restoreWorkspacePanes: (workspacePath: string) => Promise<void>;
   setFocusedPane: (paneId: string | null) => void;
@@ -645,6 +647,28 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
 
       // Re-snapshot once panes carry their restored names (addPane captured default labels).
       captureLayout(getActiveWorkspaceKey() || workspacePath, workspacePath);
+    },
+
+    // User-initiated close: confirm before killing a live pane (its process tree dies
+    // with it). Panes whose shell already exited close silently - nothing to lose.
+    // Programmatic teardown (swarm, workspace close) calls removePane directly.
+    confirmRemovePane: (paneId) => {
+      const state = get();
+      if (!state.sessions[paneId]) return;
+      if (state.exitedPanes[paneId]) {
+        void state.removePane(paneId);
+        return;
+      }
+      const name = state.sessions[paneId].name || 'this terminal';
+      useConfirmStore.getState().confirm({
+        title: 'Close Terminal',
+        message: `Close "${name}"? Anything running inside it will be terminated.`,
+        confirmLabel: 'Close Terminal',
+        cancelLabel: 'Cancel',
+        onConfirm: () => {
+          void get().removePane(paneId);
+        },
+      });
     },
 
     removePane: async (paneId) => {

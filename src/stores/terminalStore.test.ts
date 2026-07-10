@@ -39,6 +39,7 @@ vi.mock('../lib/desktopNotifications', () => ({
 }));
 
 import { useTerminalStore } from './terminalStore';
+import { useConfirmStore } from './confirmStore';
 
 const store = () => useTerminalStore.getState();
 
@@ -113,6 +114,33 @@ describe('removePane', () => {
     expect(store().workspacePanes['ws-1']).toBeUndefined();
     expect(store().panes).toEqual([]);
     expect(store().focusedPaneId).toBeNull();
+  });
+});
+
+describe('confirmRemovePane', () => {
+  beforeEach(() => {
+    useConfirmStore.setState({ isOpen: false, onConfirm: null, onCancel: null });
+  });
+
+  it('asks for confirmation and only removes the live pane on confirm', async () => {
+    const a = await store().addPane('/proj');
+
+    store().confirmRemovePane(a);
+    expect(useConfirmStore.getState().isOpen).toBe(true);
+    expect(store().sessions[a]).toBeDefined();
+
+    useConfirmStore.getState().onConfirm?.();
+    await vi.waitFor(() => expect(store().sessions[a]).toBeUndefined());
+    expect(invokeMock).toHaveBeenCalledWith('kill_pty', { id: a });
+  });
+
+  it('closes an already-exited pane without prompting', async () => {
+    const a = await store().addPane('/proj');
+    useTerminalStore.setState((s) => ({ exitedPanes: { ...s.exitedPanes, [a]: true } }));
+
+    store().confirmRemovePane(a);
+    expect(useConfirmStore.getState().isOpen).toBe(false);
+    await vi.waitFor(() => expect(store().sessions[a]).toBeUndefined());
   });
 });
 
