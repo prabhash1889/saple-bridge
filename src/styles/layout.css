@@ -1125,9 +1125,32 @@ html[data-theme="latte"] .terminal-provider-menu {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.workspace-context-item:hover {
+.workspace-context-item:hover:not(:disabled) {
   background: var(--bg-surface-active);
   color: var(--text-primary);
+}
+
+.workspace-context-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Inline rename field: sits in the row in place of the workspace-name button and
+   matches its type so renaming reads as editing the label in place. */
+.workspace-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--accent, var(--text-secondary));
+  border-radius: 0;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.workspace-rename-input:focus {
+  outline: none;
 }
 
 .workspace-status {

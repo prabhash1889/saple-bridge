@@ -113,6 +113,8 @@ interface ProjectState {
   openWorkspace: (path: string) => Promise<void>;
   openWorkspaceInstance: (id: string) => Promise<void>;
   closeWorkspace: (id: string) => void;
+  moveWorkspace: (id: string, direction: 'up' | 'down') => void;
+  renameWorkspace: (id: string, name: string) => void;
   refreshWorkspace: () => Promise<void>;
   updateWorkspaceConfig: (config: Partial<WorkspaceConfig>) => Promise<void>;
   checkPathExists: (path: string) => Promise<boolean>;
@@ -320,6 +322,31 @@ export const useProjectStore = create<ProjectState>()(
             workspaceConfig: null,
             workspaceSummary: null,
           };
+        }),
+
+        // Reorder a workspace instance by swapping it with its neighbour. The rendered
+        // list follows array order, and openWorkspaces is persisted, so this is all it takes.
+        moveWorkspace: (id, direction) => set((state) => {
+          const index = state.openWorkspaces.findIndex((w) => w.id === id);
+          if (index === -1) return {};
+          const target = direction === 'up' ? index - 1 : index + 1;
+          if (target < 0 || target >= state.openWorkspaces.length) return {};
+          const openWorkspaces = [...state.openWorkspaces];
+          [openWorkspaces[index], openWorkspaces[target]] = [openWorkspaces[target], openWorkspaces[index]];
+          return { openWorkspaces };
+        }),
+
+        // Rename a workspace instance. Display-only and per-instance: on-disk `.saple/*`
+        // state is keyed by `path`, so the name never touches disk. Empty names are ignored.
+        renameWorkspace: (id, name) => set((state) => {
+          const trimmed = name.trim();
+          if (!trimmed) return {};
+          const openWorkspaces = state.openWorkspaces.map((w) =>
+            w.id === id ? { ...w, name: trimmed } : w
+          );
+          return state.currentWorkspaceId === id
+            ? { openWorkspaces, currentProjectName: trimmed }
+            : { openWorkspaces };
         }),
       };
     },

@@ -17,6 +17,8 @@ import {
   Command,
   Terminal as TerminalIcon,
   FolderOpen,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useKanbanStore } from '../../stores/kanbanStore';
@@ -85,12 +87,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
   const openWorkspaceInstance = useProjectStore((state) => state.openWorkspaceInstance);
   const workspaceLoading = useProjectStore((state) => state.workspaceLoading);
   const closeWorkspace = useProjectStore((state) => state.closeWorkspace);
+  const moveWorkspace = useProjectStore((state) => state.moveWorkspace);
+  const renameWorkspace = useProjectStore((state) => state.renameWorkspace);
 
   const [selectedProvider, setSelectedProvider] = useState<AiProvider>('claude');
   const [controlsCollapsed, setControlsCollapsed] = useState(true);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const providerPickerRef = useRef<HTMLDivElement>(null);
-  const [workspaceMenu, setWorkspaceMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [workspaceMenu, setWorkspaceMenu] = useState<
+    { x: number; y: number; path: string; id: string; index: number } | null
+  >(null);
+  // The workspace instance currently being renamed inline (null when not renaming).
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
   const panes = useTerminalStore((state) => state.panes);
   const focusedPaneId = useTerminalStore((state) => state.focusedPaneId);
@@ -184,12 +192,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
 
   // Right-clicking a workspace row opens a small menu near the cursor. Position
   // is clamped so the menu stays on-screen near the bottom edge.
-  const handleWorkspaceContextMenu = (path: string, e: React.MouseEvent) => {
+  const handleWorkspaceContextMenu = (
+    workspace: { id: string; path: string },
+    index: number,
+    e: React.MouseEvent
+  ) => {
     e.preventDefault();
     e.stopPropagation();
-    const MENU_HEIGHT = 48;
+    const MENU_HEIGHT = 176;
     const y = Math.min(e.clientY, window.innerHeight - MENU_HEIGHT - 8);
-    setWorkspaceMenu({ x: e.clientX, y, path });
+    setWorkspaceMenu({ x: e.clientX, y, path: workspace.path, id: workspace.id, index });
   };
 
   const closeWorkspaceMenu = () => setWorkspaceMenu(null);
@@ -212,6 +224,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
         console.error('Failed to open workspace in file explorer:', error);
       }
     }
+    closeWorkspaceMenu();
+  };
+
+  const handleMoveWorkspace = (direction: 'up' | 'down') => {
+    if (workspaceMenu) moveWorkspace(workspaceMenu.id, direction);
+    closeWorkspaceMenu();
+  };
+
+  const handleStartRename = () => {
+    if (workspaceMenu) setRenamingId(workspaceMenu.id);
     closeWorkspaceMenu();
   };
 
@@ -293,20 +315,45 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                 <div
                   key={workspace.id}
                   className={active ? 'workspace-rail-row active' : 'workspace-rail-row'}
-                  onContextMenu={(e) => handleWorkspaceContextMenu(workspace.path, e)}
+                  onContextMenu={(e) => handleWorkspaceContextMenu(workspace, index, e)}
                 >
-                  <button
-                      className={active ? 'recent-workspace active' : 'recent-workspace'}
-                      onClick={() => {
-                        if (!active) openWorkspaceInstance(workspace.id);
-                        setActiveView('terminals');
-                      }}
-                      title={workspace.path}
-                      disabled={workspaceLoading}
-                    >
-                    <span className="workspace-status" style={circleStyle} />
-                    <span>{workspace.name}</span>
-                  </button>
+                  {renamingId === workspace.id ? (
+                    <div className="recent-workspace">
+                      <span className="workspace-status" style={circleStyle} />
+                      <input
+                        className="workspace-rename-input"
+                        defaultValue={workspace.name}
+                        autoFocus
+                        onFocus={(e) => e.target.select()}
+                        onBlur={(e) => {
+                          renameWorkspace(workspace.id, e.target.value);
+                          setRenamingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            renameWorkspace(workspace.id, e.currentTarget.value);
+                            setRenamingId(null);
+                          } else if (e.key === 'Escape') {
+                            setRenamingId(null);
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                        className={active ? 'recent-workspace active' : 'recent-workspace'}
+                        onClick={() => {
+                          if (!active) openWorkspaceInstance(workspace.id);
+                          setActiveView('terminals');
+                        }}
+                        onDoubleClick={() => setRenamingId(workspace.id)}
+                        title={workspace.path}
+                        disabled={workspaceLoading}
+                      >
+                      <span className="workspace-status" style={circleStyle} />
+                      <span>{workspace.name}</span>
+                    </button>
+                  )}
                   <button
                     className="workspace-rail-close"
                     onClick={() => handleCloseWorkspace(workspace.id)}
@@ -340,6 +387,35 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
             style={{ top: workspaceMenu.y, left: workspaceMenu.x }}
             role="menu"
           >
+            <button
+              type="button"
+              className="workspace-context-item"
+              role="menuitem"
+              onClick={handleStartRename}
+            >
+              <Edit3 size={14} />
+              <span>Rename</span>
+            </button>
+            <button
+              type="button"
+              className="workspace-context-item"
+              role="menuitem"
+              onClick={() => handleMoveWorkspace('up')}
+              disabled={workspaceMenu.index === 0}
+            >
+              <ArrowUp size={14} />
+              <span>Move up</span>
+            </button>
+            <button
+              type="button"
+              className="workspace-context-item"
+              role="menuitem"
+              onClick={() => handleMoveWorkspace('down')}
+              disabled={workspaceMenu.index === openWorkspaces.length - 1}
+            >
+              <ArrowDown size={14} />
+              <span>Move down</span>
+            </button>
             <button
               type="button"
               className="workspace-context-item"
