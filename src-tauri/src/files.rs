@@ -1,11 +1,21 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
+use ignore::{DirEntry, WalkBuilder, WalkState};
 use crate::process_ext::CommandNoWindow;
 
 const MAX_FILE_ENTRIES: usize = 5_000;
 const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_LISTED_FILE_BYTES: u64 = 5 * 1024 * 1024;
+
+// Directories the walker never descends into, regardless of .gitignore. `.gitignore` already hides
+// most build output, but a project may not have one (or may not ignore its own `.saple` data dir),
+// and the app's own state must never surface in the tree or be searched. `.git` is git-managed, not
+// gitignored, so it must be listed here explicitly.
+const ALWAYS_IGNORE_DIRS: &[&str] = &[".git", ".saple", ".bridgememory"];
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -16,104 +26,53 @@ pub struct FileEntry {
     pub size_bytes: Option<u64>,
 }
 
-fn is_ignored(name: &str, is_dir: bool, size: Option<u64>) -> bool {
-    let lower_name = name.to_lowercase();
-    if is_dir {
-        matches!(
-            lower_name.as_str(),
-            ".git"
-                | "node_modules"
-                | "target"
-                | "dist"
-                | "build"
-                | ".venv"
-                | ".next"
-                | ".saple"
-                | ".bridgememory"
-                | ".pytest_cache"
-                | "__pycache__"
-                | ".cache"
-        )
-    } else {
-        // Large file (> 5MB)
-        if let Some(s) = size {
-            if s > 5 * 1024 * 1024 {
-                return true;
-            }
+// Binary/oversized files are skipped in both the tree and search: they're not editable text and
+// reading them would waste memory. Directory pruning is handled by the walker (gitignore +
+// ALWAYS_IGNORE_DIRS via `filter_entry`), so this only judges files.
+fn is_ignored_file(name: &str, size: Option<u64>) -> bool {
+    if let Some(s) = size {
+        if s > MAX_LISTED_FILE_BYTES {
+            return true;
         }
-        
-        // Common binary extensions
-        let ext = Path::new(&lower_name)
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-            
-        matches!(
-            ext,
-            "exe" | "dll" | "pdb" | "zip" | "tar" | "gz" | "rar" | "7z" | "png" | "jpg" | "jpeg" | "gif" | "ico" | "pdf" | "mp4" | "mp3" | "wav" | "woff" | "woff2" | "ttf" | "eot" | "class" | "jar"
-        )
     }
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "exe" | "dll" | "pdb" | "zip" | "tar" | "gz" | "rar" | "7z" | "png" | "jpg" | "jpeg"
+            | "gif" | "ico" | "pdf" | "mp4" | "mp3" | "wav" | "woff" | "woff2" | "ttf" | "eot"
+            | "class" | "jar"
+    )
 }
 
-fn list_dir_recursive(
-    project_path: &str,
-    current_dir: &Path,
-    base_path: &Path,
-    depth: usize,
-    max_depth: usize,
-    results: &mut Vec<FileEntry>,
-) -> Result<(), String> {
-    if depth > max_depth {
-        return Ok(());
-    }
-    
-    // Gracefully handle directories we do not have permission to read
-    let read_dir = match fs::read_dir(current_dir) {
-        Ok(rd) => rd,
-        Err(_) => return Ok(()),
-    };
-        
-    for entry in read_dir {
-        if results.len() >= MAX_FILE_ENTRIES {
-            return Ok(());
-        }
+// Whether `entry` is one of the always-pruned directories. Used as the walker's `filter_entry`
+// predicate — returning false for a directory skips its whole subtree.
+fn is_always_ignored_dir(entry: &DirEntry) -> bool {
+    entry.file_type().is_some_and(|ft| ft.is_dir())
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|n| ALWAYS_IGNORE_DIRS.contains(&n))
+}
 
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue, // skip problematic entries
-        };
-        let path = entry.path();
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue, // skip entries with inaccessible metadata
-        };
-        let name = entry.file_name().to_string_lossy().to_string();
-        
-        let is_dir = metadata.is_dir();
-        let size_bytes = if is_dir { None } else { Some(metadata.len()) };
-        
-        if is_ignored(&name, is_dir, size_bytes) {
-            continue;
-        }
-        
-        let rel_path = match path.strip_prefix(base_path) {
-            Ok(p) => p.to_string_lossy().to_string().replace('\\', "/"),
-            Err(_) => continue,
-        };
-            
-        results.push(FileEntry {
-            name,
-            path: rel_path,
-            is_dir,
-            size_bytes,
-        });
-        
-        if is_dir {
-            list_dir_recursive(project_path, &path, base_path, depth + 1, max_depth, results)?;
-        }
-    }
-    
-    Ok(())
+// A walker rooted at `root` that respects .gitignore/.ignore (even outside a git repo), shows
+// dotfiles (so `.github`, `.eslintrc`, etc. still appear), and always prunes ALWAYS_IGNORE_DIRS.
+fn project_walker(root: &Path, max_depth: Option<usize>) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .hidden(false) // dotfiles are meaningful in dev projects; gitignore/overrides do the hiding
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .ignore(true)
+        .parents(true)
+        .require_git(false) // honor a bare .gitignore even in a non-git project
+        .max_depth(max_depth)
+        .filter_entry(|entry| !is_always_ignored_dir(entry));
+    builder
 }
 
 fn list_project_files_inner(
@@ -127,25 +86,60 @@ fn list_project_files_inner(
     } else {
         base.join(&root)
     };
-    
+
     // Safety check: ensure target path stays inside project directory
     let canonical_base = base.canonicalize().map_err(|e| format!("Base path error: {}", e))?;
-    
+
     // Check if target directory exists before canonicalizing it
     if !target.exists() {
         return Err("Directory does not exist".to_string());
     }
     let canonical_target = target.canonicalize().map_err(|e| format!("Target path error: {}", e))?;
-    
+
     if !canonical_target.starts_with(&canonical_base) {
         return Err("Access denied: path is outside the project workspace".to_string());
     }
-    
+
     let max_depth = depth.unwrap_or(3);
     let mut results = Vec::new();
-    
-    list_dir_recursive(&project_path, &canonical_target, &canonical_base, 1, max_depth, &mut results)?;
-    
+
+    // Walk from the requested subtree but report paths relative to the project root, matching the
+    // previous behavior. `max_depth` is relative to the walk root; the root entry itself is depth 0
+    // and skipped.
+    for entry in project_walker(&canonical_target, Some(max_depth)).build() {
+        if results.len() >= MAX_FILE_ENTRIES {
+            break;
+        }
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.depth() == 0 {
+            continue; // the walk root itself
+        }
+        let path = entry.path();
+        let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+        let size_bytes = if is_dir {
+            None
+        } else {
+            entry.metadata().ok().map(|m| m.len())
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !is_dir && is_ignored_file(&name, size_bytes) {
+            continue;
+        }
+        let rel_path = match path.strip_prefix(&canonical_base) {
+            Ok(p) => p.to_string_lossy().to_string().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        results.push(FileEntry {
+            name,
+            path: rel_path,
+            is_dir,
+            size_bytes,
+        });
+    }
+
     // Sort files alphabetically: folders first, then files
     results.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
@@ -154,7 +148,7 @@ fn list_project_files_inner(
             a.path.cmp(&b.path)
         }
     });
-    
+
     Ok(results)
 }
 
@@ -415,75 +409,56 @@ pub struct SearchHit {
     pub line_text: String, // The matching line (trimmed of trailing newline), capped
 }
 
-fn search_dir_recursive(
-    current_dir: &Path,
-    base_path: &Path,
+// Scan one file for case-insensitive substring matches, appending to `hits`. Returns false if the
+// global hit cap was reached (caller should stop the walk).
+fn search_one_file(
+    entry: &DirEntry,
+    canonical_base: &Path,
     needle_lower: &str,
-    results: &mut Vec<SearchHit>,
-    truncated: &mut bool,
-) {
-    if results.len() >= MAX_SEARCH_HITS {
-        *truncated = true;
-        return;
+    hits: &Arc<Mutex<Vec<SearchHit>>>,
+) -> bool {
+    let path = entry.path();
+    let size = entry.metadata().ok().map(|m| m.len());
+    let name = entry.file_name().to_string_lossy();
+    if is_ignored_file(&name, size) || size.is_some_and(|s| s > MAX_SEARCH_FILE_BYTES) {
+        return true;
     }
-    let read_dir = match fs::read_dir(current_dir) {
-        Ok(rd) => rd,
-        Err(_) => return,
+    let content = match fs::read(path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => return true, // skip binary / non-UTF-8
+        },
+        Err(_) => return true,
     };
-    for entry in read_dir {
-        if results.len() >= MAX_SEARCH_HITS {
-            *truncated = true;
-            return;
-        }
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = metadata.is_dir();
-        let size_bytes = if is_dir { None } else { Some(metadata.len()) };
-        if is_ignored(&name, is_dir, size_bytes) {
-            continue;
-        }
-        if is_dir {
-            search_dir_recursive(&path, base_path, needle_lower, results, truncated);
-        } else {
-            if metadata.len() > MAX_SEARCH_FILE_BYTES {
-                continue;
-            }
-            let content = match fs::read(&path) {
-                Ok(bytes) => match String::from_utf8(bytes) {
-                    Ok(text) => text,
-                    Err(_) => continue, // skip binary / non-UTF-8
-                },
-                Err(_) => continue,
-            };
-            let rel_path = match path.strip_prefix(base_path) {
-                Ok(p) => p.to_string_lossy().to_string().replace('\\', "/"),
-                Err(_) => continue,
-            };
-            for (idx, line) in content.lines().enumerate() {
-                if let Some(col) = line.to_lowercase().find(needle_lower) {
-                    let snippet: String = line.chars().take(400).collect();
-                    results.push(SearchHit {
-                        path: rel_path.clone(),
-                        line: idx + 1,
-                        column: col + 1,
-                        line_text: snippet,
-                    });
-                    if results.len() >= MAX_SEARCH_HITS {
-                        *truncated = true;
-                        return;
-                    }
-                }
-            }
+    let rel_path = match path.strip_prefix(canonical_base) {
+        Ok(p) => p.to_string_lossy().to_string().replace('\\', "/"),
+        Err(_) => return true,
+    };
+
+    // Collect this file's matches locally, then splice into the shared vec once — one lock per
+    // matching file instead of one per hit.
+    let mut local: Vec<SearchHit> = Vec::new();
+    for (idx, line) in content.lines().enumerate() {
+        if let Some(col) = line.to_lowercase().find(needle_lower) {
+            local.push(SearchHit {
+                path: rel_path.clone(),
+                line: idx + 1,
+                column: col + 1,
+                line_text: line.chars().take(400).collect(),
+            });
         }
     }
+    if local.is_empty() {
+        return true;
+    }
+    let mut guard = hits.lock().unwrap();
+    for hit in local {
+        if guard.len() >= MAX_SEARCH_HITS {
+            return false;
+        }
+        guard.push(hit);
+    }
+    guard.len() < MAX_SEARCH_HITS
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -501,10 +476,43 @@ fn search_in_files_inner(project_path: String, query: String) -> Result<SearchRe
     let base = Path::new(&project_path);
     let canonical_base = base.canonicalize().map_err(|e| format!("Base path error: {}", e))?;
     let needle_lower = needle.to_lowercase();
-    let mut results = Vec::new();
-    let mut truncated = false;
-    search_dir_recursive(&canonical_base, &canonical_base, &needle_lower, &mut results, &mut truncated);
-    Ok(SearchResult { hits: results, truncated })
+
+    let hits: Arc<Mutex<Vec<SearchHit>>> = Arc::new(Mutex::new(Vec::new()));
+    let truncated = Arc::new(AtomicBool::new(false));
+
+    // Parallel walk (respects .gitignore, prunes ALWAYS_IGNORE_DIRS). Each worker scans a file and
+    // signals Quit once the shared hit cap is hit, so a huge repo stops promptly.
+    project_walker(&canonical_base, None).build_parallel().run(|| {
+        let hits = Arc::clone(&hits);
+        let truncated = Arc::clone(&truncated);
+        let canonical_base = canonical_base.clone();
+        let needle_lower = needle_lower.clone();
+        Box::new(move |entry| {
+            if truncated.load(Ordering::Relaxed) {
+                return WalkState::Quit;
+            }
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return WalkState::Continue,
+            };
+            if entry.file_type().is_none_or(|ft| ft.is_dir()) {
+                return WalkState::Continue;
+            }
+            if !search_one_file(&entry, &canonical_base, &needle_lower, &hits) {
+                truncated.store(true, Ordering::Relaxed);
+                return WalkState::Quit;
+            }
+            WalkState::Continue
+        })
+    });
+
+    let mut results = Arc::try_unwrap(hits)
+        .expect("all walker threads have finished")
+        .into_inner()
+        .unwrap();
+    // Parallel iteration yields files in nondeterministic order; sort for a stable, grouped view.
+    results.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)).then(a.column.cmp(&b.column)));
+    Ok(SearchResult { hits: results, truncated: truncated.load(Ordering::Relaxed) })
 }
 
 #[tauri::command]
