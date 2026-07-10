@@ -22,7 +22,6 @@ import {
   getActiveWebglContexts,
   incrementActiveWebglContexts,
   isWebglDisabled,
-  webglDiag,
   webglHolders,
 } from './webglBudget';
 import '@xterm/xterm/css/xterm.css';
@@ -219,7 +218,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
   // budget. Idempotent: safe to call from the `active` effect, the context-loss handler,
   // and the unmount cleanup without double-counting.
   const unloadWebgl = useCallback(() => {
-    const held = webglHolders.has(sessionId) || webglAddonRef.current !== null;
     webglHolders.delete(sessionId);
     if (webglReleaseRef.current) {
       webglReleaseRef.current();
@@ -233,7 +231,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       }
       webglAddonRef.current = null;
     }
-    if (held) webglDiag('release', sessionId);
   }, [sessionId]);
 
   // Attach a WebGL renderer to the live terminal, unless one is already attached or the
@@ -242,7 +239,6 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     const term = terminalRef.current;
     if (!term || webglAddonRef.current) return;
     if (isWebglDisabled()) {
-      webglDiag('disabled-dom-renderer', sessionId);
       return;
     }
     if (getActiveWebglContexts() >= MAX_WEBGL_CONTEXTS) {
@@ -257,14 +253,12 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
           )
         : undefined;
       if (!victim) {
-        webglDiag('cap-reached-dom-fallback', sessionId, { isPriority });
         console.warn(
           `[terminal ${sessionId}] WebGL context cap (${MAX_WEBGL_CONTEXTS}) reached; this pane uses the slower DOM renderer.`,
         );
         return;
       }
       // Release the victim's context (drops it back to the DOM renderer), freeing a slot.
-      webglDiag('evict', sessionId, { victim });
       webglHolders.get(victim)?.();
       if (getActiveWebglContexts() >= MAX_WEBGL_CONTEXTS) return;
     }
@@ -283,16 +277,13 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
         // The browser reclaimed the GL context (e.g. the process-wide cap was hit). Drop the
         // addon and free the slot so the pane falls back to the DOM renderer instead of
         // sitting on a dead, frozen canvas.
-        webglDiag('context-loss', sessionId);
         unloadWebgl();
       });
       term.loadAddon(webglAddon);
       term.refresh(0, term.rows - 1);
-      webglDiag('acquire', sessionId);
     } catch {
       // WebGL not supported / failed to init — fall back to the DOM renderer.
       unloadWebgl();
-      webglDiag('init-failed-dom-fallback', sessionId);
       console.warn(
         `[terminal ${sessionId}] WebGL renderer unavailable; using the slower DOM renderer.`,
       );

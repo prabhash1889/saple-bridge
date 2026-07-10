@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useKanbanStore } from './kanbanStore';
 import { useProjectStore } from './projectStore';
-import { useAgentSessionStore } from './agentSessionStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
@@ -108,7 +107,6 @@ interface TerminalState {
   requestReview: (paneId: string) => void;
   resolveReview: (paneId: string) => void;
   clearAll: () => Promise<void>;
-  persistOutputToLog: (paneId: string, content: string, projectPath: string) => Promise<void>;
 }
 
 const COLOR_PRESETS = ['#5D5FEF', '#10B981', '#EF4444', '#F59E0B', '#3B82F6', '#EC4899'];
@@ -473,28 +471,6 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
     getBufferedOutput: (paneId) => (paneOutputBuffers.get(paneId) ?? []).join(''),
 
     getLatestSequence: (paneId) => paneLatestSequence.get(paneId) ?? 0,
-
-    persistOutputToLog: async (paneId, content, projectPath) => {
-      const session = get().sessions[paneId];
-      const agentSession = session?.agentSessionId
-        ? useAgentSessionStore.getState().getSessionByTerminalId(paneId)
-        : undefined;
-      if (!agentSession?.outputLogPath) return;
-
-      try {
-        const existing = await invoke<string>('read_project_file', {
-          projectPath,
-          filePath: agentSession.outputLogPath,
-        }).catch(() => '');
-        await invoke('write_project_file', {
-          projectPath,
-          filePath: agentSession.outputLogPath,
-          content: existing + content,
-        });
-      } catch (err) {
-        console.error('Failed to persist output log:', err);
-      }
-    },
 
     addPane: async (cwd, aiProvider, model, promptFile, customCommand) => {
       const id = createId('term');

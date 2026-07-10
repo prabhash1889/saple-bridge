@@ -590,7 +590,11 @@ pub async fn spawn_pty(
     // Reader thread: PTY -> channel. Exits on EOF/error (e.g. when the child is killed,
     // which closes the PTY). Dropping `tx` signals the emitter to do its final flush.
     let reader_handle = thread::spawn(move || {
-        let mut read_buf = [0u8; 8192];
+        // 64 KiB, not 8: an AI CLI streaming tokens (or a build log) can flood the PTY, and a
+        // larger buffer collapses that flood into ~8x fewer read syscalls + channel sends +
+        // Vec allocations. The emitter's PTY_FLUSH_THRESHOLD still bounds the IPC event size
+        // independently, so this only trims the reader-side overhead.
+        let mut read_buf = [0u8; 64 * 1024];
         let mut consecutive_errors: u32 = 0;
         loop {
             match reader.read(&mut read_buf) {

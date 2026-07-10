@@ -14,18 +14,11 @@ export const decrementActiveWebglContexts = () => {
   activeWebglContexts = Math.max(0, activeWebglContexts - 1);
 };
 
-// --- TEMP WebGL artifact diagnostics -------------------------------------------------
-// Instrumentation to correlate the intermittent terminal render artifacts with WebGL
-// context churn (acquire / release / evict / context-loss / DOM fallback). When you see
-// an artifact, note the time and check the console: a `context-loss` or `evict` event
-// immediately before it confirms the GPU-context juggling is the cause. Remove this block
-// (and the webglDiag() calls in useXtermSession) once diagnosed.
-const WEBGL_DIAG = true;
-// Decisive A/B test: force every pane onto xterm's DOM renderer (skip WebGL entirely).
-// Toggle live from the DevTools console WITHOUT a rebuild, then reload the window:
+// Escape hatch: force every pane onto xterm's DOM renderer (skip WebGL entirely) for users
+// whose GPU driver mis-renders the WebGL canvas. Toggle live from the DevTools console, then
+// reload the window:
 //   localStorage.setItem('saple-disable-webgl', '1')  // DOM renderer everywhere
 //   localStorage.removeItem('saple-disable-webgl')     // back to WebGL
-// If the artifacts disappear with WebGL disabled, the GPU-context juggling is the cause.
 export const isWebglDisabled = () => {
   try {
     return localStorage.getItem('saple-disable-webgl') === '1';
@@ -33,16 +26,6 @@ export const isWebglDisabled = () => {
     return false;
   }
 };
-export const webglDiag = (event: string, sessionId: string, extra?: Record<string, unknown>) => {
-  if (!WEBGL_DIAG) return;
-  // performance.now() is monotonic and avoids the Date.now() restrictions elsewhere.
-  const t = Math.round(performance.now());
-  console.log(
-    `[webgl-diag +${t}ms] ${event} pane=${sessionId} active=${activeWebglContexts}/${MAX_WEBGL_CONTEXTS} holders=${webglHolders.size}`,
-    extra ?? '',
-  );
-};
-// -------------------------------------------------------------------------------------
 
 // Panes that currently hold a WebGL context, mapped to their `unloadWebgl` release fn. When the
 // context budget is spent, a newly-focused pane reclaims a context from a non-focused holder via

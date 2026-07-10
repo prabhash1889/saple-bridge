@@ -1,6 +1,6 @@
 [package]
 name = "saple-bridge"
-version = "1.0.13"
+version = "1.0.15"
 description = "Saple Bridge — local-first agentic development workspace"
 authors = ["Saple"]
 edition = "2021"
@@ -46,5 +46,19 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
+
+# Release binary tuning. Defaults (16 codegen units, no LTO, unstripped) leave real
+# performance and installer size on the table for the hot Rust paths this app leans on:
+# PTY output streaming, the recursive memory-graph walk, and file search. LTO + a single
+# codegen unit let the optimizer inline across modules; `strip` drops debug symbols from
+# the shipped binary; `panic = "abort"` removes unwinding tables (a panic in a PTY/keychain
+# worker aborts the process rather than unwinding across the FFI boundary anyway). Cost is a
+# slower release build, which only runs at packaging time.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
 
 
