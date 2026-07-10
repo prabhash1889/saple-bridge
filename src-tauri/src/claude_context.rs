@@ -31,8 +31,8 @@ fn project_slug(path: &str) -> String {
         .collect()
 }
 
-/// <CLAUDE_CONFIG_DIR|~/.claude>/projects — same config-dir resolution as diagnostics.rs.
-fn claude_projects_dir() -> Option<PathBuf> {
+/// <CLAUDE_CONFIG_DIR|~/.claude> — same config-dir resolution as diagnostics.rs.
+fn claude_config_dir() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| {
@@ -40,7 +40,52 @@ fn claude_projects_dir() -> Option<PathBuf> {
                 .or_else(|| std::env::var_os("HOME"))
                 .map(|h| PathBuf::from(h).join(".claude"))
         })
-        .map(|d| d.join("projects"))
+}
+
+fn claude_projects_dir() -> Option<PathBuf> {
+    claude_config_dir().map(|d| d.join("projects"))
+}
+
+/// First `model` value found across the given settings files, in order.
+fn model_from_settings_files(paths: &[PathBuf]) -> Option<String> {
+    for p in paths {
+        let Ok(text) = fs::read_to_string(p) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        if let Some(m) = v.get("model").and_then(|m| m.as_str()) {
+            return Some(m.to_string());
+        }
+    }
+    None
+}
+
+/// Claude Code's effective `model` setting for a project: .claude/settings.local.json,
+/// then .claude/settings.json, then the user-level settings.json.
+fn model_setting(cwd: &str) -> Option<String> {
+    let mut paths = vec![
+        Path::new(cwd).join(".claude").join("settings.local.json"),
+        Path::new(cwd).join(".claude").join("settings.json"),
+    ];
+    if let Some(cfg) = claude_config_dir() {
+        paths.push(cfg.join("settings.json"));
+    }
+    model_from_settings_files(&paths)
+}
+
+/// Transcripts record the bare API model id ("claude-opus-4-8") even when the session
+/// runs the 1M-context beta - that marker only exists in the `model` *setting* (e.g.
+/// "opus[1m]"). If the setting is a [1m] variant of the transcript's model, tag the
+/// returned model so the frontend picks the 1M window.
+fn apply_large_context_marker(usage: &mut ClaudeContextUsage, setting: Option<&str>) {
+    if usage.model.contains("[1m]") {
+        return;
+    }
+    let Some(base) = setting.and_then(|s| s.strip_suffix("[1m]")) else {
+        return;
+    };
+    // "opus[1m]" applies to "claude-opus-4-8", but "sonnet[1m]" must not.
+    if !base.is_empty() && usage.model.contains(base) {
+        usage.model.push_str("[1m]");
+    }
 }
 
 // Transcripts grow to many MB over a long session; only the tail is read each poll.
@@ -160,6 +205,7 @@ pub async fn get_claude_context_usage(
     cwd: String,
     session_uuid: String,
     spawned_at_ms: Option<u64>,
+    pane_model: Option<String>,
 ) -> Result<Option<ClaudeContextUsage>, String> {
     if !is_valid_session_uuid(&session_uuid) {
         return Err("Invalid Claude session id".to_string());
@@ -168,8 +214,16 @@ pub async fn get_claude_context_usage(
     tauri::async_runtime::spawn_blocking(move || {
         let dir = claude_projects_dir()?.join(project_slug(&cwd));
         let spawned_at = spawned_at_ms.map(|ms| UNIX_EPOCH + Duration::from_millis(ms));
-        resolve_transcript(&dir, &session_uuid, spawned_at, EXACT_FRESH_WINDOW)
-            .and_then(|p| read_usage(&p))
+        let mut usage = resolve_transcript(&dir, &session_uuid, spawned_at, EXACT_FRESH_WINDOW)
+            .and_then(|p| read_usage(&p))?;
+        // A pane launched with an explicit --model overrides Claude's model setting, and
+        // spawn_pty cannot pass a "[1m]" model (bracket is outside is_safe_model), so the
+        // settings marker only applies to panes running the CLI's default model.
+        let launched_with_default = pane_model.as_deref().is_none_or(|m| m.is_empty() || m == "default");
+        if launched_with_default {
+            apply_large_context_marker(&mut usage, model_setting(&cwd).as_deref());
+        }
+        Some(usage)
     })
     .await
     .map_err(|e| e.to_string())
@@ -217,6 +271,66 @@ mod tests {
         let usage = parse_tail(&tail).unwrap();
         assert_eq!(usage.used_tokens, 85015);
         assert_eq!(usage.model, "claude-opus-4-8");
+    }
+
+    fn usage(model: &str) -> ClaudeContextUsage {
+        ClaudeContextUsage { used_tokens: 1, model: model.to_string() }
+    }
+
+    #[test]
+    fn large_context_marker_applies_only_to_matching_1m_setting() {
+        // "opus[1m]" setting marks an opus transcript.
+        let mut u = usage("claude-opus-4-8");
+        apply_large_context_marker(&mut u, Some("opus[1m]"));
+        assert_eq!(u.model, "claude-opus-4-8[1m]");
+
+        // A different model family's [1m] setting must not mark it.
+        let mut u = usage("claude-opus-4-8");
+        apply_large_context_marker(&mut u, Some("sonnet[1m]"));
+        assert_eq!(u.model, "claude-opus-4-8");
+
+        // Non-[1m] setting, absent setting, and already-marked models are no-ops.
+        let mut u = usage("claude-opus-4-8");
+        apply_large_context_marker(&mut u, Some("opus"));
+        assert_eq!(u.model, "claude-opus-4-8");
+        let mut u = usage("claude-opus-4-8");
+        apply_large_context_marker(&mut u, None);
+        assert_eq!(u.model, "claude-opus-4-8");
+        let mut u = usage("claude-opus-4-8[1m]");
+        apply_large_context_marker(&mut u, Some("opus[1m]"));
+        assert_eq!(u.model, "claude-opus-4-8[1m]");
+
+        // Full model id in the setting also matches.
+        let mut u = usage("claude-opus-4-8");
+        apply_large_context_marker(&mut u, Some("claude-opus-4-8[1m]"));
+        assert_eq!(u.model, "claude-opus-4-8[1m]");
+    }
+
+    #[test]
+    fn model_setting_prefers_local_over_project_settings() {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-claude-settings-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let claude = dir.join(".claude");
+        fs::create_dir_all(&claude).unwrap();
+
+        let local = claude.join("settings.local.json");
+        let project = claude.join("settings.json");
+        let paths = vec![local.clone(), project.clone()];
+
+        // No files -> None; malformed local is skipped in favor of the next file.
+        assert_eq!(model_from_settings_files(&paths), None);
+        fs::write(&project, r#"{"model":"opus[1m]"}"#).unwrap();
+        fs::write(&local, "{not json").unwrap();
+        assert_eq!(model_from_settings_files(&paths), Some("opus[1m]".to_string()));
+
+        // A valid local file wins over the project file.
+        fs::write(&local, r#"{"model":"sonnet"}"#).unwrap();
+        assert_eq!(model_from_settings_files(&paths), Some("sonnet".to_string()));
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
