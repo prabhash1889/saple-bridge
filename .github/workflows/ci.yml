@@ -40,13 +40,22 @@ jobs:
         run: npm run build
 
   rust:
-    name: Rust (cargo check, test)
-    runs-on: windows-latest
+    name: Rust (${{ matrix.os }})
+    # macOS 11+ is a shipped target, so build/test the native layer there too — it exercises the
+    # non-Windows PTY cleanup path, the login-shell/$SHELL handling, and other cfg-gated code that
+    # the Windows runner never compiles.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
@@ -59,12 +68,18 @@ jobs:
       # empty placeholder with the target-triple name to satisfy the existence check.
       # ponytail: placeholder is enough for check/test; real sidecar staging lives in the tauri:build path.
       - name: Stage placeholder sidecar
-        shell: pwsh
+        shell: bash
         run: |
-          $triple = (rustc -vV | Select-String '^host:\s*(.+)$').Matches.Groups[1].Value.Trim()
-          $name = if ($triple -like '*windows*') { "saple-mcp-$triple.exe" } else { "saple-mcp-$triple" }
-          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
-          New-Item -ItemType File -Force -Path "src-tauri/binaries/$name" | Out-Null
+          triple=$(rustc -vV | sed -n 's/host: //p')
+          mkdir -p src-tauri/binaries
+          if [[ "$triple" == *windows* ]]; then
+            touch "src-tauri/binaries/saple-mcp-$triple.exe"
+          else
+            touch "src-tauri/binaries/saple-mcp-$triple"
+          fi
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
