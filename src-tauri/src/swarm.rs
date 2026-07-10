@@ -134,12 +134,10 @@ fn validate_dependency_graph_inner(agents: Vec<SwarmAgentRust>) -> Result<bool, 
         if let Some(neighbors) = adj.get(node) {
             for neighbor in neighbors {
                 let state = visited.get(neighbor).cloned().unwrap_or(0);
-                if state == 1 {
+                // state 1 = on the current DFS path (back-edge → cycle); state 0 = unvisited,
+                // so recurse and propagate a cycle found deeper.
+                if state == 1 || (state == 0 && has_cycle(neighbor, adj, visited)) {
                     return true;
-                } else if state == 0 {
-                    if has_cycle(neighbor, adj, visited) {
-                        return true;
-                    }
                 }
             }
         }
@@ -150,11 +148,10 @@ fn validate_dependency_graph_inner(agents: Vec<SwarmAgentRust>) -> Result<bool, 
     
     for agent in &agents {
         let state = visited.get(&agent.id).cloned().unwrap_or(0);
-        if state == 0 {
-            if has_cycle(&agent.id, &adj, &mut visited) {
+        if state == 0
+            && has_cycle(&agent.id, &adj, &mut visited) {
                 return Ok(false);
             }
-        }
     }
 
     Ok(true)

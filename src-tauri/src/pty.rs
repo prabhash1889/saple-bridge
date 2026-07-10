@@ -307,6 +307,9 @@ fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
     Ok(())
 }
 
+// The renderer passes each spawn input as a named field; a params struct would just be unpacked
+// again on both sides for no gain.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn spawn_pty(
     id: String,
