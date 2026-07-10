@@ -2,13 +2,18 @@
 // session under <CLAUDE_CONFIG_DIR|~/.claude>/projects/<project-slug>/<session-uuid>.jsonl;
 // every assistant entry carries `message.usage`, whose input+cache token sum is the current
 // context size. spawn_pty launches `claude --session-id <uuid>` with a bridge-generated
-// uuid, so the transcript filename is known exactly. Read-only: nothing here writes.
+// uuid, so the initial transcript filename is known exactly. `/clear` and `/resume` typed
+// inside the pane switch it to a new session file whose id the bridge cannot predict, so
+// spawn_pty also injects a per-pane `--settings` file (prepare_pane_hook) whose
+// SessionStart hook records the live session's id and transcript path to a pane-keyed
+// file in the app data dir. Each pane therefore reads exactly its own transcript; panes
+// never look at each other's sessions.
 
 use serde::Serialize;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -136,86 +141,106 @@ fn mtime(p: &Path) -> Option<SystemTime> {
     fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
-/// File creation time, falling back to mtime on filesystems without it (both Windows
-/// and macOS - the supported targets - report it).
-fn created_or_mtime(p: &Path) -> Option<SystemTime> {
-    let m = fs::metadata(p).ok()?;
-    m.created().or_else(|_| m.modified()).ok()
+/// Per-pane hook files (settings + latest SessionStart payload) live in the app data
+/// dir - they are bridge plumbing, not project state.
+pub fn pane_hook_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path().app_data_dir().ok().map(|d| d.join("claude-panes"))
 }
 
-/// While the pane's own transcript was written this recently, it is trusted
-/// unconditionally and siblings are never considered.
-const EXACT_FRESH_WINDOW: Duration = Duration::from_secs(120);
+/// Shell command for the SessionStart hook: copy the hook's stdin JSON into the pane's
+/// session file. Runs under Claude Code's hook shell on each supported OS.
+#[cfg(windows)]
+fn capture_command(session_file: &Path) -> String {
+    // PowerShell single-quoted literal: double any embedded quote.
+    let p = session_file.display().to_string().replace('\'', "''");
+    format!(
+        "powershell -NoProfile -Command \"[Console]::In.ReadToEnd() | Set-Content -Encoding UTF8 -LiteralPath '{p}'\""
+    )
+}
+#[cfg(not(windows))]
+fn capture_command(session_file: &Path) -> String {
+    let p = session_file.display().to_string().replace('\'', r"'\''");
+    format!("cat > '{p}'")
+}
 
-/// Transcript for this pane. Normally exactly <session_uuid>.jsonl; siblings only enter
-/// the picture for `/clear` / `/resume` typed inside the pane, which start a new session
-/// file whose id we cannot know. Two guards keep concurrent Claude panes in the same
-/// project from shadowing each other: the exact file wins outright while it is still
-/// being written (fresh window), and a sibling is adopted only if it was CREATED after
-/// both the pane spawn and the exact file's last write - i.e. a session that started
-/// after ours went quiet, which is what /clear looks like.
-// ponytail: still ambiguous if a sibling pane opens >2min after this pane's last message;
-// exact re-attribution would need per-process transcript tracking.
-fn resolve_transcript(
-    dir: &Path,
-    session_uuid: &str,
-    spawned_at: Option<SystemTime>,
-    fresh_window: Duration,
-) -> Option<PathBuf> {
-    let exact = dir.join(format!("{session_uuid}.jsonl"));
-    let exact_mtime = mtime(&exact);
-    if let Some(em) = exact_mtime {
-        let quiet_for = SystemTime::now().duration_since(em).unwrap_or_default();
-        if quiet_for < fresh_window {
-            return Some(exact);
+/// Hook files are tiny but accumulate one pair per pane spawn; sweep anything untouched
+/// for a week.
+fn prune_stale(dir: &Path) {
+    const KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let stale = mtime(&p)
+            .and_then(|m| SystemTime::now().duration_since(m).ok())
+            .is_some_and(|age| age > KEEP);
+        if stale {
+            let _ = fs::remove_file(&p);
         }
     }
+}
 
-    let floor = match (exact_mtime, spawned_at) {
-        (Some(e), Some(s)) => e.max(s),
-        (Some(e), None) => e,
-        (None, Some(s)) => s,
-        // Neither our file nor a spawn time: adopting would grab unrelated old sessions.
-        (None, None) => return exact.exists().then_some(exact),
-    };
-
-    let mut best: Option<(SystemTime, PathBuf)> = None;
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p == exact || p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(c) = created_or_mtime(&p) else { continue };
-            if c < floor {
-                continue; // session predates ours going quiet: another pane's, not a /clear
-            }
-            let m = mtime(&p).unwrap_or(c);
-            if best.as_ref().is_none_or(|(bm, _)| m > *bm) {
-                best = Some((m, p));
-            }
-        }
+/// Write the pane's `--settings` file: a SessionStart hook that records the live
+/// session's id and transcript path to <dir>/<uuid>.session.json. SessionStart fires on
+/// startup, /clear, /resume and /compact, so the badge follows in-pane session switches
+/// exactly instead of guessing among sibling transcripts. Best-effort: on None the pane
+/// launches without the hook and the badge sticks to the spawn-time transcript.
+pub fn prepare_pane_hook(dir: &Path, session_uuid: &str) -> Option<PathBuf> {
+    // Both paths end up inside shell command lines built with double quotes; the app
+    // data dir is bridge-controlled and never contains one, but refuse rather than emit
+    // a broken or injectable command.
+    if dir.display().to_string().contains('"') || !is_valid_session_uuid(session_uuid) {
+        return None;
     }
-    best.map(|(_, p)| p)
-        .or_else(|| exact.exists().then_some(exact))
+    fs::create_dir_all(dir).ok()?;
+    prune_stale(dir);
+    let session_file = dir.join(format!("{session_uuid}.session.json"));
+    let settings = serde_json::json!({
+        "hooks": {
+            "SessionStart": [{
+                "hooks": [{ "type": "command", "command": capture_command(&session_file) }]
+            }]
+        }
+    });
+    let settings_file = dir.join(format!("{session_uuid}.settings.json"));
+    fs::write(&settings_file, settings.to_string()).ok()?;
+    Some(settings_file)
+}
+
+/// Transcript path recorded by the pane's SessionStart hook - the file for the session
+/// currently live in this pane. PowerShell's Set-Content writes a BOM; strip it.
+fn transcript_from_hook(dir: &Path, session_uuid: &str) -> Option<PathBuf> {
+    let text = fs::read_to_string(dir.join(format!("{session_uuid}.session.json"))).ok()?;
+    let v: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    v.get("transcript_path").and_then(|p| p.as_str()).map(PathBuf::from)
 }
 
 #[tauri::command]
 pub async fn get_claude_context_usage(
+    app: tauri::AppHandle,
     cwd: String,
     session_uuid: String,
-    spawned_at_ms: Option<u64>,
     pane_model: Option<String>,
 ) -> Result<Option<ClaudeContextUsage>, String> {
     if !is_valid_session_uuid(&session_uuid) {
         return Err("Invalid Claude session id".to_string());
     }
+    let hook_dir = pane_hook_dir(&app);
     // File IO on a blocking worker, same discipline as spawn_pty.
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = claude_projects_dir()?.join(project_slug(&cwd));
-        let spawned_at = spawned_at_ms.map(|ms| UNIX_EPOCH + Duration::from_millis(ms));
-        let mut usage = resolve_transcript(&dir, &session_uuid, spawned_at, EXACT_FRESH_WINDOW)
-            .and_then(|p| read_usage(&p))?;
+        // The hook-recorded transcript is exact and follows /clear + /resume; the
+        // spawn-time filename covers panes where the hook has not fired (yet).
+        let transcript = hook_dir
+            .as_deref()
+            .and_then(|d| transcript_from_hook(d, &session_uuid))
+            .filter(|p| p.is_file())
+            .or_else(|| {
+                let p = claude_projects_dir()?
+                    .join(project_slug(&cwd))
+                    .join(format!("{session_uuid}.jsonl"));
+                p.is_file().then_some(p)
+            })?;
+        let mut usage = read_usage(&transcript)?;
         // A pane launched with an explicit --model overrides Claude's model setting, and
         // spawn_pty cannot pass a "[1m]" model (bracket is outside is_safe_model), so the
         // settings marker only applies to panes running the CLI's default model.
@@ -340,50 +365,50 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prefers_exact_file_and_adopts_only_newer_siblings() {
+    fn pane_hook_roundtrip_records_transcript_path() {
         let dir = std::env::temp_dir().join(format!(
-            "saple-claude-ctx-test-{}-{}",
+            "saple-claude-hook-test-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        fs::create_dir_all(&dir).unwrap();
         let uuid = "123e4567-e89b-42d3-a456-426614174000";
-        // Zero fresh-window so the "gone quiet" adoption path is exercised without sleeping
-        // for the real 120s window.
-        let stale = Duration::ZERO;
 
-        // Pre-existing unrelated session, then our pane spawns, then our transcript appears.
-        let old = dir.join("00000000-0000-4000-8000-000000000000.jsonl");
-        fs::write(&old, "old").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let spawned_at = Some(SystemTime::now());
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        // No session file yet -> no transcript.
+        assert_eq!(transcript_from_hook(&dir, uuid), None);
 
-        // Before our file exists, the pre-spawn sibling must NOT be adopted.
-        assert_eq!(resolve_transcript(&dir, uuid, spawned_at, stale), None);
+        // prepare writes a settings file whose hook command targets the session file.
+        let settings_file = prepare_pane_hook(&dir, uuid).unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_file).unwrap()).unwrap();
+        let cmd = settings
+            .pointer("/hooks/SessionStart/0/hooks/0/command")
+            .and_then(|c| c.as_str())
+            .unwrap();
+        assert!(cmd.contains(&format!("{uuid}.session.json")));
 
-        let exact = dir.join(format!("{uuid}.jsonl"));
-        fs::write(&exact, "ours").unwrap();
-
-        // A fresh exact file wins unconditionally, even against later-modified siblings
-        // (two active panes in one project must not shadow each other).
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        fs::write(&old, "old but touched later").unwrap();
+        // A BOM-prefixed payload (PowerShell Set-Content) still parses.
+        let payload = format!(
+            "\u{feff}{{\"session_id\":\"{uuid}\",\"transcript_path\":\"C:\\\\t\\\\x.jsonl\",\"source\":\"clear\"}}"
+        );
+        fs::write(dir.join(format!("{uuid}.session.json")), payload).unwrap();
         assert_eq!(
-            resolve_transcript(&dir, uuid, spawned_at, EXACT_FRESH_WINDOW),
-            Some(exact.clone())
+            transcript_from_hook(&dir, uuid),
+            Some(PathBuf::from(r"C:\t\x.jsonl"))
         );
 
-        // Even once quiet, a sibling merely MODIFIED later (created before our session)
-        // is another pane's conversation, not our /clear -> keep the exact file.
-        assert_eq!(resolve_transcript(&dir, uuid, spawned_at, stale), Some(exact.clone()));
-
-        // /clear scenario: a session file CREATED after ours went quiet -> adopted.
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        let newer = dir.join("ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl");
-        fs::write(&newer, "post-clear").unwrap();
-        assert_eq!(resolve_transcript(&dir, uuid, spawned_at, stale), Some(newer));
+        // Malformed payloads (hook interrupted mid-write) are ignored, not errors.
+        fs::write(dir.join(format!("{uuid}.session.json")), "{trunc").unwrap();
+        assert_eq!(transcript_from_hook(&dir, uuid), None);
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn capture_command_escapes_single_quotes_in_path() {
+        let cmd = capture_command(Path::new("/tmp/o'brien/s.json"));
+        #[cfg(windows)]
+        assert!(cmd.contains("o''brien"));
+        #[cfg(not(windows))]
+        assert!(cmd.contains(r"o'\''brien"));
     }
 }

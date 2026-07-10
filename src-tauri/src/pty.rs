@@ -330,6 +330,10 @@ pub async fn spawn_pty(
         return Err(format!("PTY session {} already exists", id));
     }
 
+    // Resolved on the async task (needs the AppHandle); consumed inside the blocking
+    // closure below when building a claude invocation.
+    let claude_hook_dir = crate::claude_context::pane_hook_dir(&app_handle);
+
     // Build the PTY, read keychain secrets and spawn the child process on a blocking
     // worker so this (synchronous, occasionally slow) work never blocks the Tauri main
     // thread / window message pump. The registry insert and the lightweight reader/emitter
@@ -399,7 +403,16 @@ pub async fn spawn_pty(
                     if !crate::claude_context::is_valid_session_uuid(uuid) {
                         return Err(format!("Invalid Claude session id: {}", uuid));
                     }
-                    format!("{} --session-id \"{}\"", provider_cleaned, uuid)
+                    // Per-pane SessionStart hook keeps the context badge attached to
+                    // whatever session is live in this pane after /clear or /resume
+                    // (see claude_context.rs). Best-effort: without it the badge just
+                    // tracks the spawn-time session.
+                    let settings_arg = claude_hook_dir
+                        .as_deref()
+                        .and_then(|d| crate::claude_context::prepare_pane_hook(d, uuid))
+                        .map(|p| format!(" --settings \"{}\"", p.display()))
+                        .unwrap_or_default();
+                    format!("{} --session-id \"{}\"{}", provider_cleaned, uuid, settings_arg)
                 }
                 None => provider_cleaned.to_string(),
             };

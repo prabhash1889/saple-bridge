@@ -86,7 +86,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   // exist yet right after spawn).
   const claudeSessionId = sessionInfo?.aiProvider === 'claude' ? sessionInfo.claudeSessionId : undefined;
   const claudeCwd = sessionInfo?.cwd;
-  const claudeSpawnedAt = sessionInfo?.spawnedAt;
   const claudeModel = sessionInfo?.model;
   useEffect(() => {
     if (!claudeSessionId || !active || exited) return;
@@ -95,7 +94,6 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       invoke<ClaudeContextUsage | null>('get_claude_context_usage', {
         cwd: claudeCwd ?? '',
         sessionUuid: claudeSessionId,
-        spawnedAtMs: claudeSpawnedAt,
         paneModel: claudeModel,
       })
         .then((usage) => {
@@ -111,7 +109,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [claudeSessionId, claudeCwd, claudeSpawnedAt, claudeModel, active, exited]);
+  }, [claudeSessionId, claudeCwd, claudeModel, active, exited]);
 
   const closeSearch = () => {
     setSearchOpen(false);

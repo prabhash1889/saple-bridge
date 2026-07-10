@@ -40,8 +40,6 @@ export interface TerminalSession {
   // Claude panes only: uuid passed to `claude --session-id`, letting the context badge
   // find this session's transcript (~/.claude/projects/<slug>/<uuid>.jsonl).
   claudeSessionId?: string;
-  // Epoch ms when the pane spawned; the transcript lookup ignores files older than this.
-  spawnedAt?: number;
   commandBlocks: CommandBlock[];
   lastCommandInput: string;
 }
@@ -531,7 +529,6 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         model,
         customCommand,
         claudeSessionId,
-        spawnedAt: Date.now(),
         commandBlocks: [],
         lastCommandInput: '',
       };
@@ -584,7 +581,6 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         model: parentSession?.model,
         customCommand: parentSession?.customCommand,
         claudeSessionId,
-        spawnedAt: Date.now(),
         commandBlocks: [],
         lastCommandInput: '',
       };
