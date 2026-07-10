@@ -429,7 +429,7 @@ export const ProjectDashboard: React.FC = () => {
         </div>
 
         <div className="saple-start-copy">
-          <h1>PowerUp your work.</h1>
+          <h1>Every Terminal One Workspace</h1>
           <p>Choose how you want to work.</p>
         </div>
 
