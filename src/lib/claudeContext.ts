@@ -21,6 +21,12 @@ export function contextWindowFor(model: string): number {
 
 /** Whole percent of the context window still free, clamped to 0..100. */
 export function contextLeftPercent(usedTokens: number, model: string): number {
-  const left = 100 * (1 - usedTokens / contextWindowFor(model));
+  // Usage beyond 200k proves a 1M window even when no marker says so (opus/sonnet
+  // sessions switched to 1M via /model or launched with an explicit --model).
+  // ponytail: below 200k such sessions still read as 200k - the transcript records
+  // no window size, so there is nothing better to infer from.
+  const window =
+    usedTokens > DEFAULT_CONTEXT_WINDOW ? LARGE_CONTEXT_WINDOW : contextWindowFor(model);
+  const left = 100 * (1 - usedTokens / window);
   return Math.min(100, Math.max(0, Math.round(left)));
 }
