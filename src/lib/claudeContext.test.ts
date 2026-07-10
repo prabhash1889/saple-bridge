@@ -10,6 +10,11 @@ describe('contextWindowFor', () => {
   it('recognizes explicit 1M-context model ids', () => {
     expect(contextWindowFor('claude-sonnet-5[1m]')).toBe(1_000_000);
   });
+
+  it('recognizes natively-1M model families without a [1m] marker', () => {
+    expect(contextWindowFor('claude-fable-5')).toBe(1_000_000);
+    expect(contextWindowFor('claude-mythos-5')).toBe(1_000_000);
+  });
 });
 
 describe('contextLeftPercent', () => {
