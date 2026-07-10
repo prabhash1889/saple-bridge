@@ -55,9 +55,10 @@ function demo() {
 function git(args, opts = {}) {
   const res = spawnSync('git', args, { cwd: root, stdio: 'pipe', encoding: 'utf8', ...opts });
   if (res.status !== 0) {
-    throw new Error(`git ${args.join(' ')} failed:\n${res.stderr || res.stdout}`);
+    throw new Error(`git ${args.join(' ')} failed:\n${res.stderr || res.stdout || ''}`);
   }
-  return res.stdout.trim();
+  // With stdio: 'inherit' git writes straight to the terminal and stdout is null here.
+  return (res.stdout ?? '').trim();
 }
 
 function main() {
@@ -93,13 +94,17 @@ function main() {
   writeFileSync(cargoPath, cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${version}"`));
 
   const tag = `v${version}`;
+  const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
   git(['add', confPath, pkgPath, cargoPath]);
   git(['commit', '-m', `chore(release): ${tag}`]);
-  git(['tag', tag]);
+  // Annotated tag (carries tagger/date/message) — and it's what the release feed is keyed on.
+  git(['tag', '-a', tag, '-m', tag]);
 
   console.log(`\n✓ Committed and tagged ${tag}.`);
-  console.log('  Pushing tag — the release workflow will build, sign, and publish the draft release.\n');
-  git(['push', '--follow-tags'], { stdio: 'inherit' });
+  console.log('  Pushing branch + tag — the release workflow will build, sign, and publish the draft release.\n');
+  // Push the branch and the tag by explicit refspec, so this never depends on --follow-tags
+  // pushing (or not pushing) the tag. The tag push is what triggers the release workflow.
+  git(['push', 'origin', branch, tag], { stdio: 'inherit' });
   console.log(`\n✓ Pushed. Watch the "Release" workflow, then publish the draft release for ${tag}.\n`);
 }
 
