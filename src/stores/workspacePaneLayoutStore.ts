@@ -50,7 +50,10 @@ export const useWorkspacePaneLayoutStore = create<WorkspacePaneLayoutState>()(
   persist(
     (set, get) => ({
       layouts: {},
-      getLayout: (path) => normalize(get().layouts[path]),
+      // Must return a stable reference: components select this via zustand, and a fresh
+      // object per call makes React's getSnapshot loop forever (error #185, blank app).
+      // Safe because setLayout and the rehydration merge below only store normalized objects.
+      getLayout: (path) => get().layouts[path] ?? DEFAULT_LAYOUT,
       setLayout: (path, patch) =>
         set((state) => ({
           layouts: {
@@ -62,6 +65,13 @@ export const useWorkspacePaneLayoutStore = create<WorkspacePaneLayoutState>()(
     {
       name: 'saple-bridge-workspace-pane-layouts',
       version: 1,
+      // Clamp persisted values once at load instead of on every read.
+      merge: (persisted, current) => {
+        const raw = (persisted as Partial<WorkspacePaneLayoutState> | undefined)?.layouts ?? {};
+        const layouts: Record<string, WorkspacePaneLayout> = {};
+        for (const [path, layout] of Object.entries(raw)) layouts[path] = normalize(layout);
+        return { ...current, layouts };
+      },
     },
   ),
 );

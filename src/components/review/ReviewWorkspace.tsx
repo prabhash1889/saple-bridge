@@ -25,6 +25,9 @@ const clamp = (value: number, min: number, max: number) =>
 
 const KEYBOARD_RESIZE_STEP = 24;
 
+// Stable fallback for the presets selector; also keeps the effect dep inert.
+const NO_PRESETS: string[] = [];
+
 interface GitBranchInfo {
   name: string;
   current: boolean;
@@ -247,10 +250,11 @@ export const ReviewWorkspace: React.FC = () => {
   }, [selectedFile, currentProjectPath, diffSubTab]);
 
   // Workspace-configured verification presets (Settings > Workspace); language
-  // auto-detection stays as the fallback when none are configured.
-  const verificationPresets = useProjectStore(
-    (state) => state.workspaceConfig?.verificationPresets ?? [],
-  );
+  // auto-detection stays as the fallback when none are configured. The `?? NO_PRESETS`
+  // fallback lives outside the selector: a fresh `[]` per snapshot makes React's
+  // getSnapshot loop (error #185).
+  const verificationPresets =
+    useProjectStore((state) => state.workspaceConfig?.verificationPresets) ?? NO_PRESETS;
 
   useEffect(() => {
     if (!activeRecord) return;
