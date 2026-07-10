@@ -15,11 +15,18 @@ npm install
 npm run dev              # Vite frontend only
 npm run tauri:dev        # Tauri dev app; stages the saple-mcp sidecar first
 npm run typecheck        # TypeScript check
-npm test                 # Vitest suite
+npm test                 # Vitest suite (single run)
+npm run test:watch       # Vitest in watch mode
 npm run build            # TypeScript + Vite production build
 npm run tauri:build      # Production bundle; stages the sidecar first
 npm run prepare-sidecar  # Manually build and stage ../saple-mcp
 ```
+
+Build script behavior (`scripts/tauri.mjs`):
+
+- `npm run tauri:build` auto-bumps the patch version in `tauri.conf.json`, `package.json`, and `Cargo.toml`, then collects installers into `build/v<version>/`. Diffs in those three files (plus `Cargo.lock`) after a build are expected; do not hand-edit version numbers.
+- Sidecar staging runs through `beforeDevCommand`/`beforeBuildCommand` in `src-tauri/tauri.conf.json`.
+- Dev mode applies `src-tauri/tauri.dev.conf.json` as a config overlay, which re-adds the Vite dev-server origins to the CSP. The production CSP in `tauri.conf.json` does not include them.
 
 Rust:
 
@@ -52,6 +59,8 @@ Important files:
 - `src/stores/memoryStore.ts`
 - `src/stores/swarmStore.ts`
 - `src/stores/reviewStore.ts`
+- `src/lib/writeQueue.ts`
+- `scripts/tauri.mjs`
 - `src-tauri/src/lib.rs`
 - `src-tauri/src/pty.rs`
 - `src-tauri/src/project.rs`
@@ -64,7 +73,7 @@ Important files:
 - React owns user interaction, routing, provider/project selection, rendering, and UI state.
 - Project writes must stay contained inside the selected project directory.
 - Secrets must not be stored in JSON, localStorage, markdown, or component state. Use the OS keychain commands.
-- Frontend writes to project files should use the existing queued write helpers when a store already follows that pattern.
+- Frontend writes to project files should use the existing queued write helpers (`src/lib/writeQueue.ts`) when a store already follows that pattern.
 - New Rust writes to project state should use existing atomic write helpers where practical.
 
 ## Storage
