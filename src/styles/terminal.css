@@ -11,6 +11,15 @@
 
 .terminal-room {
   flex-direction: column;
+  /* Depth level 1 (lightest): the pane backdrop. A cool-tinted radial lift toward the top
+     plus a faint film grain, both derived from --bg-app so every theme keeps working. */
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E") repeat,
+    radial-gradient(
+      ellipse 120% 90% at 50% 0%,
+      color-mix(in srgb, var(--bg-app) 93%, #c7d3ec) 0%,
+      var(--bg-app) 70%
+    );
 }
 
 .terminal-toolbar {
@@ -259,9 +268,15 @@
   border: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 0;
-  background: var(--bg-surface-active);
+  /* Depth level 3 (darkest): the titlebar sits just below the always-dark terminal
+     surface instead of popping as a light strip. It is dark in every app theme (the
+     terminal content is pinned dark anyway), so pin light-on-dark text locally -
+     children read these vars instead of the app theme's. */
+  background: color-mix(in srgb, var(--bg-terminal) 76%, var(--bg-surface));
+  --text-primary: rgba(240, 244, 252, 0.92);
+  --text-secondary: rgba(213, 221, 237, 0.72);
   color: var(--text-primary);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 1px 2px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 .terminal-pane-title {
@@ -331,7 +346,11 @@
 
 .terminal-pane[data-focused="true"] .terminal-pane-titlebar {
   border-bottom-color: color-mix(in srgb, var(--terminal-pane-color) 55%, rgba(255, 255, 255, 0.05));
-  background: color-mix(in srgb, var(--terminal-pane-color) 10%, var(--bg-surface-active));
+  background: color-mix(
+    in srgb,
+    var(--terminal-pane-color) 12%,
+    color-mix(in srgb, var(--bg-terminal) 76%, var(--bg-surface))
+  );
 }
 
 /* Unfocused pane produced output since last focus. */
@@ -357,6 +376,62 @@
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
+}
+
+/* Claude context-left pill: mini fill meter + percent, next to the titlebar actions.
+   Meter fill = share of the context window still free. Colors follow the pane color
+   presets (green/amber/red) rather than introducing new status tokens. */
+.terminal-context-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  margin-right: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.terminal-context-meter {
+  width: 30px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.terminal-context-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: #10b981;
+  transition: width 0.4s ease;
+}
+
+.terminal-context-badge[data-level="warn"] .terminal-context-meter-fill {
+  background: #f59e0b;
+}
+
+.terminal-context-badge[data-level="warn"] {
+  color: #f59e0b;
+}
+
+.terminal-context-badge[data-level="low"] .terminal-context-meter-fill {
+  background: #ef4444;
+}
+
+.terminal-context-badge[data-level="low"] {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 .terminal-context-menu {

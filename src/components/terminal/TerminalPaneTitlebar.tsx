@@ -9,6 +9,8 @@ interface TerminalPaneTitlebarProps {
   hasActivity?: boolean;
   // PTY child has exited — shows an "exited" badge instead of a silently dead pane.
   exited?: boolean;
+  // Claude panes only: percent of the context window still free (null until known).
+  contextLeft?: number | null;
   // Wraps each action: stops propagation and focuses the pane before running it.
   onTitleAction: (event: React.MouseEvent<HTMLButtonElement>, action: () => void | Promise<void>) => void;
   onAddPane: () => void;
@@ -22,6 +24,7 @@ export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
   canCreatePane,
   hasActivity,
   exited,
+  contextLeft,
   onTitleAction,
   onAddPane,
   onToggleMaximize,
@@ -36,6 +39,19 @@ export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
       {exited && <span className="terminal-pane-exit-badge">exited</span>}
     </div>
     <div className="terminal-pane-title-actions">
+      {typeof contextLeft === 'number' && (
+        <span
+          className="terminal-context-badge"
+          data-level={contextLeft <= 10 ? 'low' : contextLeft <= 30 ? 'warn' : 'ok'}
+          title={`Claude context remaining: ${contextLeft}%`}
+          aria-label={`Claude context remaining: ${contextLeft}%`}
+        >
+          <span className="terminal-context-meter" aria-hidden="true">
+            <span className="terminal-context-meter-fill" style={{ width: `${contextLeft}%` }} />
+          </span>
+          {contextLeft}%
+        </span>
+      )}
       <button
         className="terminal-pane-title-button"
         onClick={(e) => onTitleAction(e, onAddPane)}

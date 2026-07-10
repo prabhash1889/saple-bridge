@@ -306,9 +306,33 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       letterSpacing: 0,
       lineHeight: 1.15,
       scrollback: useTerminalFontStore.getState().scrollbackRows,
-      // No `theme` override: the terminal renders xterm's built-in default palette (black
-      // surface, standard ANSI colors) like a native CLI, decoupled from the app theme. The
-      // pane surface (--bg-terminal) is pinned to the same black so the two stay seamless.
+      // VS Code's default dark terminal palette: softer than xterm's built-in defaults
+      // (pure black + pure white was too harsh), still decoupled from the app theme. The
+      // pane surface (--bg-terminal in tokens.css) is pinned to the same #1E1E1E so the
+      // two stay seamless - change them together.
+      theme: {
+        background: '#1E1E1E',
+        foreground: '#CCCCCC',
+        cursor: '#CCCCCC',
+        cursorAccent: '#1E1E1E',
+        selectionBackground: '#264F78',
+        black: '#000000',
+        red: '#CD3131',
+        green: '#0DBC79',
+        yellow: '#E5E510',
+        blue: '#2472C8',
+        magenta: '#BC3FBC',
+        cyan: '#11A8CD',
+        white: '#E5E5E5',
+        brightBlack: '#666666',
+        brightRed: '#F14C4C',
+        brightGreen: '#23D18B',
+        brightYellow: '#F5F543',
+        brightBlue: '#3B8EEA',
+        brightMagenta: '#D670D6',
+        brightCyan: '#29B8DB',
+        brightWhite: '#E5E5E5',
+      },
       allowProposedApi: true,
       // Make xterm grow rows into the scrollback the way ConPTY expects, so maximizing the
       // window keeps the existing output instead of replacing it with empty rows.

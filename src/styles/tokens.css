@@ -82,11 +82,12 @@
   --bg-surface-active: #22262C;
   --bg-overlay: rgba(11, 12, 14, 0.85);
   --bg-deep: #07090D;
-  /* Terminal surface is fixed across every app theme: it matches xterm's built-in default
-     black so the terminal reads like a native CLI, independent of the application theme.
-     Not overridden in any theme block below - the terminal pane background stays constant
-     while its titlebar (app-theme CSS vars) follows the selected theme. */
-  --bg-terminal: #000000;
+  /* Terminal surface is fixed across every app theme: it matches the xterm theme's
+     background (VS Code's default dark terminal, set in useXtermSession.ts - change them
+     together) so the pane and the canvas stay seamless, independent of the application
+     theme. Not overridden in any theme block below - the terminal pane background stays
+     constant while its titlebar (app-theme CSS vars) follows the selected theme. */
+  --bg-terminal: #1E1E1E;
 
   --text-primary: #F3F4F6;
   --text-secondary: #9CA3AF;

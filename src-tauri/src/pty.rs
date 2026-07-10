@@ -319,6 +319,7 @@ pub async fn spawn_pty(
     model: Option<String>,
     prompt_file: Option<String>,
     custom_command: Option<String>,
+    session_uuid: Option<String>,
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
 ) -> Result<(), String> {
@@ -389,25 +390,39 @@ pub async fn spawn_pty(
                 validate_prompt_file(&cwd, p_file)?;
             }
 
+            // Claude panes are tagged with a bridge-generated session id so the context
+            // badge can locate this exact session's transcript (see claude_context.rs).
+            // Like model names, the uuid is interpolated into a quoted shell string and
+            // must pass its validator.
+            let provider_invocation = match session_uuid.as_deref().filter(|_| provider == "claude") {
+                Some(uuid) => {
+                    if !crate::claude_context::is_valid_session_uuid(uuid) {
+                        return Err(format!("Invalid Claude session id: {}", uuid));
+                    }
+                    format!("{} --session-id \"{}\"", provider_cleaned, uuid)
+                }
+                None => provider_cleaned.to_string(),
+            };
+
             let run_cmd = if use_model_flag {
                 if let Some(p_file) = pipe_file {
                     if cfg!(target_os = "windows") {
-                        format!("Get-Content \"{}\" -Raw | {} --model \"{}\"", p_file, provider_cleaned, model_str)
+                        format!("Get-Content \"{}\" -Raw | {} --model \"{}\"", p_file, provider_invocation, model_str)
                     } else {
-                        format!("{} --model \"{}\" < \"{}\"", provider_cleaned, model_str, p_file)
+                        format!("{} --model \"{}\" < \"{}\"", provider_invocation, model_str, p_file)
                     }
                 } else {
-                    format!("{} --model \"{}\"", provider_cleaned, model_str)
+                    format!("{} --model \"{}\"", provider_invocation, model_str)
                 }
             } else {
                 if let Some(p_file) = pipe_file {
                     if cfg!(target_os = "windows") {
-                        format!("Get-Content \"{}\" -Raw | {}", p_file, provider_cleaned)
+                        format!("Get-Content \"{}\" -Raw | {}", p_file, provider_invocation)
                     } else {
-                        format!("{} < \"{}\"", provider_cleaned, p_file)
+                        format!("{} < \"{}\"", provider_invocation, p_file)
                     }
                 } else {
-                    provider_cleaned.to_string()
+                    provider_invocation
                 }
             };
 

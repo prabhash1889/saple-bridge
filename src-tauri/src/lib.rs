@@ -1,3 +1,4 @@
+mod claude_context;
 mod pty;
 mod project;
 mod keychain;
@@ -60,6 +61,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             select_directory,
             pty::spawn_pty,
+            claude_context::get_claude_context_usage,
             pty::write_pty,
             pty::resize_pty,
             pty::kill_pty,

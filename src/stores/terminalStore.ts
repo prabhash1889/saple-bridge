@@ -37,6 +37,11 @@ export interface TerminalSession {
   model?: string;
   customCommand?: string;
   agentSessionId?: string;
+  // Claude panes only: uuid passed to `claude --session-id`, letting the context badge
+  // find this session's transcript (~/.claude/projects/<slug>/<uuid>.jsonl).
+  claudeSessionId?: string;
+  // Epoch ms when the pane spawned; the transcript lookup ignores files older than this.
+  spawnedAt?: number;
   commandBlocks: CommandBlock[];
   lastCommandInput: string;
 }
@@ -513,6 +518,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       const workspaceKey = getActiveWorkspaceKey() || workspacePath;
       const index = get().workspacePanes[workspaceKey]?.length || 0;
       const color = COLOR_PRESETS[index % COLOR_PRESETS.length];
+      const claudeSessionId = aiProvider === 'claude' ? crypto.randomUUID() : undefined;
 
       const newSession: TerminalSession = {
         id,
@@ -524,6 +530,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         aiProvider,
         model,
         customCommand,
+        claudeSessionId,
+        spawnedAt: Date.now(),
         commandBlocks: [],
         lastCommandInput: '',
       };
@@ -539,7 +547,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         focusedPaneId: getActiveWorkspaceKey() === workspaceKey ? id : state.focusedPaneId,
       }));
 
-      invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand }).catch((err) => {
+      invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand, sessionUuid: claudeSessionId }).catch((err) => {
         failPaneSpawn(id, err);
       });
 
@@ -561,6 +569,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       const index = workspacePanes.length;
       const spawnCwd = cwd || parentSession?.cwd || getActiveWorkspacePath() || '';
       const workspacePath = parentSession?.workspacePath || spawnCwd;
+      // A split is a NEW Claude session, so it gets its own transcript uuid.
+      const claudeSessionId = parentSession?.aiProvider === 'claude' ? crypto.randomUUID() : undefined;
       const newSession: TerminalSession = {
         id,
         name: parentSession?.customCommand
@@ -573,6 +583,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         aiProvider: parentSession?.aiProvider,
         model: parentSession?.model,
         customCommand: parentSession?.customCommand,
+        claudeSessionId,
+        spawnedAt: Date.now(),
         commandBlocks: [],
         lastCommandInput: '',
       };
@@ -604,6 +616,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         aiProvider: newSession.aiProvider,
         model: newSession.model,
         customCommand: newSession.customCommand,
+        sessionUuid: claudeSessionId,
       }).catch((err) => {
         failPaneSpawn(id, err);
       });

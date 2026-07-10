@@ -8,6 +8,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
 import { writeTextToClipboard } from '../../lib/clipboard';
+import { contextLeftPercent, type ClaudeContextUsage } from '../../lib/claudeContext';
 import { useXtermSession, IS_WINDOWS_PTY } from './useXtermSession';
 import { copyTerminalSelection } from './terminalClipboard';
 import { TerminalPaneTitlebar } from './TerminalPaneTitlebar';
@@ -23,10 +24,15 @@ interface TerminalPaneProps {
   active?: boolean;
 }
 
+// Transcript tail poll cadence for the Claude context badge. Reads ~64KB from disk per
+// tick per Claude pane; 4s keeps the number fresh without measurable cost.
+const CONTEXT_POLL_MS = 4000;
+
 const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [hasActivity, setHasActivity] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextLeft, setContextLeft] = useState<number | null>(null);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const setActiveView = useProjectStore((state) => state.setActiveView);
@@ -74,6 +80,36 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     });
     return unsubscribe;
   }, [isFocused, sessionId]);
+
+  // Claude context badge: poll this session's transcript for the latest usage while the
+  // pane's workspace is on screen. Errors keep the last shown value (transcript may not
+  // exist yet right after spawn).
+  const claudeSessionId = sessionInfo?.aiProvider === 'claude' ? sessionInfo.claudeSessionId : undefined;
+  const claudeCwd = sessionInfo?.cwd;
+  const claudeSpawnedAt = sessionInfo?.spawnedAt;
+  useEffect(() => {
+    if (!claudeSessionId || !active || exited) return;
+    let cancelled = false;
+    const poll = () => {
+      invoke<ClaudeContextUsage | null>('get_claude_context_usage', {
+        cwd: claudeCwd ?? '',
+        sessionUuid: claudeSessionId,
+        spawnedAtMs: claudeSpawnedAt,
+      })
+        .then((usage) => {
+          if (!cancelled && usage) setContextLeft(contextLeftPercent(usage.usedTokens, usage.model));
+        })
+        .catch(() => {
+          // Transcript missing or unreadable this tick - keep the last value.
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, CONTEXT_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [claudeSessionId, claudeCwd, claudeSpawnedAt, active, exited]);
 
   const closeSearch = () => {
     setSearchOpen(false);
@@ -203,6 +239,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         canCreatePane={canCreatePane}
         hasActivity={hasActivity && !isFocused}
         exited={exited}
+        contextLeft={claudeSessionId ? contextLeft : null}
         onTitleAction={handleTitleAction}
         onAddPane={handleAddPane}
         onToggleMaximize={() => toggleMaximizePane(sessionId)}
