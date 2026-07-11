@@ -21,6 +21,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -92,7 +93,13 @@ copyFileSync(
   join(root, 'src-tauri', 'binaries', `saple-mcp-${TRIPLE}.exe`),
   join(stage, 'saple-mcp.exe'),
 );
-for (const logo of ['StoreLogo.png', 'Square150x150Logo.png', 'Square44x44Logo.png']) {
+// The named base logos plus every Square44x44Logo.targetsize-* variant — the unplated
+// taskbar/Start icons are picked up purely by MSIX file-naming convention, no manifest entry.
+const logoBases = ['StoreLogo', 'Square150x150Logo', 'Square44x44Logo'];
+const logos = readdirSync(join(root, 'src-tauri', 'icons')).filter(
+  (f) => f.endsWith('.png') && logoBases.some((b) => f === `${b}.png` || f.startsWith(`${b}.`)),
+);
+for (const logo of logos) {
   copyFileSync(join(root, 'src-tauri', 'icons', logo), join(stage, 'Assets', logo));
 }
 
