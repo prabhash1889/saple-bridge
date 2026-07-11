@@ -46,7 +46,11 @@ const winappExtra = fwdIdx === -1 ? [] : argv.slice(fwdIdx + 1);
 
 if (!skipBuild) {
   console.log(`\n→ Building Saple Bridge v${version} (Store build, no installer bundle)\n`);
-  run('npx', ['tauri', 'build', '--no-bundle'], { VITE_MS_STORE: '1' });
+  // `--features ms-store` compiles the self-updater out of the binary; VITE_MS_STORE=1 is the
+  // frontend half of the same gate (Settings copy + hidden update controls).
+  run('npx', ['tauri', 'build', '--no-bundle', '--', '--features', 'ms-store'], {
+    VITE_MS_STORE: '1',
+  });
 }
 
 // --- stage the package layout ----------------------------------------------

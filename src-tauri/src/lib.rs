@@ -40,9 +40,13 @@ pub fn run() {
         // requires a valid `plugins.updater` config (a missing key deserializes as null and
         // panics at startup), so the feed + pubkey live in the base tauri.conf.json; only
         // updater-artifact signing is release-only via the tauri.release.conf.json overlay.
-        builder = builder
-            .plugin(tauri_plugin_updater::Builder::new().build())
-            .plugin(tauri_plugin_process::init());
+        // Store builds (`--features ms-store`) compile the updater out entirely: the Store owns
+        // updates for MSIX installs, and a dormant updater is still a policy liability.
+        builder = builder.plugin(tauri_plugin_process::init());
+        #[cfg(not(feature = "ms-store"))]
+        {
+            builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        }
     }
 
     builder
