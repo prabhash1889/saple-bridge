@@ -10,6 +10,7 @@ mod files;
 mod diagnostics;
 mod process_ext;
 mod fs_lock;
+mod watcher;
 
 #[tauri::command]
 fn select_directory() -> Option<String> {
@@ -59,6 +60,7 @@ pub fn run() {
             Ok(())
         })
         .manage(pty::PtyRegistry::new())
+        .manage(watcher::WatcherState::new())
         // Restore the window's last size/position/maximized state on launch and save it on exit.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -140,7 +142,9 @@ pub fn run() {
             files::search_in_files,
             diagnostics::run_diagnostics,
             diagnostics::check_provider_cli,
-            diagnostics::check_provider_signin
+            diagnostics::check_provider_signin,
+            watcher::watch_project_files,
+            watcher::unwatch_project_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

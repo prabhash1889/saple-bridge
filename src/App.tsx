@@ -1,4 +1,6 @@
 import { lazy, Suspense, useState, useEffect, type ReactNode } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { StatusBar } from './components/layout/StatusBar';
@@ -69,7 +71,10 @@ function App() {
     activateTerminalWorkspace(currentWorkspaceId);
     // Drop the previous workspace's open file/tree so the viewer doesn't show stale content.
     resetFiles();
-    if (!currentProjectPath) return;
+    if (!currentProjectPath) {
+      void invoke('unwatch_project_files').catch(() => {});
+      return;
+    }
 
     let cancelled = false;
     const timeoutId = window.setTimeout(() => {
@@ -80,6 +85,9 @@ function App() {
       void loadSwarmState(currentProjectPath, true);
       void loadAgentSessions(currentProjectPath);
       void refreshWorkspace();
+      // Follow the active project with a Rust file watcher so external .saple edits (MCP
+      // sidecar, agents) force-reload these stores before the next save clobbers them.
+      void invoke('watch_project_files', { projectPath: currentProjectPath }).catch(() => {});
     }, 0);
 
     return () => {
@@ -87,6 +95,23 @@ function App() {
       window.clearTimeout(timeoutId);
     };
   }, [currentWorkspaceId, currentProjectPath, refreshWorkspace, loadSwarmState, loadTasks, loadAgentSessions, activateTerminalWorkspace, resetFiles]);
+
+  // External edits to .saple state (from the MCP sidecar / agents) arrive as `saple-file-changed`.
+  // Force-reload the affected store so the in-memory copy matches disk before the next save. Read
+  // the current path via getState so a stale closure can't reload into the wrong (switched) project.
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void listen<{ file: string; projectPath: string }>('saple-file-changed', (event) => {
+      const { file, projectPath } = event.payload;
+      if (projectPath !== useProjectStore.getState().currentProjectPath) return;
+      if (file === 'tasks') void useKanbanStore.getState().loadTasks(projectPath, true);
+      else if (file === 'swarm') void useSwarmStore.getState().loadSwarmState(projectPath, true);
+      else if (file === 'sessions') void useAgentSessionStore.getState().loadSessions(projectPath, true);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
 
   useEffect(() => {
     const handleNewTerminal = async () => {
