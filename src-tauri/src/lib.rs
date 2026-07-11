@@ -46,6 +46,14 @@ pub fn run() {
     }
 
     builder
+        .setup(|_app| {
+            // Stage the sidecar to its stable per-user path before any project opens, so
+            // `.mcp.json` never has to reference the (versioned, ACL-restricted on MSIX)
+            // install directory. Release only: dev resolves the repo-local staging path.
+            #[cfg(not(debug_assertions))]
+            project::ensure_stable_sidecar();
+            Ok(())
+        })
         .manage(pty::PtyRegistry::new())
         // Restore the window's last size/position/maximized state on launch and save it on exit.
         .plugin(tauri_plugin_window_state::Builder::default().build())
