@@ -76,6 +76,10 @@ next-env.d.ts
 # Local Claude settings (machine-specific)
 .claude/settings.local.json
 
+# Local agent hook configs (machine-specific absolute paths)
+.codex/
+.github/hooks/
+
 # Per-worktree local Claude context
 CLAUDE.local.md
 
