@@ -11,7 +11,8 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  IgnorableNamespaces="uap rescap desktop6">
 
   <Identity
     Name="artemis-1889.SapleBridgeDesktop"
@@ -23,6 +24,13 @@
     <DisplayName>Saple Bridge Desktop</DisplayName>
     <PublisherDisplayName>artemis-1889</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
+    <!-- Bridge hosts terminals: shells it spawns inherit package identity, so without this
+         their AppData/HKCU writes (npm cache, tool configs) get copy-on-write redirected into
+         the package LocalCache - diverging from the same tools run outside the app and deleted
+         on uninstall. Requires the unvirtualizedResources capability below; justify it in
+         Partner Center as "developer tool hosting terminals, same as Windows Terminal". -->
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
   </Properties>
 
   <Dependencies>
@@ -48,5 +56,6 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>
