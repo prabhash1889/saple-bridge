@@ -8,6 +8,11 @@ import { useNotificationStore } from '../../../stores/notificationStore';
 // Idle -> checking -> (uptodate | available) -> downloading -> (relaunch) ; error from any step.
 type UpdateStatus = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'error';
 
+// Microsoft Store builds (packed by scripts/pack-msix.mjs with VITE_MS_STORE=1) must not
+// self-update: the Store owns updates for MSIX installs, and the NSIS updater payload
+// can't update an MSIX install anyway.
+const isStoreBuild = import.meta.env.VITE_MS_STORE === '1';
+
 export const UpdatesSection: React.FC = () => {
   const [currentVersion, setCurrentVersion] = useState<string>('');
   const [status, setStatus] = useState<UpdateStatus>('idle');
@@ -85,8 +90,9 @@ export const UpdatesSection: React.FC = () => {
         <span className="section-title">App Updates</span>
       </div>
       <p className="section-desc">
-        Check for a newer signed release and install it in place. The app restarts into the new
-        version after installing.
+        {isStoreBuild
+          ? 'Updates are delivered automatically by the Microsoft Store.'
+          : 'Check for a newer signed release and install it in place. The app restarts into the new version after installing.'}
       </p>
 
       <div className="settings-info-row">
@@ -94,6 +100,7 @@ export const UpdatesSection: React.FC = () => {
         <strong>{currentVersion || '…'}</strong>
       </div>
 
+      {isStoreBuild ? null : (
       <div className="settings-header-row">
         {status === 'available' || status === 'downloading' ? (
           <button onClick={downloadAndRestart} disabled={busy} className="primary">
@@ -113,6 +120,7 @@ export const UpdatesSection: React.FC = () => {
           </button>
         )}
       </div>
+      )}
 
       {status === 'uptodate' && (
         <div className="settings-inline-row status-ok settings-section-pad">

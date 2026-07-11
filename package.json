@@ -18,7 +18,8 @@
     "tauri": "node scripts/tauri.mjs",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "node scripts/tauri.mjs build",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "pack:msix": "node scripts/pack-msix.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

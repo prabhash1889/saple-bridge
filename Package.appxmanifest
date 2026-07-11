@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest for the Microsoft Store build (packed by scripts/pack-msix.mjs,
+  which stages the app and patches Version from tauri.conf.json).
+
+  Identity values come from Partner Center -> Saple Bridge Desktop -> Product
+  management -> Product identity, and the DisplayNames must match the reserved
+  Store name ("Saple Bridge Desktop") exactly.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="artemis-1889.SapleBridgeDesktop"
+    Publisher="CN=72C7198D-7601-4163-8539-F3469E13E20D"
+    Version="1.0.22.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Saple Bridge Desktop</DisplayName>
+    <PublisherDisplayName>artemis-1889</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 10.0.19041 = Windows 10 2004; WebView2 comes from the OS (the MSIX ships no
+         bootstrapper), which every Edge-updated Win10/11 install has. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="SapleBridge" Executable="saple-bridge.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Saple Bridge Desktop"
+        Description="Saple Bridge - local-first agentic development workspace"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

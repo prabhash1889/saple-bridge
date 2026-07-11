@@ -86,3 +86,7 @@ mcp_config.json
 # Generated knowledge-graph artifacts
 graphify-out/
 .code-review-graph/
+
+# MSIX (Microsoft Store) packaging
+dist-msix/
+devcert.pfx
