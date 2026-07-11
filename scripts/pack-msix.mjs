@@ -16,7 +16,15 @@
 // last release build.
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,6 +52,12 @@ const skipBuild = argv.includes('--skip-build');
 const fwdIdx = argv.indexOf('--');
 const winappExtra = fwdIdx === -1 ? [] : argv.slice(fwdIdx + 1);
 
+const exePath = join(root, 'src-tauri', 'target', 'release', 'saple-bridge.exe');
+// Written after a successful Store build. `--skip-build` refuses to pack unless this marker is
+// newer than the staged exe and frontend: a plain release build (updater compiled in, updater UI
+// visible) leaves the same artifacts behind and must never end up inside an MSIX.
+const storeMarker = join(root, 'dist', '.ms-store');
+
 if (!skipBuild) {
   console.log(`\n→ Building Saple Bridge v${version} (Store build, no installer bundle)\n`);
   // `--features ms-store` compiles the self-updater out of the binary; VITE_MS_STORE=1 is the
@@ -51,6 +65,21 @@ if (!skipBuild) {
   run('npx', ['tauri', 'build', '--no-bundle', '--', '--features', 'ms-store'], {
     VITE_MS_STORE: '1',
   });
+  writeFileSync(storeMarker, `${msixVersion}\n`);
+} else {
+  const indexHtml = join(root, 'dist', 'index.html');
+  const storeBuildIsCurrent =
+    existsSync(storeMarker) &&
+    existsSync(exePath) &&
+    existsSync(indexHtml) &&
+    statSync(storeMarker).mtimeMs >= statSync(exePath).mtimeMs &&
+    statSync(storeMarker).mtimeMs >= statSync(indexHtml).mtimeMs;
+  if (!storeBuildIsCurrent) {
+    console.error('✖ --skip-build: the last build is not a Store build (dist/.ms-store missing or');
+    console.error('  older than the built exe/frontend). Re-run without --skip-build so the');
+    console.error('  ms-store / VITE_MS_STORE gates are applied.');
+    process.exit(1);
+  }
 }
 
 // --- stage the package layout ----------------------------------------------
@@ -58,10 +87,7 @@ const stage = join(root, 'dist-msix');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(join(stage, 'Assets'), { recursive: true });
 
-copyFileSync(
-  join(root, 'src-tauri', 'target', 'release', 'saple-bridge.exe'),
-  join(stage, 'saple-bridge.exe'),
-);
+copyFileSync(exePath, join(stage, 'saple-bridge.exe'));
 copyFileSync(
   join(root, 'src-tauri', 'binaries', `saple-mcp-${TRIPLE}.exe`),
   join(stage, 'saple-mcp.exe'),
@@ -84,6 +110,12 @@ writeFileSync(join(stage, 'Package.appxmanifest'), manifest);
 const outDir = join(root, 'build', 'msix');
 mkdirSync(outDir, { recursive: true });
 const out = join(outDir, `SapleBridge_${msixVersion}_x64.msix`);
+
+if (existsSync(out)) {
+  console.warn(`⚠ ${out} already exists.`);
+  console.warn(`  Partner Center rejects re-uploads of the same Identity.Version (${msixVersion}) -`);
+  console.warn('  bump "version" in src-tauri/tauri.conf.json (+ package.json/Cargo.toml) before a new submission.');
+}
 
 console.log(
   `\n→ Packing ${out}\n  ${winappExtra.length ? `winapp extras: ${winappExtra.join(' ')}` : 'unsigned — the Store signs Store uploads'}\n`,
