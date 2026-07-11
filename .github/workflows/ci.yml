@@ -86,3 +86,56 @@ jobs:
 
       - name: Cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  e2e:
+    name: E2E smoke (windows)
+    runs-on: windows-latest
+    # WebView2/msedgedriver setup is inherently flaky — keep this non-blocking until it has
+    # proven stable, so a driver hiccup never red-Xes an otherwise good PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      # dist/ must exist before cargo build — Tauri embeds the frontend at compile time.
+      - name: Build frontend
+        run: npm run build
+
+      # Same placeholder trick as the rust job: build.rs only checks the sidecar file exists; the
+      # smoke test spawns a plain shell, not the MCP sidecar, so an empty stub is enough.
+      - name: Stage placeholder sidecar
+        shell: bash
+        run: |
+          triple=$(rustc -vV | sed -n 's/host: //p')
+          mkdir -p src-tauri/binaries
+          touch "src-tauri/binaries/saple-mcp-$triple.exe"
+
+      - name: Build app binary
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Install E2E deps
+        working-directory: e2e
+        run: npm install
+
+      - name: Run smoke test
+        working-directory: e2e
+        run: npm test
