@@ -825,18 +825,30 @@ mod tests {
 
     #[test]
     fn heals_stale_sidecar_command() {
-        let current = "C:\\Users\\u\\AppData\\Local\\ai.saple.bridge\\bin\\saple-mcp.exe";
+        // Native paths per host: heal_saple_memory_command uses Path::file_stem to recognize the
+        // "saple-mcp" binary, and only the host's separator counts (a backslash is a literal
+        // filename char on Unix, so Windows paths wouldn't parse on the mac runner). Real configs
+        // always hold host-native paths, so mirror that here to keep the heal covered on both OSes.
+        #[cfg(windows)]
+        let (current, stale, proj) = (
+            "C:\\Users\\u\\AppData\\Local\\ai.saple.bridge\\bin\\saple-mcp.exe",
+            "C:\\Program Files\\WindowsApps\\pkg_1.0.21_x64__h\\saple-mcp.exe",
+            "C:\\proj",
+        );
+        #[cfg(not(windows))]
+        let (current, stale, proj) = (
+            "/Users/u/Library/Application Support/ai.saple.bridge/bin/saple-mcp",
+            "/Applications/Saple Bridge.app/Contents/MacOS/saple-mcp",
+            "/proj",
+        );
         let mut cfg = serde_json::json!({ "mcpServers": {
-            "saple-memory": {
-                "command": "C:\\Program Files\\WindowsApps\\pkg_1.0.21_x64__h\\saple-mcp.exe",
-                "args": ["C:\\proj"]
-            },
+            "saple-memory": { "command": stale, "args": [proj] },
             "other": { "command": "npx", "args": ["x"] }
         }});
         assert!(heal_saple_memory_command(&mut cfg, current));
         assert_eq!(cfg["mcpServers"]["saple-memory"]["command"], current);
         // Args and unrelated servers must survive untouched.
-        assert_eq!(cfg["mcpServers"]["saple-memory"]["args"][0], "C:\\proj");
+        assert_eq!(cfg["mcpServers"]["saple-memory"]["args"][0], proj);
         assert_eq!(cfg["mcpServers"]["other"]["command"], "npx");
     }
 
