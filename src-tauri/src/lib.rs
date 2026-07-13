@@ -5,6 +5,7 @@ mod keychain;
 mod memory;
 mod git;
 mod review;
+mod control_plane;
 mod swarm;
 mod files;
 mod diagnostics;
@@ -123,6 +124,7 @@ pub fn run() {
             review::submit_review_decision,
             review::run_verification_command,
             review::set_file_viewed,
+            control_plane::canonical_record_write,
             swarm::read_swarm_state,
             swarm::write_swarm_state,
             swarm::read_mailbox_file,
