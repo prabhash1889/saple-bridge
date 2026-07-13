@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { toErrorMessage } from '../lib/errors';
 import { useConfirmStore } from './confirmStore';
+import { useFileLayoutStore } from './fileLayoutStore';
 
 export interface FileEntry {
   name: string;
@@ -31,6 +32,11 @@ interface FileState {
   fileContent: string;
   // Open editor tabs, most-recent-first. Only the active tab holds live content.
   openFiles: string[];
+  // Expanded folder paths in the tree. Lives here (not FileTree-local) so it survives room switches
+  // and is persisted per workspace via fileLayoutStore (P12).
+  expanded: Set<string>;
+  // Workspace path the current layout is captured under (null = no project / not persisted).
+  layoutPath: string | null;
   // Whether the active file has unsaved edits (single editor, so one flag suffices).
   dirty: boolean;
   gitStatus: GitStatusMap;
@@ -41,6 +47,10 @@ interface FileState {
 
   requestSearch: () => void;
   consumeSearchRequest: () => void;
+  // Restore this workspace's persisted layout (expanded folders + tabs), or clear when path is null.
+  restoreLayout: (projectPath: string | null) => void;
+  toggleExpanded: (path: string) => void;
+  setExpandedPaths: (paths: string[]) => void;
   loadFiles: (projectPath: string, root?: string) => Promise<void>;
   loadGitStatus: (projectPath: string) => Promise<void>;
   loadFileContent: (projectPath: string, filePath: string) => Promise<void>;
@@ -67,10 +77,23 @@ const prependTab = (openFiles: string[], path: string): string[] => [
 ];
 
 export const useFileStore = create<FileState>((set, get) => {
+  // Snapshot the current layout (expanded folders + tabs) into the persisted per-workspace store.
+  // No-op until a workspace is restored, so unit tests and the no-project state don't write.
+  const captureLayout = () => {
+    const { layoutPath, expanded, openFiles, activeFile } = get();
+    if (!layoutPath) return;
+    useFileLayoutStore.getState().setLayout(layoutPath, {
+      expanded: [...expanded],
+      openFiles,
+      activeFile,
+    });
+  };
+
   // Load content and mark the file active + open in a tab. Assumes any unsaved-edit
   // guard has already run (see `openFile`).
   const doOpen = async (projectPath: string, filePath: string) => {
     set((s) => ({ openFiles: prependTab(s.openFiles, filePath), dirty: false }));
+    captureLayout();
     await get().loadFileContent(projectPath, filePath);
   };
 
@@ -79,6 +102,8 @@ export const useFileStore = create<FileState>((set, get) => {
     activeFile: null,
     fileContent: '',
     openFiles: [],
+    expanded: new Set<string>(),
+    layoutPath: null,
     dirty: false,
     gitStatus: {},
     loading: false,
@@ -88,15 +113,84 @@ export const useFileStore = create<FileState>((set, get) => {
     requestSearch: () => set({ pendingSearchOpen: true }),
     consumeSearchRequest: () => set({ pendingSearchOpen: false }),
 
+    restoreLayout: (projectPath) => {
+      if (!projectPath) {
+        get().reset();
+        return;
+      }
+      const saved = useFileLayoutStore.getState().savedLayouts[projectPath];
+      set({
+        layoutPath: projectPath,
+        files: [],
+        gitStatus: {},
+        error: null,
+        loading: false,
+        pendingSearchOpen: false,
+        fileContent: '',
+        dirty: false,
+        expanded: new Set(saved?.expanded ?? []),
+        openFiles: saved?.openFiles ?? [],
+        activeFile: saved?.activeFile ?? null,
+      });
+      // Show the persisted active tab's content immediately. Best-effort: if it was deleted while
+      // this workspace was closed, loadFiles' prune (on the next tree load) drops it.
+      const active = get().activeFile;
+      if (active) void get().loadFileContent(projectPath, active);
+    },
+
+    toggleExpanded: (path) => {
+      set((s) => {
+        const expanded = new Set(s.expanded);
+        if (expanded.has(path)) expanded.delete(path);
+        else expanded.add(path);
+        return { expanded };
+      });
+      captureLayout();
+    },
+
+    setExpandedPaths: (paths) => {
+      if (paths.length === 0) return;
+      set((s) => {
+        const expanded = new Set(s.expanded);
+        for (const p of paths) expanded.add(p);
+        return { expanded };
+      });
+      captureLayout();
+    },
+
     loadFiles: async (projectPath, root = '') => {
       set({ loading: true, error: null });
       try {
-        const files = await invoke<FileEntry[]>('list_project_files', {
+        const raw = await invoke<FileEntry[]>('list_project_files', {
           projectPath,
           root,
           depth: 8, // Browse up to 8 levels by default
         });
-        set({ files, loading: false });
+        // No listing (mock / IPC hiccup): don't prune against nothing, just clear the tree.
+        if (!Array.isArray(raw)) {
+          set({ files: [], loading: false });
+          return;
+        }
+        // Prune persisted layout to paths that still exist, so deleted/renamed entries are not
+        // resurrected on load (P12). ponytail: pruning uses the depth-8 listing, so a tab opened
+        // deeper than 8 levels (e.g. via search) can be dropped; deepen the listing if that bites.
+        const dirPaths = new Set(raw.filter((f) => f.isDir).map((f) => f.path));
+        const filePaths = new Set(raw.filter((f) => !f.isDir).map((f) => f.path));
+        const prevActive = get().activeFile;
+        set((s) => {
+          const expanded = new Set([...s.expanded].filter((p) => dirPaths.has(p)));
+          const openFiles = s.openFiles.filter((p) => filePaths.has(p));
+          const activeFile =
+            s.activeFile && filePaths.has(s.activeFile) ? s.activeFile : (openFiles[0] ?? null);
+          return { files: raw, loading: false, expanded, openFiles, activeFile };
+        });
+        captureLayout();
+        // If pruning dropped the active file, show the fallback tab (or clear the viewer).
+        const active = get().activeFile;
+        if (active !== prevActive) {
+          if (active) await get().loadFileContent(projectPath, active);
+          else set({ fileContent: '', dirty: false });
+        }
       } catch (err: unknown) {
         set({ error: toErrorMessage(err), loading: false });
       }
@@ -167,6 +261,7 @@ export const useFileStore = create<FileState>((set, get) => {
         if (next && get().openFiles.includes(next)) {
           void get().loadFileContent(projectPath, next);
         }
+        captureLayout();
       };
 
       if (get().dirty && get().activeFile === filePath) {
@@ -260,23 +355,28 @@ export const useFileStore = create<FileState>((set, get) => {
       return await invoke<SearchResult>('search_in_files', { projectPath, query });
     },
 
-    setActiveFile: (filePath) =>
+    setActiveFile: (filePath) => {
       set({
         activeFile: filePath,
         fileContent: filePath ? get().fileContent : '',
         error: null,
-      }),
+      });
+      captureLayout();
+    },
 
     clearError: () => set({ error: null }),
 
-    // Clear all file state — called when switching workspaces so the viewer and
-    // tree don't show a previous workspace's files.
+    // Clear all file state — called for the no-project state (via restoreLayout(null)) so the
+    // viewer and tree don't show a previous workspace's files. Drops layoutPath so nothing is
+    // captured until a workspace is restored again.
     reset: () =>
       set({
         files: [],
         activeFile: null,
         fileContent: '',
         openFiles: [],
+        expanded: new Set<string>(),
+        layoutPath: null,
         dirty: false,
         gitStatus: {},
         pendingSearchOpen: false,

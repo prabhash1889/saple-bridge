@@ -41,7 +41,7 @@ function App() {
   const loadSwarmState = useSwarmStore((state) => state.loadSwarmState);
   const loadAgentSessions = useAgentSessionStore((state) => state.loadSessions);
   const activateTerminalWorkspace = useTerminalStore((state) => state.activateWorkspace);
-  const resetFiles = useFileStore((state) => state.reset);
+  const restoreFileLayout = useFileStore((state) => state.restoreLayout);
 
   const themeMode = useThemeStore((state) => state.mode);
 
@@ -69,8 +69,10 @@ function App() {
     // Terminals are scoped per workspace instance, so activate by id (two openings of the
     // same folder have the same path but different ids and independent pane sets).
     activateTerminalWorkspace(currentWorkspaceId);
-    // Drop the previous workspace's open file/tree so the viewer doesn't show stale content.
-    resetFiles();
+    // Restore this workspace's persisted Files-room layout (expanded folders + open tabs), or clear
+    // when there's no project. Replaces the previous unconditional reset so the tree/tabs survive
+    // project switches and restart (P12).
+    restoreFileLayout(currentProjectPath);
     if (!currentProjectPath) {
       void invoke('unwatch_project_files').catch(() => {});
       return;
@@ -94,7 +96,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [currentWorkspaceId, currentProjectPath, refreshWorkspace, loadSwarmState, loadTasks, loadAgentSessions, activateTerminalWorkspace, resetFiles]);
+  }, [currentWorkspaceId, currentProjectPath, refreshWorkspace, loadSwarmState, loadTasks, loadAgentSessions, activateTerminalWorkspace, restoreFileLayout]);
 
   // External edits to .saple state (from the MCP sidecar / agents) arrive as `saple-file-changed`.
   // Force-reload the affected store so the in-memory copy matches disk before the next save. Read

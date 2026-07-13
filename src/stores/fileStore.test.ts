@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { useFileStore } from './fileStore';
+import { useFileLayoutStore } from './fileLayoutStore';
 import { useConfirmStore } from './confirmStore';
 
 const reset = () => {
@@ -105,5 +106,64 @@ describe('fileStore tab logic', () => {
     const st = useFileStore.getState();
     expect(st.openFiles).toEqual([]);
     expect(st.activeFile).toBeNull();
+  });
+});
+
+describe('fileStore layout persistence (P12)', () => {
+  beforeEach(reset);
+
+  it('prunes deleted/renamed paths from expanded folders and tabs on load', async () => {
+    // Seed a workspace layout mixing paths that still exist with ones removed while away.
+    useFileStore.setState({
+      layoutPath: '/p',
+      expanded: new Set(['live-dir', 'stale-dir']),
+      openFiles: ['live.ts', 'stale.ts'],
+      activeFile: 'stale.ts',
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_project_files') {
+        return Promise.resolve([
+          { name: 'live-dir', path: 'live-dir', isDir: true, sizeBytes: null },
+          { name: 'live.ts', path: 'live.ts', isDir: false, sizeBytes: 1 },
+        ]);
+      }
+      if (cmd === 'read_text_file') return Promise.resolve('body');
+      return Promise.resolve(null);
+    });
+
+    await useFileStore.getState().loadFiles('/p');
+
+    const st = useFileStore.getState();
+    expect([...st.expanded]).toEqual(['live-dir']);
+    expect(st.openFiles).toEqual(['live.ts']);
+    // The active tab was pruned, so it falls back to the surviving tab rather than resurrecting.
+    expect(st.activeFile).toBe('live.ts');
+  });
+
+  it('restores a persisted layout for the workspace path', () => {
+    useFileLayoutStore.getState().setLayout('/w', {
+      expanded: ['src'],
+      openFiles: ['src/a.ts', 'README.md'],
+      activeFile: 'src/a.ts',
+    });
+
+    useFileStore.getState().restoreLayout('/w');
+
+    const st = useFileStore.getState();
+    expect([...st.expanded]).toEqual(['src']);
+    expect(st.openFiles).toEqual(['src/a.ts', 'README.md']);
+    expect(st.activeFile).toBe('src/a.ts');
+    expect(st.layoutPath).toBe('/w');
+  });
+
+  it('restoreLayout(null) clears state so a no-project view shows nothing', () => {
+    useFileStore.setState({ layoutPath: '/p', openFiles: ['a.ts'], activeFile: 'a.ts' });
+
+    useFileStore.getState().restoreLayout(null);
+
+    const st = useFileStore.getState();
+    expect(st.openFiles).toEqual([]);
+    expect(st.activeFile).toBeNull();
+    expect(st.layoutPath).toBeNull();
   });
 });

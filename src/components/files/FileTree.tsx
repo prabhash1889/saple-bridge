@@ -256,11 +256,11 @@ const parentDir = (path: string) => {
 export const FileTree: React.FC = () => {
   const { currentProjectPath } = useProjectStore();
   const {
-    files, activeFile, gitStatus, loadFiles, loadGitStatus, openFile, openExternal,
+    files, activeFile, gitStatus, expanded, toggleExpanded, setExpandedPaths,
+    loadFiles, loadGitStatus, openFile, openExternal,
     createFile, createDirectory, renamePath, deletePath, loading, error,
   } = useFileStore();
   const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<MenuState>(null);
   const [prompt, setPrompt] = useState<PromptState>(null);
 
@@ -278,21 +278,17 @@ export const FileTree: React.FC = () => {
 
   // Automatically expand parent directories when activeFile changes
   useEffect(() => {
-    if (activeFile) {
-      const parts = activeFile.split('/');
-      if (parts.length > 1) {
-        setExpanded(prev => {
-          const next = new Set(prev);
-          let currentPath = '';
-          for (let i = 0; i < parts.length - 1; i++) {
-            currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
-            next.add(currentPath);
-          }
-          return next;
-        });
-      }
+    if (!activeFile) return;
+    const parts = activeFile.split('/');
+    if (parts.length <= 1) return;
+    const chain: string[] = [];
+    let currentPath = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
+      chain.push(currentPath);
     }
-  }, [activeFile]);
+    setExpandedPaths(chain);
+  }, [activeFile, setExpandedPaths]);
 
   // Close the context menu on any outside click or Escape.
   useEffect(() => {
@@ -306,18 +302,6 @@ export const FileTree: React.FC = () => {
       window.removeEventListener('keydown', onKey);
     };
   }, [menu]);
-
-  const toggleFolder = (path: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  };
 
   const handleFileClick = (path: string) => {
     if (currentProjectPath) {
@@ -358,7 +342,7 @@ export const FileTree: React.FC = () => {
           openFile(currentProjectPath, p);
         } else {
           await createDirectory(currentProjectPath, p);
-          setExpanded((prev) => new Set(prev).add(p));
+          setExpandedPaths([p]);
         }
       }
     } catch (err) {
@@ -480,7 +464,7 @@ export const FileTree: React.FC = () => {
                 <div
                   key={file.path}
                   className={`file-tree-node flat-match ${isActive ? 'active' : ''}`}
-                  onClick={() => file.isDir ? toggleFolder(file.path) : handleFileClick(file.path)}
+                  onClick={() => file.isDir ? toggleExpanded(file.path) : handleFileClick(file.path)}
                 >
                   <span className="node-icon" style={{ color: iconColor }}>
                     <FileIcon size={14} />
@@ -513,7 +497,7 @@ export const FileTree: React.FC = () => {
                 node={node}
                 depth={0}
                 expanded={expanded}
-                toggleFolder={toggleFolder}
+                toggleFolder={toggleExpanded}
                 handleFileClick={handleFileClick}
                 handleOpenExternal={handleOpenExternal}
                 handleContextMenu={handleContextMenu}
