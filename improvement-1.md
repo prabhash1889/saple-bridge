@@ -369,6 +369,163 @@ This is not a remote SAPLE workspace. Files, Git, memory, Kanban, and Review rem
 
 ---
 
+## Priority 8 - Dynamic model selection for agents
+
+### Problem
+
+The model field in the Swarm wizard, task dialog, and template editor is free text. Users have no way to discover valid ids, and stale saved templates/swarm state can still carry rotted ids (e.g. `gpt-4o`) that launch with a wrong `--model` flag. Provider CLIs expose no "list models" command, so purely CLI-driven discovery is not available; the dropdown must be assembled from other live sources.
+
+### Implement
+
+Replace the free-text input with a per-provider combobox (dropdown plus free text), fed by layered sources:
+
+1. Stable CLI aliases per provider (Claude: `default`, `sonnet`, `opus`, `haiku`; others per their documented aliases). Aliases only - never version-pinned ids, which rot.
+2. Live API discovery through a new Rust command when a keychain API key exists for the provider (Anthropic/OpenAI/Gemini/OpenRouter models endpoints). Cached per session; silently skipped when no key or offline.
+3. Recently used models per provider, persisted.
+
+`default` stays first and preselected. Free text stays available. `is_safe_model` validation in `pty.rs` is unchanged and remains the final gate. Templates or saved swarms whose model id is not in the assembled catalog show a warning chip instead of silently launching.
+
+### Likely touchpoints
+
+- `src/components/swarm/wizard/providerMeta.ts`
+- `src/components/swarm/wizard/steps/RosterStep.tsx`
+- `src/components/kanban/TaskDialog.tsx`
+- `src/components/swarm/SwarmTemplateEditor.tsx`
+- New Rust command for API model listing (uses `keychain.rs` secrets; keys never reach the frontend)
+
+### Acceptance criteria
+
+- Every model picker is a dropdown with free-text entry.
+- No version-pinned model id is hardcoded in source.
+- Fully functional offline (aliases + recents only).
+- API discovery activates only when a keychain key exists and fails silently to the offline behavior.
+- Stale template model ids produce a visible warning before launch.
+
+---
+
+## Priority 9 - Swarm room visual refresh
+
+> **Status: started.** Graph node cards now carry a status-tinted surface wash, running/starting
+> agents pulse, stage headers use the swarm accent, and `starting`/`waiting` states received
+> distinct colors (`SwarmGraph.tsx`, `swarm.css`).
+
+### Remaining
+
+- Bring the Agent Cards Grid view to visual parity with the graph nodes.
+- Add a compact status legend row above the graph.
+- Show elapsed time on running nodes.
+- Verify light-theme contrast for all new tints.
+- Finish with a screenshot-based pixel pass in `tauri:dev` (CDP screenshots per the debug-webview workflow).
+
+### Acceptance criteria
+
+- Both views communicate role and status by color without reading text.
+- Light and dark themes both verified visually.
+- Motion uses transform/opacity/box-shadow only - no layout-property animation.
+
+---
+
+## Priority 10 - Live visibility for headless agent panes
+
+> **Status: Done.** `isHeadlessProvider` (`src/types/provider.ts`) mirrors `pty.rs`'s
+> `provider_accepts_prompt_pipe`. The Swarm agent card shows a "Headless run - terminal output
+> appears on completion. Watch the mailbox below for live progress." hint while a piped-prompt agent
+> is running/starting, and the inspector's terminal-tail label reads "headless - appears on
+> completion" for those agents (the mailbox, rendered above the tail, is the primary live surface).
+> The `pty-exit` + scoped-marker completion path is untouched. Covered by `provider.test.ts`.
+
+### Problem (validated in real use)
+
+Swarm agents launch headless: the prompt is piped into the CLI (`pty.rs`), which puts Claude into print mode - zero terminal output until the process exits. The pane looks dead while the agent works; the mailbox file is the de-facto live view.
+
+### Implement
+
+1. Label headless panes ("headless - output appears on completion") and make the inspector's mailbox/report tail the primary live surface for them.
+2. Evaluate a streaming invocation for Claude headless runs (print mode with streaming output flags), under the hard constraint that the shell must still exit so `pty-exit` keeps feeding the scheduler. Record the decision in this file before implementing.
+
+### Streaming decision (2026-07-14)
+
+Evaluated `claude -p --output-format stream-json --verbose` for Claude headless runs. It satisfies
+the hard constraint - the process still exits at the end, so `pty-exit` keeps feeding the scheduler -
+but the streamed bytes are newline-delimited JSON event envelopes, not human-readable text. Piping
+that straight into the PTY would replace an empty pane with an unreadable JSON firehose, and making
+it legible needs a stream-json parser in the tail view (a new, provider-specific failure surface)
+plus per-provider flag handling (only Claude has this shape today).
+
+**Decision: do not adopt streaming now.** The mailbox is already the live surface - agents write
+progress there mid-run - so Part 1 (labeling headless panes and pointing the operator at the
+mailbox) delivers the "working vs. hung" distinction without the parser. Revisit streaming only if
+agents that never touch their mailbox need live visibility; at that point add an opt-in stream-json
+tail parser behind the existing tail view rather than changing the launch command for everyone.
+
+### Acceptance criteria
+
+- A user can distinguish a working headless agent from a hung one within seconds.
+- The completion signal path (`pty-exit` + scoped markers) is unchanged.
+
+---
+
+## Priority 11 - Launch swarms into their own workspace instance
+
+### Problem
+
+Swarm panes land in the active workspace, mixing agent terminals with the user's interactive panes.
+
+### Implement
+
+On swarm launch, create and activate a new workspace instance of the same folder and bucket all swarm panes there. Workspace instances of the same path are already supported, and panes are already bucketed by instance id, so this is a contained change to the launch path. Same project path means all stores and signal handling stay loaded when flipping between instances.
+
+### Likely touchpoints
+
+- `src/stores/swarmStore.ts` (launch path)
+- `src/stores/terminalStore.ts`
+- `src/stores/projectStore.ts` (instance creation/activation)
+
+### Acceptance criteria
+
+- Swarm launch opens its own instance; the user's panes are untouched.
+- Closing the swarm instance does not kill unrelated terminals.
+- Lifecycle signals and scheduling are unaffected by flipping between the two instances.
+
+---
+
+## Priority 12 - Files room state persistence
+
+### Problem
+
+File tree expansion is component-local state (`FileTree.tsx`) and open editor tabs are cleared on project switch, so both reset on any room change, project switch, or restart - unlike terminals, which persist per workspace.
+
+### Implement
+
+A small persisted store keyed by workspace path (modeled on `terminalLayoutStore`) holding expanded folder paths and open tabs. Prune stale paths on load.
+
+### Acceptance criteria
+
+- Expansion and open tabs survive room switches, project switches, and restart.
+- Deleted/renamed paths are pruned rather than resurrected.
+
+---
+
+## Priority 13 - Cross-project lifecycle signal routing
+
+### Problem
+
+Marker and exit handlers (`terminalStore.ts`) resolve agents and tasks through the singleton stores of the currently open project. A swarm agent or task pane finishing while a different project is open is silently dropped; on return, reconciliation strands the agent as running against a dead pane or falsely fails it, and Kanban cards never move to Review.
+
+### Implement
+
+- Route `pty-output`/`pty-exit` lifecycle handling by the pane's own `workspacePath` instead of `currentProjectPath`.
+- When the target project is not loaded, apply the transition to that project's state files directly (or queue it and reconcile on load, checking the pane's log tail for scoped markers before declaring failure).
+- Warn when switching projects while a swarm is mid-run.
+
+### Acceptance criteria
+
+- An agent completing while another project is open still advances its swarm/task when the project is reopened.
+- No false "terminal was lost" for agents that finished while unwatched.
+- A test covers cross-project completion delivery.
+
+---
+
 ## Deferred deliberately
 
 ### Infinite canvas
@@ -402,6 +559,9 @@ Bounded rework and approved worker requests cover the real workflows while retai
 | C | Priority 4 | Safe iterative review workflow |
 | D | Priorities 5–6 | Visual feedback and dynamic orchestration |
 | E | Priority 7 | Convenient remote terminals without architectural overreach |
+| F | Priorities 8-9 | Trustworthy model selection and legible swarm status |
+| G | Priorities 10-11 | Headless-agent visibility and isolated swarm workspaces |
+| H | Priorities 12-13 | Workspace-switching robustness |
 
 ## Definition of success
 

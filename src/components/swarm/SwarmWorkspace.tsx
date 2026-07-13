@@ -7,6 +7,7 @@ import { useTerminalStore } from '../../stores/terminalStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
 import { readRunOutcome } from '../../lib/controlPlane';
 import type { AgentOutcome } from '../../types/agent';
+import { isHeadlessProvider } from '../../types/provider';
 import { SwarmGraph } from './SwarmGraph';
 import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';
 import { SwarmTemplateEditor } from './SwarmTemplateEditor';
@@ -524,12 +525,18 @@ export const SwarmWorkspace: React.FC = () => {
                     />
 
                     {/* Live tail of the agent's terminal so its actual work is visible
-                        without leaving the room. "View Terminal" stays the full view. */}
+                        without leaving the room. "View Terminal" stays the full view. Headless
+                        agents print nothing until they exit, so the label says so and points at
+                        the mailbox above as the live surface (P10). */}
                     {selectedAgent.terminalId && (
                       <div style={composeBoxStyle}>
                         <div style={rightPanelTitleStyle}>
                           <TerminalIcon size={13} className="fg-muted" />
-                          <span>Terminal Output (live)</span>
+                          <span>
+                            {isHeadlessProvider(selectedAgent.provider)
+                              ? 'Terminal Output (headless - appears on completion)'
+                              : 'Terminal Output (live)'}
+                          </span>
                         </div>
                         <AgentTerminalTail terminalId={selectedAgent.terminalId} />
                       </div>

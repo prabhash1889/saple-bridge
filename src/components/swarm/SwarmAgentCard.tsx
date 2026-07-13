@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft, XCircle, Info } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
+import { isHeadlessProvider } from '../../types/provider';
 import type { AgentOutcome } from '../../types/agent';
 import { MarkdownPreview } from '../editor/MarkdownPreview';
 
@@ -49,6 +50,11 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   outcome,
 }) => {
   const hasOutcome = !!outcome && (!!outcome.summary || !!outcome.tests || !!outcome.changedFiles?.length || !!outcome.decisions?.length);
+  // Headless agents pipe their prompt into the CLI's print mode: the terminal stays silent until
+  // the process exits, so the mailbox is the live surface. Flag it while the agent is working so
+  // an empty terminal reads as "headless", not "hung" (P10).
+  const headless = isHeadlessProvider(agent.provider);
+  const headlessWorking = headless && (agent.status === 'running' || agent.status === 'starting');
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
       case 'running':
@@ -95,6 +101,15 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
         <div style={statusReasonStyle}>
           <Info size={12} className="fg-muted" />
           <span>{agent.statusReason}</span>
+        </div>
+      )}
+
+      {/* Headless liveness hint (P10): a piped-prompt agent prints nothing until it exits, so tell
+          the operator the terminal silence is expected and the mailbox below is the live view. */}
+      {headlessWorking && (
+        <div style={headlessHintStyle}>
+          <RefreshCw size={12} className="fg-accent spin" />
+          <span>Headless run - terminal output appears on completion. Watch the mailbox below for live progress.</span>
         </div>
       )}
 
@@ -291,6 +306,19 @@ const statusReasonStyle: React.CSSProperties = {
   color: 'var(--text-secondary)',
   backgroundColor: 'var(--bg-surface-light)',
   border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '6px 8px',
+};
+
+const headlessHintStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: '6px',
+  fontSize: '11px',
+  lineHeight: '1.4',
+  color: 'var(--text-secondary)',
+  backgroundColor: 'rgba(99, 102, 241, 0.08)',
+  border: '1px solid rgba(99, 102, 241, 0.2)',
   borderRadius: 'var(--radius-sm)',
   padding: '6px 8px',
 };
