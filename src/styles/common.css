@@ -249,7 +249,10 @@ button.text-btn:hover {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  /* auto-fit wraps by the grid's own width, so the row reflows to fit the narrowed content
+     column between the sidebars (e.g. on a 13" Mac) instead of overflowing off-screen. A fixed
+     column count can only react to viewport width, which doesn't see the sidebar squeeze. */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
