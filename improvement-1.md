@@ -84,6 +84,20 @@ Cross-process locking caveat: both crates' `fs_lock` implementations are process
 
 ## Priority 1 — Automatic on-demand context briefs
 
+> **Status: Done.** A shared `contextBriefSection` (`src/lib/contextBrief.ts`) appends a short context
+> contract to every launch prompt, pointing the agent at the smallest relevant saple-memory MCP brief
+> (`get_task_context` for tasks, `get_project_brief` for coordinators, `get_agent_brief` for other
+> registered agents) instead of inlining project memories, and telling it to pull individual memories
+> with `search_memories` only when a brief points there and to record decisions/lessons via
+> `record_decision` / `record_lesson`. The three Kanban task-launch sites (`TaskCard`,
+> `TaskDetailDrawer`, `CommandPalette`) now share one `buildTaskAgentPrompt` helper
+> (`src/lib/taskAgentPrompt.ts`); `swarmStore`'s launch prompt embeds the same section keyed on the
+> agent role. Bridge never calls these MCP tools at launch (the prompt is text handed to the provider
+> CLI, which owns the MCP connection), so the launch path can't break when the sidecar is down - the
+> contract's fallback line tells the agent to say so and continue from the mission text and attached
+> files. Covered by `contextBrief.test.ts` (task/coordinator/registered-agent branches, no-inline-memory,
+> graceful-fallback, and the assembled task prompt).
+
 ### Problem
 
 SAPLE already has project, task, incident, and agent context tools, but launch prompts mostly provide mission text and attached files. Agents are not consistently directed toward the smallest relevant brief.
@@ -508,6 +522,14 @@ On swarm launch, create and activate a new workspace instance of the same folder
 ---
 
 ## Priority 12 - Files room state persistence
+
+> **Status: Done.** Files-room view state - expanded folders plus open editor tabs and the active tab -
+> now lives in a persisted `fileLayoutStore` keyed by workspace path (modeled on `terminalLayoutStore`).
+> `fileStore` owns `expanded` (moved out of `FileTree`'s component-local state) and captures the layout
+> on every tab/expansion change; `restoreLayout` - called from `App.tsx` on project switch in place of
+> the old unconditional `reset` - rehydrates it, and `loadFiles` prunes deleted/renamed paths against
+> the file listing so stale entries are not resurrected. `currentProjectPath` is already persisted, so
+> restart rehydrates the same way. Covered by prune + restore(+null) tests in `fileStore.test.ts`.
 
 ### Problem
 
