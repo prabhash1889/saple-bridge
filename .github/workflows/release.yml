@@ -2,8 +2,10 @@ name: Release
 
 # Cut a release by pushing a version tag (see `npm run release`, which bumps + tags + pushes):
 #   git tag v1.1.0 && git push --follow-tags
-# This builds the signed, updater-ready Windows bundle and publishes a DRAFT GitHub release with
-# `latest.json`. Installed apps only see the update once you review and publish that draft.
+# This builds the signed, updater-ready Windows and macOS (Apple Silicon) bundles and publishes a
+# DRAFT GitHub release with `latest.json`. Both matrix legs upload into the same draft; tauri-action
+# merges each platform's entry into `latest.json` rather than overwriting. Installed apps only see
+# the update once you review and publish that draft.
 on:
   push:
     tags:
@@ -15,8 +17,17 @@ permissions:
 
 jobs:
   release:
-    name: Build & publish (Windows)
-    runs-on: windows-latest
+    name: Build & publish (${{ matrix.os }})
+    # fail-fast: false so a mac failure never cancels the Windows leg. Worst case: the Windows
+    # installer + its latest.json entry still publish, the draft just lacks the .dmg.
+    # macos-latest is Apple Silicon (arm64); Intel Macs would need a separate x86_64 / universal
+    # build. macOS artifacts are updater-signed (minisign) but NOT Apple-notarized yet, so Gatekeeper
+    # will warn on first open until an Apple Developer cert is wired in.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       # Two sibling checkouts: prepare-sidecar.mjs builds ../saple-mcp relative to the bridge root,
       # so the layout on disk must be <workspace>/saple-bridge and <workspace>/saple-mcp.
