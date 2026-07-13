@@ -166,6 +166,9 @@ Support normal text entry first. OS dictation already works at the text-input la
 > without opening a terminal (`readRunOutcome`), and Review shows the test command/result via the
 > run's `test_result` artifact. Marker-only agents keep working (outcome is optional). Covered by
 > `parseAgentOutcome` robustness tests and the `completeSession` outcome/fallback tests.
+> Review fix: `launchAgentProcess` now clears `.saple/swarm/outcomes/<agentId>.json` (writes `{}`)
+> before every launch, so a relaunch that finishes without writing its own outcome can't pick up
+> the previous attempt's stale file.
 
 ### Problem
 
@@ -379,9 +382,12 @@ This is not a remote SAPLE workspace. Files, Git, memory, Kanban, and Review rem
 > plus `openrouter/auto` - no version-pinned ids), persisted recents (recorded on launch at the
 > swarm and task choke points), and live API discovery via the new Rust `list_provider_models`
 > command (`models.rs`, ureq + keychain key, best-effort - empty on no-key/offline/unknown provider,
-> so it silently falls back). A value not in the assembled catalog (once discovery resolves) shows a
-> warning chip before launch. `is_safe_model` in `pty.rs` is untouched and remains the launch gate.
+> so it silently falls back). A value not in the assembled catalog shows a warning chip before
+> launch. `is_safe_model` in `pty.rs` is untouched and remains the launch gate.
 > Covered by `models.rs` parser/guard tests and `modelCatalogStore.test.ts` (assembly + recents).
+> Review fix: the warning chip now fires only when API discovery actually returned entries for the
+> provider (`apiModels` non-empty), not merely once the fetch kicked off — without a key/offline the
+> catalog is just aliases + recents, and flagging every legitimate full id would be a false alarm.
 
 ### Problem
 
@@ -519,6 +525,19 @@ A small persisted store keyed by workspace path (modeled on `terminalLayoutStore
 ---
 
 ## Priority 13 - Cross-project lifecycle signal routing
+
+> **Status: Done.** Both PTY handlers now route by the pane's own `workspacePath` instead of
+> `currentProjectPath` and only apply transitions when that project's swarm/kanban store is the
+> loaded one. Signals for a not-loaded project are recovered instead of dropped: the scoped marker
+> stays in the pane's rolling signal tail (`getPaneSignalTail`) and `loadSwarmState` re-checks it
+> per running agent before the orphan downgrade (marker wins over exit); pty-exits are queued via
+> `recordPendingAgentExit` and replayed as the existing exit-fallback transition; kanban review
+> moves are queued via `recordPendingTaskReview` and applied by `loadTasks`. Recovered transitions
+> run through `updateAgentStatus`, so outcome artifacts, run close-out, notifications, and
+> dependent scheduling all fire normally. Switching projects while a swarm runs now shows an info
+> toast ("continues in the background"). Covered by five `loadSwarmState` recovery tests (marker
+> recovery, dependent advance, pending exit, marker-beats-exit, bare-marker cannot advance a scoped
+> agent).
 
 ### Problem
 
