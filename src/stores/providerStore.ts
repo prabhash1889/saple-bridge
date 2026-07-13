@@ -54,6 +54,7 @@ const DEFAULT_PROVIDERS: ProviderEntry[] = [
   { provider: 'droid', label: 'Droid', cliCommand: 'droid --version', defaultModel: PROVIDER_DEFAULT_MODEL.droid, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
   { provider: 'copilot', label: 'Copilot', cliCommand: 'gh copilot --version', defaultModel: PROVIDER_DEFAULT_MODEL.copilot, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
   { provider: 'pi', label: 'Pi', cliCommand: 'pi --version', defaultModel: PROVIDER_DEFAULT_MODEL.pi, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'grok', label: 'Grok', cliCommand: 'grok --version', defaultModel: PROVIDER_DEFAULT_MODEL.grok, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
   { provider: 'custom', label: 'Custom', cliCommand: '', defaultModel: '', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
 ];
 

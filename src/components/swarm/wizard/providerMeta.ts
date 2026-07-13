@@ -13,6 +13,7 @@ export const PROVIDER_LABELS: Record<AgentProvider, string> = {
   droid: 'Droid',
   copilot: 'Copilot',
   pi: 'Pi',
+  grok: 'Grok',
   custom: 'Custom',
 };
 
@@ -29,6 +30,7 @@ export const PROVIDER_ORDER: AgentProvider[] = [
   'droid',
   'copilot',
   'pi',
+  'grok',
 ];
 
 // GUI-oriented agents that don't accept a piped prompt file; the Rust PTY layer
@@ -53,5 +55,6 @@ export const PROVIDER_DEFAULT_MODEL: Record<AgentProvider, string> = {
   droid: 'default',
   copilot: 'default',
   pi: 'default',
+  grok: 'default',
   custom: 'default',
 };

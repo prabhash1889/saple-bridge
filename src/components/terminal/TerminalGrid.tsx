@@ -22,6 +22,7 @@ const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
   { value: 'claude', label: 'Claude', icon: 'Cl' },
   { value: 'droid', label: 'Droid', icon: 'D' },
   { value: 'pi', label: 'Pi', icon: 'Pi' },
+  { value: 'grok', label: 'Grok', icon: 'G' },
   { value: 'opencode', label: 'OpenCode', icon: 'O' },
   { value: 'custom', label: 'Custom', icon: 'Cu' },
 ];
@@ -231,6 +232,17 @@ const TerminalGridComponent: React.FC = () => {
       const newCounts = { ...prev, [provider]: next };
       if (next === 0) delete newCounts[provider];
       return newCounts;
+    });
+  }, [totalAssigned, clampedLayoutCount]);
+
+  // "ALL n": fill every remaining unassigned slot with this one agent (so "12x Claude" is
+  // one click instead of twelve on "+"). Counts already given to other agents are kept.
+  const handleAgentFill = useCallback((provider: string) => {
+    setAgentCounts(prev => {
+      const current = prev[provider] || 0;
+      const next = current + (clampedLayoutCount - totalAssigned);
+      if (next <= current) return prev;
+      return { ...prev, [provider]: next };
     });
   }, [totalAssigned, clampedLayoutCount]);
 
@@ -542,7 +554,7 @@ const TerminalGridComponent: React.FC = () => {
                   <span>{totalAssigned === 0 ? 'No agents yet' : `${totalAssigned} agents selected`}</span>
                 </div>
                 <div className="agent-progress-track agent-progress-bar">
-                  <div style={{ width: `${(totalAssigned / clampedLayoutCount) * 100}%`, background: 'var(--text-primary)', height: '100%', transition: 'width 0.3s ease' }} />
+                  <div style={{ width: '100%', transform: `scaleX(${totalAssigned / clampedLayoutCount})`, transformOrigin: 'left', background: 'var(--text-primary)', height: '100%', transition: 'transform 0.3s ease' }} />
                 </div>
               </div>
 
@@ -574,6 +586,13 @@ const TerminalGridComponent: React.FC = () => {
                       </div>
                       <span className="agent-picker-label">{provider.label}</span>
                       <div onClick={e => e.stopPropagation()} className="agent-picker-controls">
+                        <button
+                          className="custom-command-all-btn"
+                          style={{ opacity: totalAssigned >= clampedLayoutCount ? 0.3 : 1 }}
+                          disabled={totalAssigned >= clampedLayoutCount}
+                          title={`Fill all remaining slots with ${provider.label}`}
+                          onClick={() => handleAgentFill(provider.value)}
+                        >ALL {clampedLayoutCount}</button>
                         <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', opacity: count === 0 ? 0.3 : 1, fontSize: '16px' }} disabled={count === 0} onClick={() => handleAgentCountChange(provider.value, -1)}>-</button>
                         <span style={{ minWidth: '16px', textAlign: 'center', fontWeight: count > 0 ? 600 : 400, color: count > 0 ? 'var(--text-primary)' : 'inherit', fontSize: '15px' }}>{count}</span>
                         <button style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '4px', opacity: totalAssigned >= clampedLayoutCount ? 0.3 : 1, fontSize: '16px' }} disabled={totalAssigned >= clampedLayoutCount} onClick={() => handleAgentCountChange(provider.value, 1)}>+</button>

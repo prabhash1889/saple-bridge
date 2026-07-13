@@ -11,7 +11,7 @@ import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmS
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
 
-export type AiProvider = Extract<AgentProvider, 'codex' | 'claude' | 'gemini' | 'openrouter' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'custom'>;
+export type AiProvider = Extract<AgentProvider, 'codex' | 'claude' | 'gemini' | 'openrouter' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'grok' | 'custom'>;
 
 export interface CommandBlock {
   id: string;
@@ -220,6 +220,8 @@ const providerLabel = (provider?: AiProvider) => {
       return 'Copilot Agent';
     case 'pi':
       return 'Pi Agent';
+    case 'grok':
+      return 'Grok Agent';
     case 'custom':
       return 'Custom Agent';
     default:

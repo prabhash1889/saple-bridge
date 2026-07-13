@@ -8,6 +8,7 @@ export type AgentProvider =
   | 'droid'
   | 'copilot'
   | 'pi'
+  | 'grok'
   | 'custom';
 
 // The live per-provider readiness shape (keychain auth + CLI install/version) is owned by the

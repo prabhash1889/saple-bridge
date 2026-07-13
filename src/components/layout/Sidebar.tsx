@@ -61,6 +61,7 @@ const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
   { value: 'codex', label: 'Codex', icon: 'C' },
   { value: 'droid', label: 'Droid', icon: 'D' },
   { value: 'pi', label: 'Pi', icon: 'Pi' },
+  { value: 'grok', label: 'Grok', icon: 'G' },
   { value: 'opencode', label: 'OpenCode', icon: 'O' },
   { value: 'custom', label: 'Custom', icon: 'Cu' },
 ];
