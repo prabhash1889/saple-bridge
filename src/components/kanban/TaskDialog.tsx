@@ -4,6 +4,7 @@ import { Task, AgentConfig, useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
 import type { AgentProvider } from '../../types/provider';
+import { ModelCombobox } from '../common/ModelCombobox';
 import type { TaskPriority } from '../../types/task';
 import { useFocusTrap } from '../../lib/useFocusTrap';
 
@@ -380,18 +381,13 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
 
               <div className="task-dialog-field">
                 <label>LLM Model</label>
-                <input
+                {/* Combobox (P8): aliases + recents + live discovery, still free-text. 'default'
+                    omits the --model flag so the CLI runs its own current model. */}
+                <ModelCombobox
+                  provider={agentProvider}
                   value={agentModel}
-                  onChange={e => setAgentModel(e.target.value)}
-                  placeholder="Model id, or 'default' to let the CLI choose"
-                  list="recommended-models"
+                  onChange={setAgentModel}
                 />
-                {/* Free-text: 'default' omits the --model flag so the CLI runs its own current
-                    model. A version-pinned suggestion list here would just rot, so keep only the
-                    non-rotting default and let users type a specific model when they want one. */}
-                <datalist id="recommended-models">
-                  <option value="default" />
-                </datalist>
               </div>
             </div>
 

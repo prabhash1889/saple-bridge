@@ -11,6 +11,7 @@ import {
   SIZE_PRESETS, generateRoster, ROLE_LABELS, ROLE_COLORS, ROLE_ORDER, composeComposition,
 } from '../constants';
 import { PROVIDER_ORDER, PROVIDER_LABELS, PROVIDER_DEFAULT_MODEL, EXPERIMENTAL_PROVIDERS } from '../providerMeta';
+import { ModelCombobox } from '../../../common/ModelCombobox';
 import {
   heroWrapStyle, heroIconWrapStyle, heroTitleStyle, heroSubtitleStyle, sectionStyle, sectionLabelStyle,
   chipRowStyle, chipStyle,
@@ -283,7 +284,12 @@ const AgentRow: React.FC<AgentRowProps> = ({ agent, index, allAgents, onToggleEx
           <div className="swarm-form-row">
             <div className="flex-1">
               <div style={sectionLabelStyle}>Model</div>
-              <input value={agent.model} onChange={(e) => onPatch({ model: e.target.value })} style={smallInput} />
+              <ModelCombobox
+                provider={agent.provider || 'codex'}
+                value={agent.model}
+                onChange={(model) => onPatch({ model })}
+                style={smallInput}
+              />
             </div>
             <button
               onClick={() => onPatch({ autoApprove: !agent.autoApprove })}

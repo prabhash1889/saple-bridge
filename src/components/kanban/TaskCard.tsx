@@ -8,6 +8,7 @@ import { useProviderStore } from '../../stores/providerStore';
 import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
+import { useModelCatalogStore } from '../../stores/modelCatalogStore';
 
 interface TaskCardProps {
   task: Task;
@@ -89,6 +90,7 @@ You MUST output one of the following exact review trigger patterns on a line by 
       });
 
       // 2. Create a new terminal pane for this agent with model and prompt file redirection
+      useModelCatalogStore.getState().recordUsed(provider, model); // resurface in the picker (P8)
       const paneId = await addPane(currentProjectPath, provider, model, promptPath);
       
       // 3. Create the AgentSession in store

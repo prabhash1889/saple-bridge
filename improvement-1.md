@@ -371,6 +371,18 @@ This is not a remote SAPLE workspace. Files, Git, memory, Kanban, and Review rem
 
 ## Priority 8 - Dynamic model selection for agents
 
+> **Status: Done.** The free-text model inputs in the Swarm wizard (`RosterStep.tsx`), task dialog
+> (`TaskDialog.tsx`), and template editor (`SwarmTemplateEditor.tsx`) are now the shared
+> `ModelCombobox` - a native `<input list>` + `<datalist>` (dropdown plus free text, keyboard/a11y
+> for free). Options come from three layers assembled in `modelCatalogStore.ts`: stable CLI aliases
+> (`PROVIDER_MODEL_ALIASES` in `providerMeta.ts`; only Claude's `default`/`sonnet`/`opus`/`haiku`
+> plus `openrouter/auto` - no version-pinned ids), persisted recents (recorded on launch at the
+> swarm and task choke points), and live API discovery via the new Rust `list_provider_models`
+> command (`models.rs`, ureq + keychain key, best-effort - empty on no-key/offline/unknown provider,
+> so it silently falls back). A value not in the assembled catalog (once discovery resolves) shows a
+> warning chip before launch. `is_safe_model` in `pty.rs` is untouched and remains the launch gate.
+> Covered by `models.rs` parser/guard tests and `modelCatalogStore.test.ts` (assembly + recents).
+
 ### Problem
 
 The model field in the Swarm wizard, task dialog, and template editor is free text. Users have no way to discover valid ids, and stale saved templates/swarm state can still carry rotted ids (e.g. `gpt-4o`) that launch with a wrong `--model` flag. Provider CLIs expose no "list models" command, so purely CLI-driven discovery is not available; the dropdown must be assembled from other live sources.

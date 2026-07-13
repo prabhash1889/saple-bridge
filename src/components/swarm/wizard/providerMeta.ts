@@ -58,3 +58,22 @@ export const PROVIDER_DEFAULT_MODEL: Record<AgentProvider, string> = {
   grok: 'default',
   custom: 'default',
 };
+
+// Stable, non-rotting CLI aliases per provider — the always-offline first layer of the model
+// combobox (P8). Only aliases the CLI documents as durable belong here; version-pinned ids rot and
+// live in the API-discovery layer or recents instead. `default`/`openrouter/auto` mean "let the CLI
+// pick" (spawn_pty omits `--model`) and stay first so the safe choice is preselected.
+export const PROVIDER_MODEL_ALIASES: Record<AgentProvider, string[]> = {
+  // Claude Code's documented model aliases; they track each tier's current model without pinning.
+  claude: ['default', 'sonnet', 'opus', 'haiku'],
+  codex: ['default'],
+  gemini: ['default'],
+  openrouter: ['openrouter/auto'],
+  opencode: ['default'],
+  cursor: ['default'],
+  droid: ['default'],
+  copilot: ['default'],
+  pi: ['default'],
+  grok: ['default'],
+  custom: ['default'],
+};

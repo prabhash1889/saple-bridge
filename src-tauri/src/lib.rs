@@ -2,6 +2,7 @@ mod claude_context;
 mod pty;
 mod project;
 mod keychain;
+mod models;
 mod memory;
 mod git;
 mod review;
@@ -102,6 +103,7 @@ pub fn run() {
             keychain::has_api_key,
             keychain::delete_api_key,
             keychain::test_provider_connection,
+            models::list_provider_models,
             memory::get_memory_graph,
             memory::create_memory_snapshot,
             memory::restore_memory_snapshot,

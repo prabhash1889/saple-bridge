@@ -3,6 +3,7 @@ import { Plus, Trash, Save, AlertCircle } from 'lucide-react';
 import { SwarmTemplate, SwarmAgent, useSwarmStore, AgentRole } from '../../stores/swarmStore';
 import { AgentProvider } from '../../types/provider';
 import { PROVIDER_ORDER, PROVIDER_LABELS, PROVIDER_DEFAULT_MODEL } from './wizard/providerMeta';
+import { ModelCombobox } from '../common/ModelCombobox';
 import { invoke } from '@tauri-apps/api/core';
 
 interface SwarmTemplateEditorProps {
@@ -222,10 +223,10 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
                   </div>
                   <div className="flex-1">
                     <label style={labelStyle}>Model</label>
-                    <input 
-                      type="text" 
-                      value={agent.model} 
-                      onChange={e => handleUpdateAgent(agent.id, { model: e.target.value })}
+                    <ModelCombobox
+                      provider={agent.provider || 'codex'}
+                      value={agent.model}
+                      onChange={model => handleUpdateAgent(agent.id, { model })}
                       style={inputStyle}
                     />
                   </div>

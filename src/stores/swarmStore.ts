@@ -9,6 +9,7 @@ import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
 import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
 import { useTerminalStore } from './terminalStore';
 import { useAgentSessionStore } from './agentSessionStore';
+import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 
@@ -325,6 +326,8 @@ ${signalsSection}`;
     // 1. Spawn terminal pane. spawn_pty launches the provider CLI with this prompt
     // file piped in, so no separate launch command is written to the PTY.
     const provider = agent.provider || 'codex';
+    // Remember the launched model so the picker resurfaces it next time (P8).
+    useModelCatalogStore.getState().recordUsed(provider, agent.model);
     const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile);
 
     // 2. Set terminal metadata
