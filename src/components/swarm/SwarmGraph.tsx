@@ -53,9 +53,11 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
   const getStatusColor = (status: AgentStatus) => {
     switch (status) {
       case 'running': return 'var(--accent)';
+      case 'starting': return 'var(--accent)';
       case 'done': return 'var(--color-success)';
       case 'failed': return 'var(--color-danger)';
       case 'review': return 'var(--color-warning)';
+      case 'waiting': return 'var(--color-info)';
       case 'blocked': return 'var(--text-muted)';
       default: return 'var(--border)';
     }
@@ -184,6 +186,7 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
             <div style={columnNodesContainerStyle}>
               {columnAgents.map(agent => {
                 const isSelected = selectedAgentId === agent.id;
+                const isRunning = agent.status === 'running' || agent.status === 'starting';
                 const borderClr = getStatusColor(agent.status);
 
                 return (
@@ -191,7 +194,7 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
                     key={agent.id}
                     ref={el => { nodeRefs.current[agent.id] = el; }}
                     onClick={() => onSelectAgent(agent.id)}
-                    className={`swarm-node-card${isSelected ? ' is-selected' : ''}`}
+                    className={`swarm-node-card${isSelected ? ' is-selected' : ''}${isRunning ? ' is-running' : ''}`}
                     style={{ '--node-border': borderClr } as React.CSSProperties}
                   >
                     <div style={nodeHeaderStyle}>
@@ -278,11 +281,11 @@ const columnStyle: React.CSSProperties = {
 const columnHeaderStyle: React.CSSProperties = {
   fontSize: '11px',
   fontWeight: 700,
-  color: 'var(--text-muted)',
+  color: 'var(--accent-swarm)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
   textAlign: 'center',
-  borderBottom: '1px solid var(--border)',
+  borderBottom: '1px solid rgba(167, 139, 250, 0.35)',
   paddingBottom: '8px',
 };
 

@@ -144,9 +144,15 @@
 }
 
 /* --- Graph node cards --- */
-/* --node-border carries the per-status color via inline style. */
+/* --node-border carries the per-status color via inline style. The card surface
+   picks up a soft wash of the same status color so state reads at a glance
+   instead of living only in the 1px border. */
 .swarm-node-card {
-  background: var(--bg-surface);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--node-border, var(--border)) 12%, var(--bg-surface)) 0%,
+    var(--bg-surface) 62%
+  );
   border: 1px solid var(--node-border, var(--border));
   border-radius: var(--radius-md);
   padding: 12px;
@@ -157,6 +163,22 @@
   box-shadow: var(--shadow-sm);
   transition: border-color 0.16s ease, transform 0.16s ease,
     box-shadow 0.16s ease;
+}
+
+/* Running/starting agents breathe so active work is visible from across the room. */
+.swarm-node-card.is-running {
+  animation: swarm-node-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes swarm-node-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--node-border, var(--accent)) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--node-border, var(--accent)) 10%, transparent),
+      0 0 18px color-mix(in srgb, var(--node-border, var(--accent)) 28%, transparent);
+  }
 }
 
 .swarm-node-card:hover {
