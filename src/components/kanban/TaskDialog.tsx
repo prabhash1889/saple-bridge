@@ -79,7 +79,7 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
   // Agent configuration
   const [agentRole, setAgentRole] = useState<AgentConfig['role']>('builder');
   const [agentProvider, setAgentProvider] = useState<AgentProvider>('codex');
-  const [agentModel, setAgentModel] = useState('gpt-4o');
+  const [agentModel, setAgentModel] = useState('default');
   const [agentPrompt, setAgentPrompt] = useState(ROLE_PROMPTS.custom.prompt);
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, isOpen, onClose);
@@ -116,7 +116,7 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
       setAcceptanceCriteria('');
       setAgentRole(ROLE_PROMPTS.custom.role);
       setAgentProvider('codex');
-      setAgentModel('gpt-4o');
+      setAgentModel('default');
       setAgentPrompt(ROLE_PROMPTS.custom.prompt);
     }
   }, [taskToEdit, isOpen]);
@@ -380,45 +380,17 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
 
               <div className="task-dialog-field">
                 <label>LLM Model</label>
-                <input 
-                  value={agentModel} 
+                <input
+                  value={agentModel}
                   onChange={e => setAgentModel(e.target.value)}
-                  placeholder="Enter model (e.g. gpt-4o, claude-3-5-sonnet)"
+                  placeholder="Model id, or 'default' to let the CLI choose"
                   list="recommended-models"
                 />
+                {/* Free-text: 'default' omits the --model flag so the CLI runs its own current
+                    model. A version-pinned suggestion list here would just rot, so keep only the
+                    non-rotting default and let users type a specific model when they want one. */}
                 <datalist id="recommended-models">
-                  {agentProvider === 'codex' && (
-                    <>
-                      <option value="gpt-4o" />
-                      <option value="o3-mini" />
-                      <option value="gpt-4" />
-                      <option value="gpt-3.5-turbo" />
-                    </>
-                  )}
-                  {agentProvider === 'claude' && (
-                    <>
-                      <option value="claude-3-5-sonnet" />
-                      <option value="claude-3-opus" />
-                      <option value="claude-3-5-haiku" />
-                    </>
-                  )}
-                  {agentProvider === 'gemini' && (
-                    <>
-                      <option value="gemini-2.5-pro" />
-                      <option value="gemini-2.5-flash" />
-                      <option value="gemini-1.5-pro" />
-                    </>
-                  )}
-                  {agentProvider === 'opencode' && (
-                    <>
-                      <option value="opencode-default" />
-                    </>
-                  )}
-                  {agentProvider === 'pi' && (
-                    <>
-                      <option value="default" />
-                    </>
-                  )}
+                  <option value="default" />
                 </datalist>
               </div>
             </div>

@@ -120,12 +120,13 @@ pub struct McpStatus {
 }
 
 fn default_model_by_provider() -> HashMap<String, String> {
+    // "default" means the provider CLI picks its own current model (spawn_pty omits the --model
+    // flag for "default"). Preferred over pinning a version-stamped id that silently rots as new
+    // models ship; a concrete model belongs only in an explicit per-agent override.
     let mut m = HashMap::new();
-    m.insert("codex".to_string(), "gpt-4o".to_string());
-    m.insert("claude".to_string(), "claude-sonnet-4-20250514".to_string());
-    m.insert("gemini".to_string(), "gemini-2.5-pro".to_string());
-    m.insert("opencode".to_string(), "default".to_string());
-    m.insert("pi".to_string(), "default".to_string());
+    for provider in ["codex", "claude", "gemini", "opencode", "pi"] {
+        m.insert(provider.to_string(), "default".to_string());
+    }
     m
 }
 

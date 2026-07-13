@@ -36,10 +36,17 @@ export const PROVIDER_ORDER: AgentProvider[] = [
 export const EXPERIMENTAL_PROVIDERS = new Set<AgentProvider>(['cursor', 'copilot']);
 
 // Default model per provider, used when generating a roster or switching CLI.
+//
+// `'default'` means "let the CLI pick its own current model": spawn_pty omits the `--model` flag
+// for `'default'`/empty (see pty.rs `use_model_flag`), so the agent always launches on whatever
+// its CLI ships as current. That is deliberately preferred over pinning a version-stamped id here,
+// which silently rots as providers release new models. A concrete id belongs only in a user's
+// explicit per-agent override. `openrouter/auto` is a routing directive (auto-selects a model),
+// not a pinned version, so it stays — and openrouter has no CLI, so it never actually launches.
 export const PROVIDER_DEFAULT_MODEL: Record<AgentProvider, string> = {
-  claude: 'claude-sonnet-4-20250514',
-  codex: 'gpt-4o',
-  gemini: 'gemini-2.5-pro',
+  claude: 'default',
+  codex: 'default',
+  gemini: 'default',
   openrouter: 'openrouter/auto',
   opencode: 'default',
   cursor: 'default',

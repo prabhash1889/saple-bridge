@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Plus, Trash, Save, AlertCircle } from 'lucide-react';
 import { SwarmTemplate, SwarmAgent, useSwarmStore, AgentRole } from '../../stores/swarmStore';
 import { AgentProvider } from '../../types/provider';
-import { PROVIDER_ORDER, PROVIDER_LABELS } from './wizard/providerMeta';
+import { PROVIDER_ORDER, PROVIDER_LABELS, PROVIDER_DEFAULT_MODEL } from './wizard/providerMeta';
 import { invoke } from '@tauri-apps/api/core';
 
 interface SwarmTemplateEditorProps {
@@ -36,7 +36,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
         name: 'New Agent',
         role: 'builder' as AgentRole,
         provider: 'codex',
-        model: 'gpt-4o',
+        model: PROVIDER_DEFAULT_MODEL.codex,
         dependencies: [],
         systemPrompt: 'You are a helpful coding agent.'
       }

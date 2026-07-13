@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AgentProvider } from '../types/provider';
+import { PROVIDER_DEFAULT_MODEL } from '../components/swarm/wizard/providerMeta';
 
 interface ProviderEntry {
   provider: AgentProvider;
@@ -41,16 +42,18 @@ function keychainService(provider: AgentProvider): string {
   return `${KEYCHAIN_SERVICE_PREFIX}${provider}_api_key`;
 }
 
+// `defaultModel` is sourced from PROVIDER_DEFAULT_MODEL (the single source of truth in
+// providerMeta) so model defaults aren't duplicated — and re-stamped stale — across stores.
 const DEFAULT_PROVIDERS: ProviderEntry[] = [
-  { provider: 'codex', label: 'Codex', cliCommand: 'codex --version', defaultModel: 'gpt-4o', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'claude', label: 'Claude', cliCommand: 'claude --version', defaultModel: 'claude-sonnet-4-20250514', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'gemini', label: 'Gemini', cliCommand: 'gemini --version', defaultModel: 'gemini-2.5-pro', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'openrouter', label: 'OpenRouter', cliCommand: '', defaultModel: 'openrouter/auto', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'opencode', label: 'OpenCode', cliCommand: 'opencode --version', defaultModel: 'default', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'cursor', label: 'Cursor', cliCommand: 'cursor-agent --version', defaultModel: 'default', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'droid', label: 'Droid', cliCommand: 'droid --version', defaultModel: 'default', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'copilot', label: 'Copilot', cliCommand: 'gh copilot --version', defaultModel: 'default', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'pi', label: 'Pi', cliCommand: 'pi --version', defaultModel: 'default', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'codex', label: 'Codex', cliCommand: 'codex --version', defaultModel: PROVIDER_DEFAULT_MODEL.codex, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'claude', label: 'Claude', cliCommand: 'claude --version', defaultModel: PROVIDER_DEFAULT_MODEL.claude, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'gemini', label: 'Gemini', cliCommand: 'gemini --version', defaultModel: PROVIDER_DEFAULT_MODEL.gemini, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'openrouter', label: 'OpenRouter', cliCommand: '', defaultModel: PROVIDER_DEFAULT_MODEL.openrouter, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'opencode', label: 'OpenCode', cliCommand: 'opencode --version', defaultModel: PROVIDER_DEFAULT_MODEL.opencode, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'cursor', label: 'Cursor', cliCommand: 'cursor-agent --version', defaultModel: PROVIDER_DEFAULT_MODEL.cursor, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'droid', label: 'Droid', cliCommand: 'droid --version', defaultModel: PROVIDER_DEFAULT_MODEL.droid, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'copilot', label: 'Copilot', cliCommand: 'gh copilot --version', defaultModel: PROVIDER_DEFAULT_MODEL.copilot, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'pi', label: 'Pi', cliCommand: 'pi --version', defaultModel: PROVIDER_DEFAULT_MODEL.pi, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
   { provider: 'custom', label: 'Custom', cliCommand: '', defaultModel: '', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
 ];
 
