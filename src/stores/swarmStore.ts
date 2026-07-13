@@ -11,6 +11,7 @@ import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useAgentSessionStore } from './agentSessionStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
+import { contextBriefSection } from '../lib/contextBrief';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 
@@ -337,6 +338,7 @@ ${agent.systemPrompt}
 - Mailbox Path: .saple/swarm/mailbox/${agent.id}.md (Write your updates/output here)
 - Handoff Path: .saple/swarm/handoffs/${agent.id}-to-[next_agent].json
 ${skillsSection}${contextSection}
+${contextBriefSection({ role: agent.role, agentId: agent.id })}
 ${signalsSection}`;
 
     const promptFile = `.saple/agents/prompts/swarm_${agent.id}.md`;

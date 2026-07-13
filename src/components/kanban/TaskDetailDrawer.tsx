@@ -11,6 +11,7 @@ import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useFocusTrap } from '../../lib/useFocusTrap';
+import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
 
 interface TaskDetailDrawerProps {
   task: Task | null;
@@ -132,26 +133,9 @@ export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen
       const sessionId = task.sessionId || createId('agent');
       const promptPath = `.saple/agents/prompts/${sessionId}.md`;
 
-      const systemPrompt = task.agentConfig?.systemPrompt || 'You are an autonomous coding builder.';
       const model = task.agentConfig?.model || 'default';
       const role = task.agentConfig?.role || 'builder';
-      const acceptance = task.acceptanceCriteria || [];
-      const targets = task.targetFiles || [];
-
-      const promptContent = `# Task: ${task.title}
-## Description
-${task.description || 'No description provided.'}
-
-## Acceptance Criteria
-${acceptance.length > 0 ? acceptance.map(a => `- ${a}`).join('\n') : '* None specified.'}
-
-## Target Files
-${targets.length > 0 ? targets.map(t => `- ${t}`).join('\n') : '* None specified.'}
-
-## Agent Role Instructions
-Role: ${role}
-Instructions: ${systemPrompt}
-`;
+      const promptContent = buildTaskAgentPrompt(task);
 
       await invoke('write_project_file', {
         projectPath: currentProjectPath,

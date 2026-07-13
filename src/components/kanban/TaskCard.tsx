@@ -9,6 +9,7 @@ import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useModelCatalogStore } from '../../stores/modelCatalogStore';
+import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
 
 interface TaskCardProps {
   task: Task;
@@ -50,37 +51,9 @@ const TaskCardComponent: React.FC<TaskCardProps> = ({ task, selected = false, on
       const sessionId = createId('agent');
       const promptPath = `.saple/agents/prompts/${sessionId}.md`;
 
-      const systemPrompt = task.agentConfig?.systemPrompt || 'You are an autonomous coding builder.';
       const model = task.agentConfig?.model || 'default';
       const role = task.agentConfig?.role || 'builder';
-      const acceptance = task.acceptanceCriteria || [];
-      const targets = task.targetFiles || [];
-
-      const promptContent = `# Task: ${task.title}
-
-## Description
-${task.description || 'No description provided.'}
-
-## Acceptance Criteria
-${acceptance.length > 0 ? acceptance.map(a => `- ${a}`).join('\n') : '* None specified.'}
-
-## Target Files
-${targets.length > 0 ? targets.map(t => `- ${t}`).join('\n') : '* None specified.'}
-
-## Agent Role Instructions
-Role: ${role}
-Instructions: ${systemPrompt}
-
-## Memory & MCP Instructions
-You can read and write workspace memories under the \`.saple/memory\` directory using your memory tools or the MCP memory server (saple-memory). Keep the project knowledge updated.
-
-## Review Signal Instructions
-When you have finished the task and verified it, print a clear signal indicating completion.
-You MUST output one of the following exact review trigger patterns on a line by itself:
-- [REVIEW_REQUESTED]
-- ## REVIEW REQUIRED
-- Task complete. Review required.
-`;
+      const promptContent = buildTaskAgentPrompt(task);
 
       // 1. Write prompt file to project workspace
       await invoke('write_project_file', {

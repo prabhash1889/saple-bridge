@@ -14,6 +14,7 @@ import { useFileStore } from '../../stores/fileStore';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
 import { useFocusTrap } from '../../lib/useFocusTrap';
+import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -153,11 +154,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     try {
       const sessionId = createId('agent');
       const promptPath = `.saple/agents/prompts/${sessionId}.md`;
-      const systemPrompt = task.agentConfig?.systemPrompt || 'You are an autonomous coding builder.';
       const model = task.agentConfig?.model || 'default';
-      const role = task.agentConfig?.role || 'builder';
-
-      const promptContent = `# Task: ${task.title}\n\n## Instructions\nRole: ${role}\nInstructions: ${systemPrompt}`;
+      const promptContent = buildTaskAgentPrompt(task);
 
       await invoke('write_project_file', {
         projectPath: currentProjectPath,
