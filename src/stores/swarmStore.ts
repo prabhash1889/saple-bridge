@@ -7,10 +7,11 @@ import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
 import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
-import { useTerminalStore } from './terminalStore';
+import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useAgentSessionStore } from './agentSessionStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
+import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
@@ -249,6 +250,28 @@ const createMarker = (): string => {
   return Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
 };
 
+// P13: pty-exits for panes whose project isn't the loaded one, recorded by terminalStore and
+// replayed by loadSwarmState (after the marker-tail check, which wins when both exist). In-memory
+// on purpose: the switch-and-return scenario lives within one app session; across a restart the
+// PTYs are dead anyway and the existing orphan reconciliation applies.
+const pendingAgentExits = new Map<string, Map<string, number | null | undefined>>();
+
+export const recordPendingAgentExit = (
+  projectPath: string,
+  terminalId: string,
+  exitCode: number | null | undefined,
+): void => {
+  const forProject = pendingAgentExits.get(projectPath) ?? new Map();
+  forProject.set(terminalId, exitCode);
+  pendingAgentExits.set(projectPath, forProject);
+};
+
+const consumePendingAgentExits = (projectPath: string) => {
+  const forProject = pendingAgentExits.get(projectPath) ?? new Map<string, number | null | undefined>();
+  pendingAgentExits.delete(projectPath);
+  return forProject;
+};
+
 // Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
 // updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
 // launch the same agent's PTY + prompt file twice. Concurrent triggers coalesce into one queued
@@ -323,6 +346,15 @@ ${signalsSection}`;
       content: promptContent
     });
 
+    // Clear any stale structured outcome from a previous attempt: if this relaunch finishes
+    // without writing its own outcome, completion must not pick up the old attempt's file.
+    // `{}` parses to "no outcome" (parseAgentOutcome returns null). Best-effort.
+    await invoke('write_project_file', {
+      projectPath,
+      filePath: `.saple/swarm/outcomes/${agent.id}.json`,
+      content: '{}',
+    }).catch(() => {});
+
     // 1. Spawn terminal pane. spawn_pty launches the provider CLI with this prompt
     // file piped in, so no separate launch command is written to the PTY.
     const provider = agent.provider || 'codex';
@@ -382,12 +414,38 @@ export const useSwarmStore = create<SwarmState>()(
           // no longer exists (app restarted mid-run). Left alone, those zombies stay "running"
           // forever and dependents never start. Downgrade them to failed (Relaunch stays one
           // click away) and pause a running swarm so continuing is a deliberate Resume.
+          //
+          // P13, checked first: an agent may have FINISHED while this project wasn't loaded — its
+          // signal was dropped by the live handlers on purpose. Recover it here instead of failing
+          // it: the scoped marker still sits in the pane's rolling signal tail (fast path), and a
+          // pty-exit that fired while away was recorded as a pending exit (safety net). Recovered
+          // transitions run through updateAgentStatus below so completion side effects (outcome
+          // artifacts, run close-out, scheduler advance) all fire exactly as if the user had been
+          // watching.
           const loadedAgents: SwarmAgent[] = parsed.agents || [];
           const liveSessions = useTerminalStore.getState().sessions;
+          const pendingExits = consumePendingAgentExits(projectPath);
           let orphaned = false;
+          const recovered: Array<{ agentId: string; status: AgentStatus; statusReason?: string }> = [];
           const reconciledAgents = loadedAgents.map((agent) => {
             if (agent.status !== 'running' && agent.status !== 'starting') return agent;
-            if (agent.terminalId && liveSessions[agent.terminalId]) return agent;
+            if (agent.terminalId) {
+              const tail = getPaneSignalTail(agent.terminalId);
+              if (tail) {
+                const scopedReview = hasReviewSignal(tail, agent.marker);
+                const recoveredStatus = getSwarmStatusFromOutput(tail, scopedReview, agent.marker);
+                if (recoveredStatus) {
+                  recovered.push({ agentId: agent.id, status: recoveredStatus });
+                  return agent;
+                }
+              }
+              if (pendingExits.has(agent.terminalId)) {
+                const transition = exitFallbackTransition(pendingExits.get(agent.terminalId));
+                recovered.push({ agentId: agent.id, ...transition });
+                return agent;
+              }
+              if (liveSessions[agent.terminalId]) return agent;
+            }
             orphaned = true;
             return {
               ...agent,
@@ -413,6 +471,16 @@ export const useSwarmStore = create<SwarmState>()(
           });
           if (orphaned) {
             await get().saveSwarmState(projectPath);
+          }
+          // P13: replay recovered transitions now that this project's agents are loaded. Each one
+          // persists, notifies, closes out the run/outcome, and advances dependents.
+          for (const r of recovered) {
+            await get().updateAgentStatus(
+              projectPath,
+              r.agentId,
+              r.status,
+              r.statusReason ? { statusReason: r.statusReason } : undefined,
+            );
           }
         } catch {
           // Reset if file not found

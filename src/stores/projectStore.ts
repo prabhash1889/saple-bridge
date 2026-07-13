@@ -163,36 +163,56 @@ export const useProjectStore = create<ProjectState>()(
 
         setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
 
-        setProjectPath: (path) => set((state) => {
-          if (!path) {
-            return {
-              currentProjectPath: null,
-              currentProjectName: null,
-              currentWorkspaceId: null,
-              workspaceConfig: null,
-              workspaceSummary: null,
-            };
+        setProjectPath: (path) => {
+          // P13: switching away from a project with a running swarm is safe — its PTYs keep
+          // running and dropped signals are recovered when the project reloads — but say so,
+          // instead of letting the swarm room silently look reset. Dynamic import: swarmStore
+          // reaches this store through terminalStore, so a static import would be a cycle.
+          const previous = get().currentProjectPath;
+          if (previous && path !== previous) {
+            void import('./swarmStore').then(({ useSwarmStore }) => {
+              const swarm = useSwarmStore.getState();
+              if (swarm.loadedProjectPath === previous && swarm.status === 'running') {
+                void import('./notificationStore').then(({ useNotificationStore }) => {
+                  useNotificationStore.getState().info(
+                    `Swarm "${swarm.swarmName || 'run'}" continues in the background`,
+                    'Its agents keep running; progress is picked up when you return to that project.',
+                  );
+                });
+              }
+            }).catch(() => {});
           }
-          const existing = state.openWorkspaces.find((w) => w.path === path);
-          if (existing) {
+          set((state) => {
+            if (!path) {
+              return {
+                currentProjectPath: null,
+                currentProjectName: null,
+                currentWorkspaceId: null,
+                workspaceConfig: null,
+                workspaceSummary: null,
+              };
+            }
+            const existing = state.openWorkspaces.find((w) => w.path === path);
+            if (existing) {
+              return {
+                currentProjectPath: path,
+                currentProjectName: existing.name,
+                currentWorkspaceId: existing.id,
+              };
+            }
+            const instance: WorkspaceInstance = {
+              id: createId('ws'),
+              path,
+              name: makeWorkspaceName(path, state.openWorkspaces),
+            };
             return {
               currentProjectPath: path,
-              currentProjectName: existing.name,
-              currentWorkspaceId: existing.id,
+              currentProjectName: instance.name,
+              currentWorkspaceId: instance.id,
+              openWorkspaces: [...state.openWorkspaces, instance],
             };
-          }
-          const instance: WorkspaceInstance = {
-            id: createId('ws'),
-            path,
-            name: makeWorkspaceName(path, state.openWorkspaces),
-          };
-          return {
-            currentProjectPath: path,
-            currentProjectName: instance.name,
-            currentWorkspaceId: instance.id,
-            openWorkspaces: [...state.openWorkspaces, instance],
-          };
-        }),
+          });
+        },
 
         // Explicit "add workspace" action: always creates a NEW instance, so the same
         // folder can be opened multiple times (numbered in the sidebar).

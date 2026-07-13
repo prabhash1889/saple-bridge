@@ -26,6 +26,8 @@ const addPaneMock = vi.hoisted(() => vi.fn());
 const removePaneMock = vi.hoisted(() => vi.fn());
 const terminalSessions = vi.hoisted(() => ({} as Record<string, unknown>));
 const maxPaneLimitRef = vi.hoisted(() => ({ value: 16 }));
+// Per-pane rolling signal tails, as terminalStore would hold them (P13 recovery reads these).
+const signalTails = vi.hoisted(() => ({} as Record<string, string>));
 vi.mock('./terminalStore', () => ({
   useTerminalStore: {
     getState: () => ({
@@ -36,6 +38,7 @@ vi.mock('./terminalStore', () => ({
       sessions: terminalSessions,
     }),
   },
+  getPaneSignalTail: (paneId: string) => signalTails[paneId] ?? '',
 }));
 
 vi.mock('./agentSessionStore', () => ({
@@ -52,7 +55,7 @@ vi.mock('../lib/desktopNotifications', () => ({
   notifyAgentStatusChanged: vi.fn(),
 }));
 
-import { useSwarmStore, type SwarmAgent, type AgentStatus } from './swarmStore';
+import { useSwarmStore, recordPendingAgentExit, type SwarmAgent, type AgentStatus } from './swarmStore';
 
 const PROJECT = 'C:/proj';
 
@@ -94,6 +97,7 @@ beforeEach(() => {
   removePaneMock.mockReset().mockResolvedValue(undefined);
   maxPaneLimitRef.value = 16;
   for (const key of Object.keys(terminalSessions)) delete terminalSessions[key];
+  for (const key of Object.keys(signalTails)) delete signalTails[key];
   seed([]);
 });
 
@@ -270,5 +274,83 @@ describe('loadSwarmState restart reconciliation', () => {
 
     expect(useSwarmStore.getState().status).toBe('idle');
     expect(useSwarmStore.getState().activeAgents).toEqual([]);
+  });
+});
+
+describe('loadSwarmState cross-project signal recovery (P13)', () => {
+  const diskState = (agents: SwarmAgent[], status: string) =>
+    JSON.stringify({
+      swarmId: 'swarm-disk',
+      swarmName: 'Disk',
+      mission: 'm',
+      skills: [],
+      contextFiles: [],
+      templateId: null,
+      agents,
+      status,
+    });
+
+  const mockDisk = (agents: SwarmAgent[]) =>
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'read_swarm_state') return Promise.resolve(diskState(agents, 'running'));
+      if (cmd === 'read_project_file') return Promise.reject(new Error('not found'));
+      return Promise.resolve(undefined);
+    });
+
+  it('completes an agent whose scoped done marker arrived while another project was open', async () => {
+    terminalSessions['pane-a'] = { id: 'pane-a' };
+    signalTails['pane-a'] = 'final output\n[AGENT_DONE:tok1234]\n';
+    mockDisk([agent('a', [], 'running', { terminalId: 'pane-a', marker: 'tok1234' })]);
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    await vi.waitFor(() => expect(getAgent('a').status).toBe('done'));
+    expect(useSwarmStore.getState().status).toBe('completed');
+  });
+
+  it('a recovered completion advances waiting dependents', async () => {
+    terminalSessions['pane-a'] = { id: 'pane-a' };
+    signalTails['pane-a'] = '[AGENT_DONE:tok1234]\n';
+    mockDisk([
+      agent('a', [], 'running', { terminalId: 'pane-a', marker: 'tok1234' }),
+      agent('b', ['a'], 'waiting'),
+    ]);
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    await vi.waitFor(() => expect(getAgent('a').status).toBe('done'));
+    await vi.waitFor(() => expect(getAgent('b').status).toBe('running'));
+  });
+
+  it('applies a pending exit recorded while the project was not loaded', async () => {
+    terminalSessions['pane-b'] = { id: 'pane-b' };
+    recordPendingAgentExit(PROJECT, 'pane-b', 0);
+    mockDisk([agent('b', [], 'running', { terminalId: 'pane-b', marker: 'tok9999' })]);
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    await vi.waitFor(() => expect(getAgent('b').status).toBe('review'));
+    expect(getAgent('b').statusReason).toMatch(/without a completion signal/i);
+  });
+
+  it('the marker tail wins over a pending exit when both exist', async () => {
+    terminalSessions['pane-c'] = { id: 'pane-c' };
+    signalTails['pane-c'] = '[AGENT_FAILED:tok5555]\n';
+    recordPendingAgentExit(PROJECT, 'pane-c', 0);
+    mockDisk([agent('c', [], 'running', { terminalId: 'pane-c', marker: 'tok5555' })]);
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    await vi.waitFor(() => expect(getAgent('c').status).toBe('failed'));
+  });
+
+  it('a bare marker from another pane cannot complete a scoped agent on recovery', async () => {
+    terminalSessions['pane-d'] = { id: 'pane-d' };
+    signalTails['pane-d'] = '[AGENT_DONE]\n'; // unscoped — must not advance a marker-scoped agent
+    mockDisk([agent('d', [], 'running', { terminalId: 'pane-d', marker: 'tok7777' })]);
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    expect(getAgent('d').status).toBe('running');
   });
 });

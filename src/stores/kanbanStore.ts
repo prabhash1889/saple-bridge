@@ -4,6 +4,7 @@ import { nowIso } from '../lib/date';
 import { toErrorMessage } from '../lib/errors';
 import { createId } from '../lib/id';
 import { enqueueWrite } from '../lib/writeQueue';
+import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { Task, TaskColumn, TaskPriority } from '../types/task';
 export type { AgentConfig, Task, TaskColumn, TaskPriority } from '../types/task';
 
@@ -55,6 +56,24 @@ const saveTasks = (projectPath: string, tasks: Task[]) =>
     }),
   );
 
+// P13: review signals from task panes whose project isn't the loaded one. The terminal handlers
+// can't move a task they can't see, so they queue the pane id here (keyed by project path) and
+// loadTasks applies the move when that project's tasks come in. In-memory by design — across a
+// restart the PTY is gone and the exit-fallback story starts over.
+const pendingTaskReviews = new Map<string, Set<string>>();
+
+export const recordPendingTaskReview = (projectPath: string, terminalId: string): void => {
+  const forProject = pendingTaskReviews.get(projectPath) ?? new Set();
+  forProject.add(terminalId);
+  pendingTaskReviews.set(projectPath, forProject);
+};
+
+const consumePendingTaskReviews = (projectPath: string): Set<string> => {
+  const forProject = pendingTaskReviews.get(projectPath) ?? new Set<string>();
+  pendingTaskReviews.delete(projectPath);
+  return forProject;
+};
+
 export const useKanbanStore = create<KanbanState>((set, get) => ({
   tasks: [],
   loadedProjectPath: null,
@@ -75,6 +94,15 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
         await saveTasks(projectPath, tasks);
       }
       set({ tasks, loadedProjectPath: projectPath, loading: false });
+      // P13: apply review moves that fired while this project wasn't loaded. Only panes that a
+      // task actually links matter; anything else queued (interactive terminals) is dropped.
+      for (const terminalId of consumePendingTaskReviews(projectPath)) {
+        const task = get().tasks.find((t) => t.terminalId === terminalId);
+        if (task && task.column === 'progress') {
+          await get().updateTask(projectPath, task.id, { column: 'review' });
+          notifyTaskReadyForReview(task.title);
+        }
+      }
     } catch (err: unknown) {
       // If file not found, it's a new project; initialize empty task list
       const message = toErrorMessage(err);

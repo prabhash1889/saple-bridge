@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfirmStore } from './confirmStore';
-import { useKanbanStore } from './kanbanStore';
+import { useKanbanStore, recordPendingTaskReview } from './kanbanStore';
 import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
@@ -142,6 +142,11 @@ const appendSignalTail = (paneId: string, data: string) => {
   paneSignalTails.set(paneId, next);
   return next;
 };
+
+// P13: the tail is also the recovery record for lifecycle markers that fired while the pane's
+// project wasn't the loaded one — swarmStore re-reads it on loadSwarmState to catch agents that
+// finished (marker still in the tail) while the user was in a different project.
+export const getPaneSignalTail = (paneId: string): string => paneSignalTails.get(paneId) ?? '';
 
 let outputFlushFrame: number | null = null;
 let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -395,17 +400,30 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         const signalTail = appendSignalTail(id, data);
         if (!mightContainSignal(signalTail)) return;
 
-        const projectPath = useProjectStore.getState().currentProjectPath;
+        // P13: route lifecycle signals by the PANE's own project, not whichever project the UI
+        // currently shows — a swarm/task agent keeps running (and finishing) after the user
+        // switches folders, and its signal must not be applied to (or dropped by) the wrong
+        // project's stores.
+        const projectPath = get().sessions[id]?.workspacePath || useProjectStore.getState().currentProjectPath;
 
         // Review-request + kanban run on the bare (unscoped) markers: task panes and interactive
         // terminals have no per-agent marker to scope against.
         const reviewMatched = hasReviewSignal(signalTail);
         if (reviewMatched) {
           get().requestReview(id);
-          const task = useKanbanStore.getState().tasks.find((t) => t.terminalId === id);
-          if (projectPath && task && task.column !== 'review') {
-            void useKanbanStore.getState().updateTask(projectPath, task.id, { column: 'review' });
-            notifyTaskReadyForReview(task.title);
+          if (projectPath) {
+            const kanban = useKanbanStore.getState();
+            if (kanban.loadedProjectPath === projectPath) {
+              const task = kanban.tasks.find((t) => t.terminalId === id);
+              if (task && task.column !== 'review') {
+                void kanban.updateTask(projectPath, task.id, { column: 'review' });
+                notifyTaskReadyForReview(task.title);
+              }
+            } else {
+              // Pane belongs to a project whose kanban isn't loaded — queue the review move;
+              // loadTasks applies it (if a task actually links this pane) when the project opens.
+              recordPendingTaskReview(projectPath, id);
+            }
           }
         }
 
@@ -416,6 +434,9 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           swarmStorePromise ??= import('./swarmStore');
           swarmStorePromise
             .then(({ useSwarmStore }) => {
+              // P13: only the loaded project's swarm can transition here. Another project's agent
+              // recovers from this pane's signal tail when its swarm loads (see loadSwarmState).
+              if (useSwarmStore.getState().loadedProjectPath !== projectPath) return;
               const linkedAgent = useSwarmStore.getState().activeAgents.find((agent) => agent.terminalId === id);
               if (!linkedAgent) return;
               const scopedReview = hasReviewSignal(signalTail, linkedAgent.marker);
@@ -441,7 +462,8 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         get().appendOutput(id, '\r\n\x1b[2m[process exited — close this pane to start a new one]\x1b[0m\r\n');
         set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
 
-        const projectPath = useProjectStore.getState().currentProjectPath;
+        // P13: same pane-project routing as the output handler.
+        const projectPath = get().sessions[id]?.workspacePath || useProjectStore.getState().currentProjectPath;
         if (!projectPath) return;
 
         // Completion fallback: lifecycle markers are the fast path, process exit is the safety
@@ -450,7 +472,13 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         // confirms; auto-approve agents advance straight to done), a non-zero exit fails it.
         swarmStorePromise ??= import('./swarmStore');
         swarmStorePromise
-          .then(({ useSwarmStore }) => {
+          .then(({ useSwarmStore, recordPendingAgentExit }) => {
+            if (useSwarmStore.getState().loadedProjectPath !== projectPath) {
+              // P13: this pane's project isn't loaded, so its swarm can't transition now. Record
+              // the exit; loadSwarmState replays it (marker tail first, exit fallback second).
+              recordPendingAgentExit(projectPath, id, exitCode);
+              return;
+            }
             const agent = useSwarmStore.getState().activeAgents.find((a) => a.terminalId === id);
             if (!agent || (agent.status !== 'running' && agent.status !== 'starting')) return;
             const { status, statusReason } = exitFallbackTransition(exitCode);
@@ -462,10 +490,15 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         // review marker still moves its task to the review column instead of sitting "in
         // progress" against a dead terminal. Non-zero/unknown exits leave the column untouched.
         if (exitCode === 0) {
-          const task = useKanbanStore.getState().tasks.find((t) => t.terminalId === id);
-          if (task && task.column === 'progress') {
-            void useKanbanStore.getState().updateTask(projectPath, task.id, { column: 'review' });
-            notifyTaskReadyForReview(task.title);
+          const kanban = useKanbanStore.getState();
+          if (kanban.loadedProjectPath === projectPath) {
+            const task = kanban.tasks.find((t) => t.terminalId === id);
+            if (task && task.column === 'progress') {
+              void kanban.updateTask(projectPath, task.id, { column: 'review' });
+              notifyTaskReadyForReview(task.title);
+            }
+          } else {
+            recordPendingTaskReview(projectPath, id); // applied by loadTasks when the project opens (P13)
           }
         }
       });
