@@ -4,6 +4,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
+import { useAgentSessionStore } from '../../stores/agentSessionStore';
+import { readRunOutcome } from '../../lib/controlPlane';
+import type { AgentOutcome } from '../../types/agent';
 import { SwarmGraph } from './SwarmGraph';
 import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';
 import { SwarmTemplateEditor } from './SwarmTemplateEditor';
@@ -75,6 +78,9 @@ export const SwarmWorkspace: React.FC = () => {
   const [loadingMailboxIds, setLoadingMailboxIds] = useState<Set<string>>(() => new Set());
   // Handoff bodies keyed by `${from}->${to}`. Polled on the same timer as mailboxes.
   const [handoffContents, setHandoffContents] = useState<Record<string, string>>({});
+  // Structured outcomes (P3) keyed by agent id, read from the canonical artifact store on the same
+  // poll — so a completed agent's summary/test result shows on its card without opening the terminal.
+  const [outcomes, setOutcomes] = useState<Record<string, AgentOutcome>>({});
   const [composeText, setComposeText] = useState('');
   const [sendingMailbox, setSendingMailbox] = useState(false);
 
@@ -178,7 +184,7 @@ export const SwarmWorkspace: React.FC = () => {
     if (!currentProjectPath || polledAgentIds.length === 0) return;
 
     setLoadingMailboxIds(new Set(polledAgentIds));
-    const [entries, handoffEntries] = await Promise.all([
+    const [entries, handoffEntries, outcomeEntries] = await Promise.all([
       Promise.all(
         polledAgentIds.map(async (agentId) => {
           try {
@@ -198,6 +204,19 @@ export const SwarmWorkspace: React.FC = () => {
           // readHandoff returns null for not-yet-written handoffs (the common case).
           const content = await readHandoff(currentProjectPath, from, to);
           return [handoffKey(from, to), content] as const;
+        })
+      ),
+      Promise.all(
+        polledAgentIds.map(async (agentId) => {
+          // Resolve the agent's canonical run (agent → session by terminal → runId), then read its
+          // recorded outcome. null when the agent has no run yet or hasn't recorded an outcome.
+          const ag = useSwarmStore.getState().activeAgents.find((a) => a.id === agentId);
+          const session = ag?.terminalId
+            ? useAgentSessionStore.getState().getSessionByTerminalId(ag.terminalId)
+            : undefined;
+          if (!session?.runId) return [agentId, null] as const;
+          const outcome = await readRunOutcome(currentProjectPath, session.runId);
+          return [agentId, outcome] as const;
         })
       ),
     ]);
@@ -221,6 +240,19 @@ export const SwarmWorkspace: React.FC = () => {
         if (content === null) continue;
         if (next[key] !== content) {
           next[key] = content;
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+    setOutcomes((previous) => {
+      let changed = false;
+      const next = { ...previous };
+      for (const [agentId, outcome] of outcomeEntries) {
+        if (outcome === null) continue;
+        // Only re-render when the outcome actually changed (cheap deep compare via JSON).
+        if (JSON.stringify(next[agentId]) !== JSON.stringify(outcome)) {
+          next[agentId] = outcome;
           changed = true;
         }
       }
@@ -461,6 +493,7 @@ export const SwarmWorkspace: React.FC = () => {
                           mailboxContent={mailboxContents[agent.id]}
                           loadingMailbox={loadingMailboxIds.has(agent.id)}
                           handoffs={handoffsByAgent[agent.id]}
+                          outcome={outcomes[agent.id]}
                         />
                       </div>
                     ))}
@@ -487,6 +520,7 @@ export const SwarmWorkspace: React.FC = () => {
                       mailboxContent={mailboxContents[selectedAgent.id]}
                       loadingMailbox={loadingMailboxIds.has(selectedAgent.id)}
                       handoffs={handoffsByAgent[selectedAgent.id]}
+                      outcome={outcomes[selectedAgent.id]}
                     />
 
                     {/* Live tail of the agent's terminal so its actual work is visible

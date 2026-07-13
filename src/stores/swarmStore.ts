@@ -3,12 +3,13 @@ import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../lib/id';
 import { enqueueWrite } from '../lib/writeQueue';
-import type { AgentRole, AgentStatus } from '../types/agent';
+import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
 import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
 import { useTerminalStore } from './terminalStore';
 import { useAgentSessionStore } from './agentSessionStore';
+import { parseAgentOutcome } from '../lib/controlPlane';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
@@ -274,7 +275,15 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
     // another pane's output or by echoing the generic marker name. Older agents (restored from a
     // pre-marker state.json) have no token — they keep using the bare markers.
     const marker = agent.marker;
-    const signalsSection = marker
+    // P3: before signaling, an agent may record a structured outcome so reviewers see what it did
+    // without opening the terminal. Optional — a marker on its own still completes the agent.
+    const outcomeSection = `## Structured Outcome (optional but recommended)
+Before you signal completion, write your outcome as JSON to \`.saple/swarm/outcomes/${agent.id}.json\`:
+\`\`\`json
+{ "summary": "one line on what you did", "changedFiles": ["path/to/file"], "tests": { "command": "npm test", "passed": true }, "decisions": ["a decision you made"], "needsReview": true }
+\`\`\`
+`;
+    const signalsSection = (marker
       ? `## Review / Completion Signals
 Emit EXACTLY ONE of these on its own line when you finish. The \`:${marker}\` suffix identifies
 you — a signal without it is ignored, so always include it verbatim:
@@ -286,7 +295,7 @@ you — a signal without it is ignored, so always include it verbatim:
 - When you are finished, output \`[AGENT_DONE]\` or \`[TASK_COMPLETE]\` to signify success.
 - If you require human review, output \`[REVIEW_REQUESTED]\` or \`## REVIEW REQUIRED\`.
 - If you encounter a fatal failure, output \`[AGENT_FAILED]\` or \`[TASK_FAILED]\`.
-`;
+`) + outcomeSection;
 
     // Generate prompt content
     const promptContent = `# Swarm Agent Mission Instructions
@@ -558,7 +567,22 @@ export const useSwarmStore = create<SwarmState>()(
             ? useAgentSessionStore.getState().getSessionByTerminalId(previousAgent.terminalId)
             : undefined;
           if (linkedSession) {
-            void useAgentSessionStore.getState().completeSession(projectPath, linkedSession.id, effectiveStatus);
+            // P3: pick up a structured outcome the agent may have written to its known outcome
+            // path, so the run's summary + test result become artifacts Review and the swarm card
+            // display. Absent/garbage file → marker-only fallback (parseAgentOutcome returns null).
+            let outcome: AgentOutcome | undefined;
+            try {
+              const raw = await invoke<string>('read_project_file', {
+                projectPath,
+                filePath: `.saple/swarm/outcomes/${agentId}.json`,
+              });
+              outcome = parseAgentOutcome(JSON.parse(raw)) ?? undefined;
+            } catch {
+              // no outcome file written — the common case
+            }
+            void useAgentSessionStore
+              .getState()
+              .completeSession(projectPath, linkedSession.id, effectiveStatus, outcome);
           }
         }
         await get().saveSwarmState(projectPath);

@@ -132,3 +132,61 @@ export async function writeOutcomeArtifacts(
     }, true);
   }
 }
+
+/// Sanitize an untrusted value (parsed from an agent-written outcome file) into an `AgentOutcome`,
+/// keeping only known fields with the right types and dropping everything else. Returns `null` when
+/// nothing usable is present, so malformed or partial data can never break completion handling (P3).
+export function parseAgentOutcome(raw: unknown): AgentOutcome | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const strArray = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+
+  const outcome: AgentOutcome = {};
+  if (typeof o.summary === 'string') outcome.summary = o.summary;
+  const changed = strArray(o.changedFiles);
+  if (changed?.length) outcome.changedFiles = changed;
+  const decisions = strArray(o.decisions);
+  if (decisions?.length) outcome.decisions = decisions;
+  if (typeof o.needsReview === 'boolean') outcome.needsReview = o.needsReview;
+  if (o.tests && typeof o.tests === 'object') {
+    const t = o.tests as Record<string, unknown>;
+    const tests: AgentOutcome['tests'] = {};
+    if (typeof t.command === 'string') tests.command = t.command;
+    if (typeof t.passed === 'boolean') tests.passed = t.passed;
+    if (tests.command || tests.passed !== undefined) outcome.tests = tests;
+  }
+
+  return Object.keys(outcome).length > 0 ? outcome : null;
+}
+
+/// Read the recorded outcome for a run back out of the canonical artifact store, for display (P3:
+/// "swarm inspection shows the summary without opening a terminal"). Returns `null` when no outcome
+/// artifacts exist yet — the common case for a marker-only agent.
+export async function readRunOutcome(projectPath: string, runId: string): Promise<AgentOutcome | null> {
+  let artifacts: Array<Record<string, unknown>>;
+  try {
+    const raw = await invoke<string>('read_project_file', { projectPath, filePath: ARTIFACTS });
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    artifacts = parsed;
+  } catch {
+    return null; // file missing / unreadable = no outcome recorded yet
+  }
+
+  const forRun = (kind: string) =>
+    artifacts.find((a) => a.runId === runId && a.kind === kind);
+  const report = forRun('report');
+  const test = forRun('test_result');
+  if (!report && !test) return null;
+
+  const meta = (report?.metadata ?? {}) as Record<string, unknown>;
+  const testMeta = (test?.metadata ?? {}) as Record<string, unknown>;
+  return parseAgentOutcome({
+    summary: report?.content,
+    changedFiles: meta.changedFiles,
+    decisions: meta.decisions,
+    needsReview: meta.needsReview,
+    tests: { command: testMeta.command, passed: testMeta.passed },
+  });
+}

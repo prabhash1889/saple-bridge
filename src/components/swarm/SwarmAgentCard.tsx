@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft, XCircle, Info } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
+import type { AgentOutcome } from '../../types/agent';
 import { MarkdownPreview } from '../editor/MarkdownPreview';
 
 // A resolved handoff file involving this agent. `direction` is relative to the agent the
@@ -23,6 +24,9 @@ interface SwarmAgentCardProps {
   mailboxContent?: string;
   loadingMailbox?: boolean;
   handoffs?: AgentHandoff[];
+  // Structured completion outcome (P3), read from the canonical artifact store — lets the reviewer
+  // see what the agent did without opening its terminal.
+  outcome?: AgentOutcome;
 }
 
 // Handoff files are JSON; wrap in a fenced block so the markdown viewer renders them as a
@@ -42,7 +46,9 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   mailboxContent = '',
   loadingMailbox = false,
   handoffs = [],
+  outcome,
 }) => {
+  const hasOutcome = !!outcome && (!!outcome.summary || !!outcome.tests || !!outcome.changedFiles?.length || !!outcome.decisions?.length);
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
       case 'running':
@@ -89,6 +95,34 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
         <div style={statusReasonStyle}>
           <Info size={12} className="fg-muted" />
           <span>{agent.statusReason}</span>
+        </div>
+      )}
+
+      {/* Structured outcome (P3): summary + test result the agent recorded, so the reviewer never
+          has to open the terminal to know what happened. */}
+      {hasOutcome && (
+        <div style={outcomeSectionStyle}>
+          <div style={outcomeHeaderStyle}>
+            <FileText size={12} className="fg-accent" />
+            <span style={sectionTitleStyle}>Outcome</span>
+          </div>
+          {outcome?.summary && <p style={outcomeSummaryStyle}>{outcome.summary}</p>}
+          {outcome?.tests && (outcome.tests.command || outcome.tests.passed !== undefined) && (
+            <div style={outcomeTestRowStyle}>
+              {outcome.tests.passed === true && <CheckCircle size={12} className="fg-success" />}
+              {outcome.tests.passed === false && <XCircle size={12} className="fg-danger" />}
+              <span style={outcomeTestTextStyle}>
+                {outcome.tests.command || 'tests'}
+                {outcome.tests.passed === undefined ? '' : outcome.tests.passed ? ' · passed' : ' · failed'}
+              </span>
+            </div>
+          )}
+          {(outcome?.changedFiles?.length || outcome?.decisions?.length) && (
+            <div style={outcomeMetaRowStyle}>
+              {outcome?.changedFiles?.length ? <span>{outcome.changedFiles.length} file(s) changed</span> : null}
+              {outcome?.decisions?.length ? <span>{outcome.decisions.length} decision(s)</span> : null}
+            </div>
+          )}
         </div>
       )}
 
@@ -259,6 +293,48 @@ const statusReasonStyle: React.CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)',
   padding: '6px 8px',
+};
+
+const outcomeSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '6px',
+  padding: '8px 10px',
+  backgroundColor: 'var(--bg-surface-light)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+};
+
+const outcomeHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+};
+
+const outcomeSummaryStyle: React.CSSProperties = {
+  fontSize: '11.5px',
+  lineHeight: '1.45',
+  color: 'var(--text-secondary)',
+  margin: 0,
+};
+
+const outcomeTestRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  fontSize: '11px',
+};
+
+const outcomeTestTextStyle: React.CSSProperties = {
+  fontFamily: 'monospace',
+  color: 'var(--text-secondary)',
+};
+
+const outcomeMetaRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '12px',
+  fontSize: '10.5px',
+  color: 'var(--text-muted)',
 };
 
 const roleBadgeStyle = (color: string): React.CSSProperties => ({
