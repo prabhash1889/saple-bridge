@@ -29,7 +29,6 @@ export const ModelCombobox: React.FC<ModelComboboxProps> = ({
   const listId = useId();
   const recents = useModelCatalogStore((s) => s.recents[provider]);
   const apiModels = useModelCatalogStore((s) => s.apiModels[provider]);
-  const fetched = useModelCatalogStore((s) => !!s.fetched[provider]);
   const ensureApiModels = useModelCatalogStore((s) => s.ensureApiModels);
 
   // Kick off best-effort live discovery once per provider per session.
@@ -43,9 +42,12 @@ export const ModelCombobox: React.FC<ModelComboboxProps> = ({
   );
 
   const trimmed = value.trim();
-  // Warn only once discovery has resolved for this provider: before that the catalog is incomplete,
-  // so an unknown-but-valid id shouldn't be flagged. 'default' is always fine.
-  const unrecognized = fetched && !!trimmed && trimmed !== 'default' && !options.includes(trimmed);
+  // Warn only when live discovery actually returned this provider's catalog (apiModels is set only
+  // on a non-empty response, so this also covers "still fetching"). Without discovery — no API key,
+  // offline — the assembled list is just aliases + recents, and flagging every legitimate full id a
+  // subscription-login user types would be a false alarm. 'default' is always fine.
+  const unrecognized =
+    !!apiModels?.length && !!trimmed && trimmed !== 'default' && !options.includes(trimmed);
 
   return (
     <>
