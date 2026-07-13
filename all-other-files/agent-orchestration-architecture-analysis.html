@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saple Bridge Agent Orchestration - Architecture Analysis & Strategy</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #1c2230;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #9da7b5;
+    --accent: #58a6ff;
+    --accent-2: #79c0ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  nav {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+  nav h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin: 0 0 12px;
+  }
+  nav ol {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 24px;
+    counter-reset: section;
+  }
+  nav li {
+    counter-increment: section;
+    margin: 0 0 2px;
+  }
+  nav a {
+    display: block;
+    padding: 6px 10px;
+    color: var(--text-dim);
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: background 0.12s, color 0.12s;
+  }
+  nav a::before {
+    content: counter(section) ". ";
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  nav a:hover, nav a.active {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  main { padding: 48px 56px 120px; max-width: 880px; }
+  h1 {
+    font-size: 32px;
+    line-height: 1.2;
+    margin: 0 0 8px;
+    letter-spacing: -0.02em;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 15px;
+    margin: 0 0 40px;
+  }
+  section { margin-bottom: 64px; scroll-margin-top: 24px; }
+  h2 {
+    font-size: 22px;
+    margin: 0 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 17px;
+    margin: 28px 0 10px;
+    color: var(--accent-2);
+  }
+  h4 {
+    font-size: 15px;
+    margin: 20px 0 8px;
+    color: var(--text);
+  }
+  p { margin: 0 0 14px; }
+  strong { color: #fff; font-weight: 600; }
+  em { color: var(--accent-2); font-style: normal; }
+  a { color: var(--accent); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--orange);
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 0 0 16px;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .kw { color: var(--purple); }
+  .str { color: var(--green); }
+  .com { color: var(--text-dim); font-style: italic; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 20px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--surface);
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  tr:hover td { background: var(--surface); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge-no { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-yes { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-one { background: rgba(210,153,34,0.15); color: var(--orange); }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 0 0 18px;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .tldr {
+    background: linear-gradient(135deg, rgba(88,166,255,0.08), rgba(188,140,255,0.06));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+  }
+  .tldr h2 {
+    border: none;
+    margin-bottom: 12px;
+    color: var(--accent);
+  }
+  .phase-row td:first-child {
+    font-weight: 600;
+    color: var(--accent-2);
+    white-space: nowrap;
+  }
+  .risk-list { counter-reset: risk; padding-left: 0; list-style: none; }
+  .risk-list li {
+    counter-increment: risk;
+    position: relative;
+    padding-left: 32px;
+    margin-bottom: 18px;
+  }
+  .risk-list li::before {
+    content: counter(risk);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .risk-list h4 { margin: 0 0 4px; }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 32px 24px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav>
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#verdict">Verdict on saple-mcp</a></li>
+    <li><a href="#gap">The gap inside the bridge today</a></li>
+    <li><a href="#arch">Recommended architecture</a></li>
+    <li><a href="#embed">1. Embed saple-mcp</a></li>
+    <li><a href="#core">2. Orchestration core</a></li>
+    <li><a href="#migrate">3. Migrate swarm model</a></li>
+    <li><a href="#boundary">4. Keep the boundary</a></li>
+    <li><a href="#phases">Implementation strategy</a></li>
+    <li><a href="#risks">Key decisions & risks</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>Saple Bridge Agent Orchestration</h1>
+<p class="subtitle">Architecture analysis & implementation strategy - embedding saple-mcp and building a first-class orchestration core inside the bridge.</p>
+
+<section id="verdict">
+<h2>1. Verdict on saple-mcp</h2>
+<div class="callout">
+<p><strong>saple-mcp is not built for orchestration - it is built to be the shared state plane that orchestration <em>writes to</em>.</strong> That's by design (decisions D1-D6, <code>docs/separate-repo-architecture.md</code>) and it's the right design.</p>
+</div>
+<p>Concretely:</p>
+<ul>
+  <li>It's a pure data plane: 58 tools, all CRUD over JSON/MD files. It "never executes shell commands or modifies user code" (<code>swarm.rs:1</code>, README:16).</li>
+  <li><code>runs</code>/<code>agents</code>/<code>run-events</code>/<code>artifacts</code> are <strong>records</strong>, not live processes. <code>create_run</code> just writes JSON (<code>tools/runs.rs:44</code>); something else is expected to drive <code>update_run</code>/<code>append_run_event</code>/<code>finish_run</code>.</li>
+  <li>No LLM client, no tool dispatcher, no mission queue, no scheduler, no loop runner. It has the <em>blackboard</em>, not the agents that write on it.</li>
+</ul>
+<p>So it's a necessary third of an orchestration system, and it's excellent at that third. The missing two-thirds: (1) an execution engine that runs an LLM in a tool-calling loop, and (2) an orchestration layer (queue, scheduler, dependency graph, mailbox delivery, concurrency).</p>
+</section>
+
+<section id="gap">
+<h2>2. The gap inside the bridge today</h2>
+<p>The bridge already has a <em>second</em>, parallel data model that overlaps saple-mcp almost exactly but doesn't talk to it:</p>
+<table>
+  <thead>
+    <tr><th>Concept</th><th>Bridge (swarmStore)</th><th>saple-mcp</th><th>Synced?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Agents</td><td><code>.saple/swarm/state.json</code> <code>activeAgents[]</code></td><td><code>.saple/agents.json</code></td><td><span class="badge badge-no">No</span></td></tr>
+    <tr><td>Runs</td><td>(none - sessions.json is PTY sessions)</td><td><code>.saple/runs.json</code> + <code>run-events.json</code></td><td><span class="badge badge-no">No</span></td></tr>
+    <tr><td>Mailbox</td><td><code>.saple/swarm/mailbox/&lt;id&gt;.md</code></td><td>(not modeled)</td><td><span class="badge badge-no">No</span></td></tr>
+    <tr><td>Handoffs</td><td><code>.saple/swarm/handoffs/&lt;a&gt;-to-&lt;b&gt;.json</code></td><td>run links</td><td><span class="badge badge-no">No</span></td></tr>
+    <tr><td>Swarm status</td><td><code>state.json</code></td><td><code>get_swarm_status</code> reads it read-only</td><td><span class="badge badge-one">One-way</span></td></tr>
+  </tbody>
+</table>
+<p>And critically: <strong>the bridge never runs saple-mcp as a persistent process.</strong> <code>test_mcp_tools</code> (<code>project.rs:602</code>) spawns it, sends one <code>tools/list</code>, kills it. The HTTP bridge on :8765 is unused by the bridge. So saple-mcp's 58 tools are effectively dark inside the app that ships it.</p>
+<p>The bridge's actual agent execution is <strong>terminal-orchestrated</strong>: <code>launchAgentProcess</code> (<code>swarmStore.ts:257</code>) spawns a provider CLI in a PTY with a prompt file and detects completion by scraping <code>[AGENT_DONE:&lt;marker&gt;]</code> tokens out of terminal output. Clever, human-in-loop, but fundamentally limited: no structured tool calls, no mid-run context injection, no programmatic control, no retries, no parallel worktrees. That's the ceiling you're hitting.</p>
+</section>
+
+<section id="arch">
+<h2>3. Recommended architecture</h2>
+<div class="callout">
+<p><strong>Embed saple-mcp as a Rust library dependency of saple-bridge, and build a first-class orchestration core inside the bridge that uses it as the state plane.</strong> This collapses three processes into one while keeping the conceptual three-repo boundary intact.</p>
+</div>
+</section>
+
+<section id="embed">
+<h2>4. Embed saple-mcp (kill the sidecar for internal use)</h2>
+<p>saple-mcp is already a library crate (<code>Cargo.toml:9</code>, <code>[lib] name = "saple_mcp"</code>, <code>src/lib.rs</code> exposes <code>run_stdio_server()</code> and - you'd add - <code>handle_tool_call()</code>). The bridge's <code>src-tauri/Cargo.toml</code> depends on it via a path dependency:</p>
+<pre><code><span class="kw">[dependencies]</span>
+saple-mcp = { path = <span class="str">"../../saple-mcp"</span> }</code></pre>
+<p>Then <code>src-tauri/src/</code> gains a new <code>mcp.rs</code> module that holds a <code>SapleMcp</code> state (project path) and exposes Tauri commands thin-wrapping <code>saple_mcp::tools::handle_tool_call()</code>. Zero IPC, zero staging, zero version drift between sidecar and bridge, atomic shared state in-process. The README itself flags this as the planned convergence: <em>"A future shared <code>saple-core</code> crate would dedupe it against saple-bridge's copy."</em> (<code>README.md:147</code>)</p>
+<p>External MCP clients (Claude Code, Cursor) still need a stdio entrypoint - so keep <code>saple-mcp</code> as a build artifact for <code>.mcp.json</code>, OR have the bridge spawn a stdio listener thread that forwards to the in-process handler. The latter is cleaner: one binary, one source of truth.</p>
+</section>
+
+<section id="core">
+<h2>5. Build an orchestration core</h2>
+<p>New module: <code>src-tauri/src/orchestrator.rs</code> + <code>src/stores/orchestratorStore.ts</code>. This replaces the ad-hoc <code>swarmStore</code> scheduler with a real engine. It owns:</p>
+<h3>Mission queue + scheduler</h3>
+<p>FIFO with priority, <code>maxConcurrentRuns</code> cap, workspace serialization (serialize runs sharing a cwd) or <code>git worktree add</code> per run for true parallelism. This is Phase 5 of <code>plan.md</code> but living in the bridge, not artemis.</p>
+<h3>Pluggable agent runtime (the key abstraction)</h3>
+<p>Two backends behind one trait:</p>
+<ul>
+  <li><strong>PtyRuntime</strong> - today's model (spawn provider CLI, marker-token completion). Keep it for human-in-loop / "agent-assisted" swarms where you want to watch the terminal.</li>
+  <li><strong>ToolCallingRuntime</strong> - new. An actual LLM tool-calling loop running in-process (Rust, via <code>async-openai</code>/provider SDKs, or a spawned node sidecar reusing artemis's loop). Structured tool dispatch against saple-mcp tools + bridge tools (files, git, pty, shell). This is what "extremely capable" requires - no terminal scraping, real tool results, mid-run context injection, retries, parent/child spawning.</li>
+</ul>
+<h3>Spawn tree</h3>
+<p><code>spawn_mission(mission, agentId?, parentRunId?)</code> with hard bounds: depth &le; 2, children &le; <code>maxConcurrentRuns</code>, recorded via <code>run.metadata.parentRunId</code>. This is the swarm-lite coordinator pattern.</p>
+<h3>Mailbox delivery into context</h3>
+<p>Mailbox writes go through saple-mcp (as artifacts tagged <code>mailbox</code>, or extend the schema), and the tier-2 context builder injects unread messages into the next turn/run context.</p>
+</section>
+
+<section id="migrate">
+<h2>6. Migrate the swarm model into saple-mcp's schema</h2>
+<p>Stop writing <code>.saple/swarm/state.json</code> as the source of truth. Instead:</p>
+<ul>
+  <li><code>activeAgents</code> &rarr; <code>create_agent</code>/<code>update_agent</code>/<code>set_agent_status</code> against <code>.saple/agents.json</code>.</li>
+  <li>Each agent run &rarr; <code>create_run</code> (with <code>agentId</code>, <code>taskId</code>, <code>mission</code>) + <code>append_run_event</code> timeline + <code>finish_run</code>.</li>
+  <li>Mailbox <code>.md</code> files &rarr; <code>create_artifact</code> with <code>kind: "mailbox"</code>, or add a dedicated mailbox collection to saple-mcp (it's a 1-file addition in <code>tools/</code>).</li>
+  <li>Handoffs &rarr; run links (<code>metadata.handoffTo</code>/<code>handoffFrom</code>).</li>
+  <li><code>swarmStore.ts</code> becomes a <strong>view store</strong>: it loads agents + their active runs from saple-mcp (via the new in-process commands) and presents the swarm grid, but it no longer owns the writes.</li>
+</ul>
+<p>This kills the dual-data-model problem permanently. The <code>get_swarm_status</code> read-only tool in saple-mcp (<code>tools/swarm.rs</code>) can be retired or repurposed to aggregate from <code>agents.json</code> + <code>runs.json</code>.</p>
+</section>
+
+<section id="boundary">
+<h2>7. Keep the boundary, collapse the process</h2>
+<p>The conceptual rule "saple-mcp is state, artemis is execution, sentry is incidents" still holds. But for the <strong>bridge's</strong> local-first use case, the bridge <em>is</em> the host for state (embedded saple-mcp) <em>and</em> execution (the new orchestrator). artemis remains valuable as an optional external autonomous engine for headless/CI/sentinel scenarios - it talks to the bridge-hosted saple-mcp over HTTP (:8765), which the bridge now actually runs persistently. You don't <em>need</em> artemis to ship capable orchestration in the desktop app.</p>
+</section>
+
+<section id="phases">
+<h2>8. Implementation strategy (phased)</h2>
+<table>
+  <thead>
+    <tr><th>Phase</th><th>What</th><th>Effort</th><th>Depends</th></tr>
+  </thead>
+  <tbody>
+    <tr class="phase-row"><td>O1</td><td>Path-depend on <code>saple-mcp</code> lib in <code>src-tauri/Cargo.toml</code>; add <code>mcp.rs</code> exposing <code>handle_tool_call</code> as Tauri commands; replace <code>test_mcp_tools</code> sidecar spawn with in-process call. Keep sidecar binary build for external <code>.mcp.json</code> clients.</td><td>1-2 d</td><td>-</td></tr>
+    <tr class="phase-row"><td>O2</td><td>Run saple-mcp's HTTP bridge on :8765 from inside the bridge process (a <code>tokio</code> task on app startup) so external attachers (artemis, Claude Code) work. Health route in the dashboard.</td><td>1 d</td><td>O1</td></tr>
+    <tr class="phase-row"><td>O3</td><td>Define <code>AgentRuntime</code> trait in <code>src-tauri/src/orchestrator.rs</code>; port the existing PTY launch path (<code>launchAgentProcess</code>) behind <code>PtyRuntime</code>. Behavior unchanged, but now goes through the trait.</td><td>2-3 d</td><td>O1</td></tr>
+    <tr class="phase-row"><td>O4</td><td>Migrate <code>swarmStore</code> writes to saple-mcp tools: <code>create_agent</code>/<code>set_agent_status</code>/<code>create_run</code>/<code>finish_run</code>. <code>state.json</code> becomes a cache/view. Add a one-time migration for existing swarms.</td><td>3-4 d</td><td>O1, O3</td></tr>
+    <tr class="phase-row"><td>O5</td><td>Mission queue + scheduler in Rust: FIFO, <code>maxConcurrentRuns</code>, workspace serialization. Replace the TS <code>runAgentScan</code>/<code>checkAndRunNextAgents</code> loop (the <code>agentScanInFlight</code> re-entrancy guard at <code>swarmStore.ts:254</code> is a symptom of needing this in Rust).</td><td>3-4 d</td><td>O4</td></tr>
+    <tr class="phase-row"><td>O6</td><td><code>ToolCallingRuntime</code>: in-process LLM loop with structured tool calls against saple-mcp + bridge tools. Provider config reuses <code>keychain.rs</code> + <code>providerStore</code>. Start with one provider (the one you use most), expand later.</td><td>5-7 d</td><td>O5</td></tr>
+    <tr class="phase-row"><td>O7</td><td><code>spawn_mission</code> (parent/child, depth &le; 2), mailbox delivery into tier-2 context, <code>recall(query)</code> tool wiring to <code>search_memories</code>.</td><td>3-4 d</td><td>O6</td></tr>
+    <tr class="phase-row"><td>O8</td><td>Tiered context builder (tier-1 always / tier-2 per-invocation / tier-3 on-demand <code>recall</code>), replacing flat prompt assembly in <code>launchAgentProcess</code>.</td><td>2-3 d</td><td>O7</td></tr>
+  </tbody>
+</table>
+<p>Critical path to "extremely capable": <strong>O1 &rarr; O4 &rarr; O5 &rarr; O6 &rarr; O7</strong>. O3 is a safe no-op refactor that unblocks O5. O8 is polish that pays off most for long playbooks.</p>
+</section>
+
+<section id="risks">
+<h2>9. Key decisions and risks</h2>
+<ol class="risk-list">
+  <li>
+    <h4>Embedding vs sidecar.</h4>
+    <p>Embedding wins on every axis for the bridge's own consumption (no IPC, no staging, no drift, atomic state). The only loss is binary size (~1-2MB of Rust) and tighter coupling - both acceptable. Keep the standalone binary build for external clients.</p>
+  </li>
+  <li>
+    <h4>Don't make saple-mcp execute.</h4>
+    <p>Resist the temptation to add "run agent" tools to saple-mcp itself. It stays a pure data plane. The orchestrator lives in the bridge and <em>calls</em> saple-mcp. This preserves the property that artemis/sentry/external clients can still attach to the same state plane without depending on the bridge's orchestrator.</p>
+  </li>
+  <li>
+    <h4>The PTY runtime stays.</h4>
+    <p>Don't delete it. The terminal-orchestrated model is genuinely good for human-in-loop swarms where you want to watch and intervene. The new <code>ToolCallingRuntime</code> is for autonomous missions. The trait lets you pick per-mission.</p>
+  </li>
+  <li>
+    <h4>Schema migration risk.</h4>
+    <p>Existing users have <code>.saple/swarm/state.json</code>. O4 must include a read-once migration that ingests existing agents/runs into saple-mcp's collections. Keep <code>state.json</code> as a fallback read for one release.</p>
+  </li>
+  <li>
+    <h4>Concurrency correctness.</h4>
+    <p>The current TS scheduler has a hand-rolled re-entrancy guard (<code>agentScanInFlight</code>/<code>agentScanQueued</code>, <code>swarmStore.ts:254-256</code>) precisely because doing this in JS across <code>await</code> boundaries is hard. Moving the scheduler to Rust (O5) eliminates that entire class of bugs - <code>fs_lock.rs</code> already gives you serialized atomic writes, and saple-mcp's <code>collection::mutate</code> already does upsert-under-lock. This alone justifies the rewrite.</p>
+  </li>
+  <li>
+    <h4>artemis's future.</h4>
+    <p>This doesn't kill artemis - it makes artemis optional for the desktop case. If you later want a headless autonomous runner (e.g. for sentry's incident&rarr;fix loop running while the laptop is open but the GUI is closed), artemis still fills that niche, talking to the bridge-hosted saple-mcp over HTTP. The <code>plan.md</code> Phase 1 (finish sentry) and Phase 2 (cross-repo E2E) still make sense unchanged.</p>
+  </li>
+</ol>
+</section>
+
+<section id="tldr" class="tldr">
+<h2>10. TL;DR</h2>
+<p>saple-mcp is the right state plane but it's not - and shouldn't become - the orchestrator. The bridge already ships saple-mcp but doesn't actually use it (spawns it only for a one-shot catalog preview) and maintains a parallel, weaker swarm model. The best move: <strong>embed saple-mcp as a library dependency, build a real orchestration core in the bridge with a pluggable runtime (PTY + in-process tool-calling), and migrate the swarm state into saple-mcp's schema.</strong> That gives you "extremely capable orchestration" as a native local-first feature without running three daemons, while keeping the door open for artemis as an external attacher.</p>
+</section>
+
+</main>
+</div>
+</body>
+</html>

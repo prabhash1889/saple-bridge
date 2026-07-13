@@ -1,30 +1,32 @@
 # Saple Bridge
 
-Saple Bridge is a local-first desktop workspace for running coding agents against a repository. It combines terminal panes, task tracking, markdown project memory, swarm coordination, and review tools in one Tauri app.
+Saple Bridge is a local-first desktop workspace for driving coding agents against a repository. Terminals, task tracking, project memory, multi-agent coordination, and git review live in a single application, and every artifact it produces stays on disk inside the project you open. There is no server, no account, and no telemetry.
 
-The app is built with Tauri 2, React 19, TypeScript, Vite, Zustand, xterm.js, and Rust. It targets Windows first and also supports macOS 11+.
+It is a native desktop app built on Tauri 2 and Rust, with a React 19, TypeScript, and Zustand frontend rendered through Vite and xterm.js. Windows is the primary packaging and QA target; macOS 11 and newer is supported.
 
 ## Features
 
-- Open a local project and keep Saple Bridge state inside that project.
-- Run shell-backed terminal panes for agent CLIs and plain shell sessions.
-- Track work on a Kanban board stored as JSON.
-- Maintain markdown memory notes with wikilink graph support.
-- Coordinate multi-agent swarms with mailboxes, handoffs, and templates.
-- Review git changes, stage files, and commit from the review workspace.
-- Store provider API keys in the OS keychain instead of project files.
-- Install MCP config files that point external clients at the bundled `saple-mcp` sidecar.
-- Update itself in place on Windows: Settings -> Diagnostics -> App Updates checks the signed release feed, downloads, and restarts into the new version.
+- **Project-scoped workspace.** Open a local repository; all Saple Bridge state is written under `.saple/` in that repository and never leaves it.
+- **Native terminal panes.** PTY sessions owned by the Rust backend, suitable for agent CLIs or an ordinary shell.
+- **Kanban task tracking.** A board persisted as plain JSON you can read, diff, and version.
+- **Markdown project memory.** Notes with `[[wikilink]]` graph support, stored as frontmatter markdown.
+- **Multi-agent swarm coordination.** Mailboxes, handoffs, and reusable templates for orchestrating several agents.
+- **Integrated git review.** Inspect changes, stage files, and commit without leaving the app.
+- **Keychain-backed secrets.** Provider API keys are held in the OS keychain, never in project files.
+- **MCP integration.** Generate client config that points external tools at the bundled `saple-mcp` sidecar.
+- **In-app updates (Windows).** Settings -> Diagnostics -> App Updates checks a signature-verified release feed, then downloads and restarts into the new build.
 
 ## Requirements
 
-- Node.js 20 or newer
-- npm
-- Rust stable toolchain
-- A sibling checkout of `saple-mcp` at `../saple-mcp` when running `tauri dev` or building release bundles
-- Windows 10/11 or macOS 11+
+| Dependency | Version | Needed for |
+| --- | --- | --- |
+| Node.js | 20+ | Frontend build and tooling |
+| npm | bundled with Node | Package management and scripts |
+| Rust | stable toolchain | Tauri backend, desktop app, sidecar |
+| `saple-mcp` checkout | at `../saple-mcp` | `tauri dev` and release bundles |
+| OS | Windows 10/11 or macOS 11+ | Running the packaged app |
 
-The frontend can run by itself with Vite, but the full desktop app needs Tauri and the Rust toolchain.
+The frontend runs standalone under Vite, but the full desktop app requires the Tauri CLI and the Rust toolchain.
 
 ## Getting Started
 

@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An implementation-ready priority roadmap for improving SAPLE Bridge based on the CNVS comparison.">
+  <title>SAPLE Bridge — Improvement Plan 1</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f4f0e7;
+      --surface: rgba(255, 253, 247, .9);
+      --surface-solid: #fffdf7;
+      --ink: #132238;
+      --muted: #657083;
+      --line: #d7d1c5;
+      --blue: #1767e8;
+      --blue-soft: #e8f0ff;
+      --teal: #18765b;
+      --teal-soft: #e2f3ed;
+      --amber: #c56915;
+      --amber-soft: #fff0de;
+      --red: #a64040;
+      --shadow: 0 22px 60px rgba(19, 34, 56, .09);
+      --radius: 22px;
+    }
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --paper: #0b1220;
+      --surface: rgba(18, 29, 47, .92);
+      --surface-solid: #121d2f;
+      --ink: #edf3ff;
+      --muted: #a2afc1;
+      --line: #2d3a4d;
+      --blue: #69a5ff;
+      --blue-soft: #132b50;
+      --teal: #63d3ad;
+      --teal-soft: #12382f;
+      --amber: #ffad5e;
+      --amber-soft: #422817;
+      --red: #ff9999;
+      --shadow: 0 22px 60px rgba(0, 0, 0, .28);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(19, 34, 56, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(19, 34, 56, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      font-family: Aptos, "Segoe UI", system-ui, sans-serif;
+      line-height: 1.6;
+    }
+    a { color: inherit; }
+    button { font: inherit; }
+    code { font: .9em ui-monospace, "Cascadia Code", monospace; color: var(--blue); }
+    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+    .skip-link { position: fixed; left: 16px; top: -60px; z-index: 20; padding: 10px 14px; border-radius: 8px; color: var(--paper); background: var(--ink); }
+    .skip-link:focus { top: 16px; }
+
+    .topbar { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent); background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(18px); }
+    .topbar-inner { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 760; letter-spacing: -.02em; text-decoration: none; }
+    .brand-mark { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--ink); border-radius: 50%; font: 800 10px ui-monospace, monospace; }
+    .nav { display: flex; align-items: center; gap: 6px; }
+    .nav a, .theme-toggle { padding: 8px 11px; border: 0; border-radius: 10px; color: var(--muted); background: transparent; text-decoration: none; cursor: pointer; }
+    .nav a:hover, .nav a:focus-visible, .theme-toggle:hover, .theme-toggle:focus-visible { color: var(--ink); background: var(--surface); outline: none; }
+
+    .hero { padding: 84px 0 56px; }
+    .eyebrow { margin: 0 0 18px; color: var(--blue); font: 750 12px/1.2 ui-monospace, monospace; letter-spacing: .15em; text-transform: uppercase; }
+    h1, h2, h3 { text-wrap: balance; }
+    h1 { max-width: 980px; margin: 0; font-family: Georgia, serif; font-size: clamp(48px, 8vw, 92px); font-weight: 500; line-height: .98; letter-spacing: -.055em; }
+    .hero-copy { max-width: 760px; margin: 28px 0 0; color: var(--muted); font-size: clamp(18px, 2.2vw, 23px); }
+
+    .mission { display: grid; grid-template-columns: 1.2fr .8fr; margin-top: 46px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+    .mission-main { padding: clamp(28px, 5vw, 52px); }
+    .mission-main small, .mission-side small { display: block; margin-bottom: 16px; color: var(--muted); font: 750 11px ui-monospace, monospace; letter-spacing: .11em; text-transform: uppercase; }
+    .mission-main p { margin: 0; font-family: Georgia, serif; font-size: clamp(26px, 4vw, 42px); line-height: 1.2; letter-spacing: -.035em; }
+    .mission-side { display: grid; align-content: center; padding: 30px; border-left: 1px solid var(--line); background: var(--blue-soft); }
+    .mission-side ul { margin: 0; padding-left: 20px; color: var(--muted); }
+    .mission-side li + li { margin-top: 8px; }
+
+    section { padding: 62px 0; scroll-margin-top: 72px; }
+    .section-head { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; align-items: start; margin-bottom: 32px; }
+    .section-label { color: var(--muted); font: 650 12px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .section-title h2 { margin: 0; font-family: Georgia, serif; font-size: clamp(34px, 5vw, 58px); font-weight: 500; line-height: 1.05; letter-spacing: -.04em; }
+    .section-title p { max-width: 720px; margin: 14px 0 0; color: var(--muted); font-size: 18px; }
+
+    .constraints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .constraint { min-height: 150px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+    .constraint span { display: block; margin-bottom: 24px; color: var(--blue); font: 800 12px ui-monospace, monospace; }
+    .constraint p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .phase-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+    .filter { padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--surface); cursor: pointer; }
+    .filter[aria-pressed="true"] { color: var(--surface-solid); border-color: var(--ink); background: var(--ink); }
+
+    .roadmap { position: relative; display: grid; gap: 16px; }
+    .roadmap::before { content: ""; position: absolute; top: 0; bottom: 0; left: 42px; width: 1px; background: var(--line); }
+    .work-item { position: relative; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 20px; transition: opacity .16s ease; }
+    .work-item[hidden] { display: none; }
+    .priority-mark { position: relative; z-index: 2; width: 84px; height: 84px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--blue); background: var(--surface-solid); box-shadow: 0 0 0 8px var(--paper); font: 800 18px ui-monospace, monospace; }
+    .work-item:first-child .priority-mark { color: var(--surface-solid); border-color: var(--blue); background: var(--blue); }
+    .work-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+    .work-summary { list-style: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 24px 26px; cursor: pointer; }
+    .work-summary::-webkit-details-marker { display: none; }
+    .work-summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 35%, transparent); outline-offset: -3px; }
+    .work-summary h3 { margin: 0 0 5px; font-size: clamp(20px, 3vw, 27px); line-height: 1.18; letter-spacing: -.035em; }
+    .work-summary p { margin: 0; color: var(--muted); font-size: 14px; }
+    .summary-meta { display: grid; justify-items: end; gap: 8px; }
+    .phase { padding: 4px 8px; border-radius: 7px; color: var(--phase-color); background: var(--phase-soft); font: 750 10px ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .disclosure { color: var(--muted); font-size: 22px; transition: transform .16s ease; }
+    details[open] .disclosure { transform: rotate(45deg); }
+    .work-body { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; padding: 0 26px 28px; border-top: 1px solid var(--line); }
+    .work-body > div { padding-top: 24px; }
+    .work-body h4 { margin: 0 0 10px; color: var(--muted); font: 750 11px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .work-body p, .work-body ul { margin-top: 0; color: var(--muted); font-size: 14px; }
+    .work-body ul { padding-left: 20px; }
+    .work-body li + li { margin-top: 7px; }
+    .touchpoints { grid-column: 1 / -1; padding: 16px 18px !important; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-solid); }
+    .touchpoints code { display: inline-block; margin: 3px 10px 3px 0; }
+    .phase-a { --phase-color: var(--blue); --phase-soft: var(--blue-soft); }
+    .phase-b { --phase-color: var(--teal); --phase-soft: var(--teal-soft); }
+    .phase-c { --phase-color: var(--amber); --phase-soft: var(--amber-soft); }
+    .phase-d { --phase-color: var(--teal); --phase-soft: var(--teal-soft); }
+    .phase-e { --phase-color: var(--blue); --phase-soft: var(--blue-soft); }
+
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-bottom: 26px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+    .flow-step { position: relative; min-height: 130px; padding: 22px; border-right: 1px solid var(--line); }
+    .flow-step:last-child { border-right: 0; }
+    .flow-step small { color: var(--blue); font: 750 10px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .flow-step strong { display: block; margin-top: 26px; }
+    .flow-step::after { content: "→"; position: absolute; z-index: 2; right: -12px; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; transform: translateY(-50%); color: var(--muted); background: var(--surface-solid); }
+    .flow-step:last-child::after { display: none; }
+
+    .phases { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+    .phase-card { min-height: 205px; padding: 22px; border-right: 1px solid var(--line); }
+    .phase-card:last-child { border-right: 0; }
+    .phase-letter { width: 38px; height: 38px; display: grid; place-items: center; margin-bottom: 36px; border-radius: 50%; color: var(--surface-solid); background: var(--ink); font: 800 13px ui-monospace, monospace; }
+    .phase-card h3 { margin: 0 0 7px; font-size: 17px; }
+    .phase-card p { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .deferred { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    .defer-card { padding: 20px; border: 1px dashed color-mix(in srgb, var(--muted) 55%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--surface) 65%, transparent); }
+    .defer-card h3 { margin: 0 0 10px; font-size: 16px; }
+    .defer-card p { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .success { padding: clamp(30px, 6vw, 64px); border-radius: var(--radius); color: #f7fbff; background: #132238; box-shadow: var(--shadow); }
+    .success small { display: block; margin-bottom: 20px; color: #82b5ff; font: 750 11px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .success p { max-width: 940px; margin: 0; font-family: Georgia, serif; font-size: clamp(28px, 4.5vw, 52px); line-height: 1.18; letter-spacing: -.04em; }
+    .success em { color: #82b5ff; font-style: normal; }
+    footer { margin-top: 56px; padding: 34px 0 56px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 900px) {
+      .mission { grid-template-columns: 1fr; }
+      .mission-side { border-left: 0; border-top: 1px solid var(--line); }
+      .constraints { grid-template-columns: 1fr 1fr; }
+      .phases { grid-template-columns: 1fr; }
+      .phase-card { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      .phase-card:last-child { border-bottom: 0; }
+      .phase-letter { margin-bottom: 18px; }
+      .deferred { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 22px, 1180px); }
+      .hero { padding-top: 58px; }
+      .nav a { display: none; }
+      .section-head { grid-template-columns: 1fr; gap: 8px; }
+      .constraints, .deferred { grid-template-columns: 1fr; }
+      .roadmap::before { left: 25px; }
+      .work-item { grid-template-columns: 50px minmax(0, 1fr); gap: 10px; }
+      .priority-mark { width: 50px; height: 50px; box-shadow: 0 0 0 5px var(--paper); font-size: 13px; }
+      .work-summary { grid-template-columns: 1fr; padding: 20px; }
+      .summary-meta { grid-template-columns: auto auto; justify-content: space-between; justify-items: start; }
+      .work-body { grid-template-columns: 1fr; padding: 0 20px 22px; }
+      .touchpoints { grid-column: auto; }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      .flow-step:last-child { border-bottom: 0; }
+      .flow-step::after { content: "↓"; right: 50%; top: auto; bottom: -12px; transform: translateX(50%); }
+      .flow-step strong { margin-top: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .disclosure, .work-item { transition: none; } }
+    @media print {
+      .topbar, .phase-filter { display: none; }
+      body { background: white; }
+      .hero { padding-top: 24px; }
+      section { padding: 28px 0; }
+      .mission, .work-card, .phases, .success { box-shadow: none; }
+      .work-item { break-inside: avoid; }
+      details:not([open]) > :not(summary) { display: grid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to roadmap</a>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="saplebridge%20vs%20canvas.html"><span class="brand-mark">S01</span> Improvement plan</a>
+      <nav class="nav" aria-label="Roadmap sections">
+        <a href="#roadmap">Priorities</a><a href="#sequence">Sequence</a><a href="#deferred">Deferred</a>
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch color theme">◐ Theme</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="shell hero">
+      <p class="eyebrow">SAPLE Bridge / Implementation roadmap</p>
+      <h1>Connect first.<br>Then accelerate.</h1>
+      <p class="hero-copy">An eight-step plan ordered by leverage, not novelty. The work starts by joining Bridge to the control plane it already has.</p>
+      <div class="mission">
+        <div class="mission-main"><small>Objective</small><p>Make agent control immediate and coherent without weakening local-first storage, explicit review or safety boundaries.</p></div>
+        <aside class="mission-side"><small>What this plan avoids</small><ul><li>No second source of truth</li><li>No general workflow framework</li><li>No infinite-canvas rewrite</li><li>No unbounded autonomous spawning</li></ul></aside>
+      </div>
+    </div>
+
+    <section id="guardrails">
+      <div class="shell">
+        <div class="section-head"><span class="section-label">Guardrails</span><div class="section-title"><h2>Improve the seam, not the stack.</h2><p>Every item should reuse existing stores, PTYs, rooms, files and MCP tools wherever possible.</p></div></div>
+        <div class="constraints">
+          <article class="constraint"><span>REUSE</span><p>Build through the current stores, Swarm scheduler, Command Palette, Review room and MCP sidecar.</p></article>
+          <article class="constraint"><span>ONE TRUTH</span><p>Do not create another authority for agents, tasks, runs or artifacts.</p></article>
+          <article class="constraint"><span>LOCAL</span><p>Keep keys in the OS keychain and durable project state under <code>.saple/</code>.</p></article>
+          <article class="constraint"><span>BOUNDED</span><p>Preserve human review, concurrency caps and explicit approval for expansion.</p></article>
+          <article class="constraint"><span>TESTED</span><p>Add one runnable check for every non-trivial behavior introduced.</p></article>
+          <article class="constraint"><span>SHALLOW</span><p>Prefer a prompt or tool contract over another service or abstraction layer.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="shell">
+        <div class="section-head"><span class="section-label">Priority runway</span><div class="section-title"><h2>Eight moves, one control plane.</h2><p>Open any priority for implementation details, touchpoints and acceptance criteria.</p></div></div>
+        <div class="phase-filter" role="group" aria-label="Filter priorities by phase">
+          <button class="filter" type="button" data-filter="all" aria-pressed="true">All priorities</button>
+          <button class="filter" type="button" data-filter="a" aria-pressed="false">Foundation</button>
+          <button class="filter" type="button" data-filter="b" aria-pressed="false">Interaction</button>
+          <button class="filter" type="button" data-filter="c" aria-pressed="false">Iteration</button>
+          <button class="filter" type="button" data-filter="d" aria-pressed="false">Expansion</button>
+          <button class="filter" type="button" data-filter="e" aria-pressed="false">Remote</button>
+        </div>
+
+        <div class="roadmap">
+          <article class="work-item phase-a" data-phase="a">
+            <div class="priority-mark">P0</div>
+            <details class="work-card" open>
+              <summary class="work-summary"><div><h3>Connect the existing control plane</h3><p>Bridge sessions and MCP runs become one durable lifecycle.</p></div><div class="summary-meta"><span class="phase">Foundation</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>Route existing session transitions into MCP agent, run, event and artifact tools. Do not add an event bus.</p><ul><li>Launch → register agent + create run</li><li>Status → update agent + append event</li><li>Completion → artifacts + finish run</li><li>Review → final outcome</li></ul></div>
+                <div><h4>Done when</h4><ul><li>Kanban and Swarm launch exactly one agent and run.</li><li>Restart reconciliation never duplicates the run.</li><li>Completion evidence appears inside Review.</li><li>An integration test covers launch through review.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>agentSessionStore.ts</code><code>swarmStore.ts</code><code>terminalStore.ts</code><code>types/agent.ts</code><code>review.rs</code><code>../saple-mcp</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-a" data-phase="a">
+            <div class="priority-mark">P1</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>Automatic on-demand context briefs</h3><p>Every launch points the agent at the smallest relevant context tool.</p></div><div class="summary-meta"><span class="phase">Foundation</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><ul><li>Coordinator calls <code>get_project_brief</code>.</li><li>Task agents call <code>get_task_context</code>.</li><li>Role-specific work calls <code>get_agent_brief</code>.</li><li>Search memories only when a brief points to them.</li></ul></div>
+                <div><h4>Done when</h4><ul><li>Launches identify task, role and brief tool.</li><li>Prompts never dump the entire memory graph.</li><li>Prompt tests verify the correct contract.</li><li>Missing MCP surfaces one clear diagnostic.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>swarmStore.ts</code><code>TaskCard.tsx</code><code>TaskDetailDrawer.tsx</code><code>CommandPalette.tsx</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-b" data-phase="b">
+            <div class="priority-mark">P2</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>Universal agent composer</h3><p>One keyboard-first surface for launching, redirecting and recording.</p></div><div class="summary-meta"><span class="phase">Interaction</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>Extend the existing Command Palette with targets: selected agent, all agents, reviewer, new terminal, Kanban task, new swarm and project memory. Use OS dictation as voice v1.</p></div>
+                <div><h4>Done when</h4><ul><li>One global shortcut opens it.</li><li>The destination is visible before sending.</li><li>Mail and launches reuse existing paths and limits.</li><li>Keyboard focus returns predictably.</li><li>No dependency is added.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>CommandPalette.tsx</code><code>swarmStore.ts</code><code>terminalStore.ts</code><code>projectStore.ts</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-b" data-phase="b">
+            <div class="priority-mark">P3</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>Structured agent outcomes</h3><p>Completion becomes evidence, not merely a terminal marker.</p></div><div class="summary-meta"><span class="phase">Interaction</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>Record summary, changed files, test command/result, decisions and review need with the existing artifact model. Keep completion markers as fallback.</p></div>
+                <div><h4>Done when</h4><ul><li>Swarm shows summaries without opening a terminal.</li><li>Review shows test evidence.</li><li>Bad outcome data cannot break completion.</li><li>Marker-only agents still work.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>types/agent.ts</code><code>agentSessionStore.ts</code><code>terminalStore.ts</code><code>SwarmAgentCard.tsx</code><code>components/review/*</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-c" data-phase="c">
+            <div class="priority-mark">P4</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>Bounded review-and-rework loop</h3><p>Rejected work gets one traceable route back to its builder.</p></div><div class="summary-meta"><span class="phase">Iteration</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>Add <code>attempt</code>, <code>maxAttempts</code> and <code>lastReviewFeedback</code>. Rejection posts to the builder mailbox and offers relaunch; exceeding the cap needs approval.</p></div>
+                <div><h4>Done when</h4><ul><li>Feedback reaches the correct builder.</li><li>Retry includes prior context and feedback.</li><li>Attempts survive restart and cannot be bypassed.</li><li>The dependency scheduler still rejects graph cycles.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>types/agent.ts</code><code>swarmStore.ts</code><code>SwarmWorkspace.tsx</code><code>SwarmAgentCard.tsx</code><code>swarmStore.test.ts</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-d" data-phase="d">
+            <div class="priority-mark">P5</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>Local preview and screenshot context</h3><p>Close the visual feedback loop without building a browser platform.</p></div><div class="summary-meta"><span class="phase">Expansion</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>Add a loopback-only Preview panel with refresh, external open, capture and attachment to a task, swarm or mailbox.</p></div>
+                <div><h4>Done when</h4><ul><li>Only localhost, 127.0.0.1 and [::1] are accepted.</li><li>Failures identify server vs embedding problems.</li><li>Images stay in the project context area.</li><li>Attachment destination is explicit and accessible.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>preview/PreviewPanel.tsx</code><code>App.tsx</code><code>projectStore.ts</code><code>Tauri capabilities</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-d" data-phase="d">
+            <div class="priority-mark">P6</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>Approved dynamic worker requests</h3><p>Agents may request capacity; Bridge remains the executor.</p></div><div class="summary-meta"><span class="phase">Expansion</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>MCP records a request with role, provider, mission and dependencies. Bridge shows it for approval, then inserts approved work through the current scheduler.</p></div>
+                <div><h4>Done when</h4><ul><li>Requesters cannot directly execute workers.</li><li>The approval shows model, mission, dependencies and pane count.</li><li>Rejected requests spawn nothing.</li><li>Caps and duplicate request IDs are enforced.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>../saple-mcp</code><code>swarmStore.ts</code><code>SwarmWorkspace.tsx</code><code>ConfirmDialog</code></div>
+              </div>
+            </details>
+          </article>
+
+          <article class="work-item phase-e" data-phase="e">
+            <div class="priority-mark">P7</div>
+            <details class="work-card">
+              <summary class="work-summary"><div><h3>SSH terminal presets</h3><p>Make remote shells repeatable without claiming remote-workspace parity.</p></div><div class="summary-meta"><span class="phase">Remote</span><span class="disclosure" aria-hidden="true">+</span></div></summary>
+              <div class="work-body">
+                <div><h4>Build</h4><p>Save display name, SSH host alias, remote directory and provider command. Launch through the custom-command PTY and rely on the user’s SSH agent.</p></div>
+                <div><h4>Done when</h4><ul><li>No passwords or private keys are stored.</li><li>The final command is visible before launch.</li><li>Existing command validation remains active.</li><li>Documentation distinguishes terminal from workspace.</li></ul></div>
+                <div class="touchpoints"><h4>Likely touchpoints</h4><code>TerminalGrid.tsx</code><code>terminalStore.ts</code><code>terminal preset state</code><code>settings diagnostics</code></div>
+              </div>
+            </details>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="sequence">
+      <div class="shell">
+        <div class="section-head"><span class="section-label">Delivery sequence</span><div class="section-title"><h2>Each phase unlocks the next.</h2><p>The first release should prove continuity from launch to reviewed evidence before adding new modes of interaction.</p></div></div>
+        <div class="flow" aria-label="Core lifecycle target">
+          <div class="flow-step"><small>Direct</small><strong>One composer</strong></div>
+          <div class="flow-step"><small>Ground</small><strong>Small context brief</strong></div>
+          <div class="flow-step"><small>Execute</small><strong>Durable run + evidence</strong></div>
+          <div class="flow-step"><small>Verify</small><strong>Bounded review</strong></div>
+        </div>
+        <div class="phases">
+          <article class="phase-card"><span class="phase-letter">A</span><h3>Control plane</h3><p>P0–P1 · One lifecycle and context-aware launches.</p></article>
+          <article class="phase-card"><span class="phase-letter">B</span><h3>Interaction</h3><p>P2–P3 · Faster direction and evidence-rich completion.</p></article>
+          <article class="phase-card"><span class="phase-letter">C</span><h3>Iteration</h3><p>P4 · Safe, inspectable review and retry.</p></article>
+          <article class="phase-card"><span class="phase-letter">D</span><h3>Expansion</h3><p>P5–P6 · Visual feedback and guarded worker growth.</p></article>
+          <article class="phase-card"><span class="phase-letter">E</span><h3>Remote edge</h3><p>P7 · Convenient remote terminals, no architectural fiction.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="deferred">
+      <div class="shell">
+        <div class="section-head"><span class="section-label">Deliberate deferrals</span><div class="section-title"><h2>Not now is a product decision.</h2><p>These ideas add substantial surface area before the core lifecycle is fully connected.</p></div></div>
+        <div class="deferred">
+          <article class="defer-card"><h3>Infinite canvas</h3><p>Validate that navigation—not orchestration—is the dominant user problem first.</p></article>
+          <article class="defer-card"><h3>Bundled speech model</h3><p>Measure OS dictation use before shipping Parakeet or Whisper.</p></article>
+          <article class="defer-card"><h3>GPT Realtime</h3><p>Avoid recurring cost and a new audio trust boundary until voice proves useful.</p></article>
+          <article class="defer-card"><h3>True remote workspaces</h3><p>Design a remote sidecar/protocol instead of scattering SSH branches throughout local code.</p></article>
+          <article class="defer-card"><h3>Arbitrary agent loops</h3><p>Bounded rework and approved worker requests cover the valuable cases safely.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell">
+        <div class="success"><small>Definition of success</small><p>Direct from <em>one composer</em>, retrieve only needed context, inspect a structured outcome, run one bounded retry and review the evidence—while <em>.saple/ remains the durable truth.</em></p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="shell">Improvement Plan 1 · 13 July 2026 · <a href="improvement-1.md">Markdown plan</a> · <a href="saplebridge%20vs%20canvas.html">Research dossier</a></div></footer>
+  <script>
+    const root = document.documentElement;
+    const themeButton = document.querySelector('#themeToggle');
+    let savedTheme;
+    try { savedTheme = localStorage.getItem('saple-report-theme'); } catch (_) { /* file URL storage may be unavailable */ }
+    if (savedTheme) root.dataset.theme = savedTheme;
+    themeButton.addEventListener('click', () => {
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      try { localStorage.setItem('saple-report-theme', next); } catch (_) { /* theme still works for this session */ }
+    });
+
+    const filters = document.querySelectorAll('.filter');
+    const items = document.querySelectorAll('.work-item[data-phase]');
+    filters.forEach(button => button.addEventListener('click', () => {
+      const filter = button.dataset.filter;
+      filters.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      items.forEach(item => { item.hidden = filter !== 'all' && item.dataset.phase !== filter; });
+    }));
+  </script>
+</body>
+</html>

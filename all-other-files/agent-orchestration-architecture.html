@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Saple Bridge Agent Orchestration Architecture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --panel: #121722;
+        --panel-2: #171e2b;
+        --text: #e8edf5;
+        --muted: #9ca9bc;
+        --line: #283246;
+        --accent: #71d6b1;
+        --accent-2: #7fb6ff;
+        --warn: #f1c66d;
+        --danger: #ff8e91;
+        --code: #0a0d13;
+        --max: 1160px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 12% -10%, rgba(113, 214, 177, 0.13), transparent 31rem),
+          radial-gradient(circle at 90% 5%, rgba(127, 182, 255, 0.11), transparent 28rem), var(--bg);
+        color: var(--text);
+        font:
+          16px/1.65 Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+      a {
+        color: var(--accent-2);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: #afd1ff;
+      }
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+        border-radius: 3px;
+      }
+      code,
+      pre {
+        font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+      }
+      code {
+        color: #c7ddff;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 1rem 1.1rem;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--code);
+        color: #dce8f7;
+      }
+      .shell {
+        display: grid;
+        grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
+        gap: 2rem;
+        width: min(calc(100% - 2rem), var(--max));
+        margin: 0 auto;
+        padding: 2rem 0 5rem;
+      }
+      nav {
+        position: sticky;
+        top: 1rem;
+        align-self: start;
+        max-height: calc(100vh - 2rem);
+        overflow: auto;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+      nav strong {
+        display: block;
+        margin-bottom: 0.65rem;
+        color: var(--accent);
+      }
+      nav a {
+        display: block;
+        padding: 0.23rem 0;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.9rem;
+      }
+      nav a:hover {
+        color: var(--text);
+      }
+      main {
+        min-width: 0;
+      }
+      header {
+        padding: 2.5rem 0 2rem;
+      }
+      .eyebrow {
+        margin: 0 0 0.5rem;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 750;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+      h1 {
+        max-width: 850px;
+        margin: 0;
+        font-size: clamp(2.3rem, 5vw, 4.7rem);
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+      }
+      .lede {
+        max-width: 800px;
+        margin-top: 1.2rem;
+        color: var(--muted);
+        font-size: 1.16rem;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      section {
+        margin: 0 0 2rem;
+        padding: 1.4rem 1.5rem;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(18, 23, 34, 0.82);
+      }
+      section section {
+        margin-top: 1rem;
+        background: var(--panel-2);
+      }
+      h2 {
+        margin: 0 0 1rem;
+        color: var(--accent);
+        font-size: 1.45rem;
+        letter-spacing: -0.02em;
+      }
+      h3 {
+        margin: 1.4rem 0 0.6rem;
+        color: #dce8f7;
+        font-size: 1.08rem;
+      }
+      p {
+        margin: 0.7rem 0;
+      }
+      main p,
+      main li {
+        max-width: 75ch;
+      }
+      ul,
+      ol {
+        padding-left: 1.25rem;
+      }
+      li + li {
+        margin-top: 0.28rem;
+      }
+      blockquote {
+        margin: 1rem 0;
+        padding: 0.8rem 1rem;
+        border: 1px solid rgba(113, 214, 177, 0.34);
+        border-radius: 10px;
+        background: rgba(113, 214, 177, 0.06);
+        color: #dff8ee;
+        font-size: 1.05rem;
+      }
+      .decision {
+        border-color: rgba(113, 214, 177, 0.5);
+        background: linear-gradient(135deg, rgba(113, 214, 177, 0.1), rgba(18, 23, 34, 0.9));
+      }
+      .warning {
+        border-color: rgba(241, 198, 109, 0.45);
+      }
+      .warning h2 {
+        color: var(--warn);
+      }
+      .risk {
+        color: var(--danger);
+        font-weight: 700;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel-2);
+      }
+      .card h3 {
+        margin-top: 0;
+      }
+      .score {
+        display: inline-flex;
+        padding: 0.12rem 0.5rem;
+        border: 1px solid rgba(113, 214, 177, 0.35);
+        border-radius: 999px;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 750;
+      }
+      .flow {
+        color: #eaf5ff;
+        line-height: 1.45;
+      }
+      .phase {
+        margin: 1.2rem 0;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel-2);
+      }
+      .phase h3 {
+        margin-top: 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.92rem;
+      }
+      th,
+      td {
+        padding: 0.65rem 0.7rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--panel-2);
+        color: var(--accent);
+      }
+      footer {
+        color: var(--muted);
+        text-align: center;
+        padding: 1rem;
+        font-size: 0.86rem;
+      }
+      @media (max-width: 880px) {
+        .shell {
+          display: block;
+        }
+        nav {
+          position: static;
+          margin-bottom: 1rem;
+          max-height: none;
+        }
+        nav a {
+          display: inline-block;
+          margin-right: 0.8rem;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+      @media print {
+        :root {
+          color-scheme: light;
+          --bg: #fff;
+          --panel: #fff;
+          --panel-2: #f5f7fa;
+          --text: #111827;
+          --muted: #4b5563;
+          --line: #d1d5db;
+          --accent: #08785b;
+          --accent-2: #1459a8;
+          --code: #f4f4f5;
+        }
+        body {
+          background: #fff;
+        }
+        .shell {
+          display: block;
+          width: 100%;
+          padding: 0;
+        }
+        nav {
+          display: none;
+        }
+        section {
+          break-inside: avoid;
+          background: #fff;
+        }
+        a {
+          color: inherit;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <nav aria-label="Report contents">
+        <strong>Contents</strong>
+        <a href="#decision">Decision</a>
+        <a href="#method">Method</a>
+        <a href="#state">Repository state</a>
+        <a href="#mcp-now">Saple-MCP today</a>
+        <a href="#bridge-now">Bridge orchestration today</a>
+        <a href="#correctness">Correctness finding</a>
+        <a href="#standards">MCP standards</a>
+        <a href="#designs">Two designs</a>
+        <a href="#recommendation">Recommended architecture</a>
+        <a href="#interface">Deep interface</a>
+        <a href="#domain">Domain model</a>
+        <a href="#storage">Storage</a>
+        <a href="#runtime">Runtime and MCP</a>
+        <a href="#security">Security</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#reuse">Reuse and delete</a>
+        <a href="#risks">Risks</a>
+        <a href="#acceptance">Acceptance criteria</a>
+        <a href="#non-goals">Non-goals</a>
+      </nav>
+
+      <main>
+        <header>
+          <p class="eyebrow">Architecture investigation · 2026-07-13</p>
+          <h1>Saple Bridge Agent Orchestration</h1>
+          <p class="lede">
+            A repository-grounded architecture for turning Saple's current swarm, PTY, context, and
+            MCP capabilities into a durable local orchestration engine.
+          </p>
+          <p class="meta">
+            Scope: <code>saple-bridge</code> and sibling <code>saple-mcp</code> working trees. No
+            implementation changes are included.
+          </p>
+        </header>
+
+        <section id="decision" class="decision">
+          <h2>Executive decision</h2>
+          <p>
+            Saple-MCP is a strong context/control-plane foundation, but it is not currently an
+            orchestration engine.
+          </p>
+          <blockquote>
+            Integrate Saple-MCP into the Saple-Bridge repository and product, but run orchestration
+            as an automatically managed, per-workspace engine process.
+          </blockquote>
+          <p>MCP is an adapter into that engine. It is not the engine's internal state machine.</p>
+          <pre class="flow">
+Bridge UI ──────────────────┐
+External MCP stdio clients ─┼──&gt; managed Saple engine
+Headless automation ────────┘       ├─ orchestration state machine
+                                    ├─ process supervisor
+                                    ├─ durable workspace state
+                                    └─ scoped agent runtime tools</pre>
+          <ul>
+            <li>One authoritative mutation owner per workspace.</li>
+            <li>Headless execution and UI-independent recovery.</li>
+            <li>A common engine for Bridge, MCP clients, and automation.</li>
+            <li>Ordered events and reconnectable observation.</li>
+          </ul>
+        </section>
+
+        <section id="method">
+          <h2>Investigation method</h2>
+          <p>
+            The analysis traced the actual execution, persistence, protocol, and process-management
+            paths in both repositories. Two independent architecture investigations were run:
+          </p>
+          <ol>
+            <li>
+              An embedded Rust kernel optimized for the smallest interface and maximum direct reuse.
+            </li>
+            <li>
+              A standalone engine optimized for durability, single-writer state, headless use, and
+              multi-client access.
+            </li>
+          </ol>
+          <p>
+            The runtime did not expose a subagent model selector, so the requested GPT-5.6 Terra
+            High label could not be guaranteed. Official MCP documentation was checked because the
+            implementation advertises an older protocol revision.
+          </p>
+        </section>
+
+        <section id="state">
+          <h2>Repository state observed</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>Saple Bridge</h3>
+              <p>
+                Tauri 2, React 19, TypeScript, Zustand, and Rust. Orchestration is distributed
+                across the swarm store, terminal store, session store, marker parser, Rust PTY
+                process manager, swarm file commands, watcher, and project/MCP wiring.
+              </p>
+              <p>The existing modified <code>README.md</code> was treated as user-owned.</p>
+            </div>
+            <div class="card">
+              <h3>Saple-MCP</h3>
+              <p>
+                Rust binary/library serving one project per process through stdio JSON-RPC and a
+                custom HTTP bridge. Its working tree contains substantial modified and untracked
+                feature work that should be checkpointed before migration.
+              </p>
+              <p><span class="score">118 tests passed · 0 failed</span></p>
+            </div>
+          </div>
+        </section>
+
+        <section id="mcp-now">
+          <h2>What Saple-MCP does well</h2>
+          <ul>
+            <li>Local-first JSON/Markdown state under <code>.saple/</code>.</li>
+            <li>Path containment and atomic replacement.</li>
+            <li>Shared handlers for stdio and HTTP.</li>
+            <li>
+              Memory, tasks, incidents, agents, runs, artifacts, mappings, permissions, prompts, and
+              resources.
+            </li>
+            <li>Structured errors and strong integration coverage.</li>
+            <li>A library entry point below the executable.</li>
+          </ul>
+          <h3>Why it is not an orchestrator yet</h3>
+          <ul>
+            <li><a href="../saple-mcp/src/tools/swarm.rs">Swarm access</a> is read-only.</li>
+            <li>
+              <a href="../saple-mcp/src/tools/agents.rs">Agent tools</a> store registry metadata but
+              never launch agents.
+            </li>
+            <li>
+              <a href="../saple-mcp/src/tools/runs.rs">Run tools</a> record timelines but never
+              execute work.
+            </li>
+            <li>Permissions are advisory.</li>
+            <li>
+              No durable scheduler, process supervisor, retries, deadlines, recovery, revision
+              checks, attempt identities, or structured runtime reporting.
+            </li>
+          </ul>
+          <h3>Tool surface drift</h3>
+          <p>
+            The documentation says 58 tools. The implemented catalog contains 59 because
+            <code>add_task_event</code> is implemented and tested but omitted from the documented
+            count.
+          </p>
+          <pre>
+12 memory + 6 task + 1 swarm + 10 incident + 6 run
++ 6 context + 6 agent + 5 artifact + 3 mapping + 4 permission
+= 59 tools</pre>
+          <p>
+            The catalog should remain a compatibility adapter. It is too CRUD-oriented to be the
+            internal orchestration interface.
+          </p>
+        </section>
+
+        <section id="bridge-now">
+          <h2>Where orchestration lives today</h2>
+          <p>
+            The real scheduler is renderer-owned.
+            <a href="src/stores/swarmStore.ts">swarmStore.ts</a> launches agents, scans
+            dependencies, propagates failure, enforces a parallel cap, and persists state.
+            <a href="src/stores/terminalStore.ts">terminalStore.ts</a> interprets PTY output and
+            exits. <a href="src-tauri/src/pty.rs">pty.rs</a> owns provider validation and OS
+            processes.
+          </p>
+          <h3>Existing capabilities</h3>
+          <ul>
+            <li>Static DAG scheduling and cycle checks.</li>
+            <li>Parallelism limit and dependency-based launching.</li>
+            <li>Review gates, pause/resume/stop/relaunch, and transitive blocking.</li>
+            <li>
+              Provider/model selection, prompts, skills, context files, mailboxes, and handoffs.
+            </li>
+            <li>Attempt-like scoped completion markers and PTY exit fallback.</li>
+            <li>Basic restart reconciliation.</li>
+          </ul>
+          <h3>Structural limits</h3>
+          <ul>
+            <li>Bridge closure or restart loses orchestrated PTYs.</li>
+            <li>Recovery marks lost agents failed rather than resuming them.</li>
+            <li>Lifecycle state is duplicated across renderer state and several files.</li>
+            <li>Completion relies primarily on terminal text parsing.</li>
+            <li>Parallel editing agents share one checkout unless manually constrained.</li>
+            <li>Races are patched across several modules instead of prevented at one seam.</li>
+          </ul>
+        </section>
+
+        <section id="correctness" class="warning">
+          <h2>Cross-process correctness finding</h2>
+          <p>
+            Atomic rename prevents partial reads. It does not prevent lost updates between Bridge
+            and one or more MCP processes.
+          </p>
+          <ol>
+            <li>Bridge reads revision A.</li>
+            <li>Saple-MCP reads revision A.</li>
+            <li>Bridge writes A+B.</li>
+            <li>Saple-MCP writes A+C.</li>
+            <li>B is lost even though both writes were atomic.</li>
+          </ol>
+          <p>
+            Saple-MCP's <a href="../saple-mcp/src/storage/fs_lock.rs">lock registry</a> is
+            process-local. Bridge owns a separate registry. The file watcher reduces stale
+            overwrites but cannot serialize this race.
+          </p>
+          <p><strong>The fix is a single mutation owner, not more watchers.</strong></p>
+        </section>
+
+        <section id="standards">
+          <h2>MCP standards finding</h2>
+          <p>
+            Saple-MCP advertises protocol <code>2024-11-05</code>. The official current revision is
+            <code>2025-11-25</code>:
+            <a href="https://modelcontextprotocol.io/docs/learn/versioning">versioning</a> and
+            <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle"
+              >lifecycle</a
+            >.
+          </p>
+          <p>
+            The standard HTTP transport is
+            <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports"
+              >Streamable HTTP</a
+            >. The existing <code>/tools/:toolName</code> REST bridge is not MCP Streamable HTTP.
+          </p>
+          <p>
+            <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks"
+              >MCP Tasks</a
+            >
+            can represent long-running and input-required work, but remains experimental and client
+            support varies. It should be an optional adapter feature, not the durable workflow
+            implementation.
+          </p>
+          <ul>
+            <li>Upgrade negotiation and schema support.</li>
+            <li>Add a real Streamable HTTP <code>/mcp</code> endpoint where needed.</li>
+            <li>Retain stdio compatibility.</li>
+            <li>Keep orchestration correct without MCP Tasks support.</li>
+          </ul>
+        </section>
+
+        <section id="designs">
+          <h2>Two independent designs</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>Embedded Bridge kernel</h3>
+              <p>
+                A deep Rust module inside Tauri owns commands, snapshots, events, scheduling, and
+                PTY correlation.
+              </p>
+              <p>
+                <strong>Wins:</strong> smallest initial diff, direct PTY/keychain reuse, no IPC.
+              </p>
+              <p>
+                <strong>Loses:</strong> no headless operation, UI crashes interrupt work, external
+                MCP needs Bridge or a competing owner.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Managed workspace engine</h3>
+              <p>
+                A per-workspace process owns scheduling, execution, state, and events. Bridge and
+                MCP clients are command/event clients.
+              </p>
+              <p>
+                <strong>Wins:</strong> single writer, headless use, crash isolation, common external
+                interface.
+              </p>
+              <p>
+                <strong>Costs:</strong> lifecycle, discovery, authentication, versioning, and
+                detached-process QA.
+              </p>
+            </div>
+          </div>
+          <p>
+            For UI-bound swarms, embedding is adequate. For extremely capable and durable
+            orchestration, the managed engine is stronger.
+          </p>
+        </section>
+
+        <section id="recommendation" class="decision">
+          <h2>Recommended architecture: built-in managed engine</h2>
+          <p>
+            Use the standalone runtime design while eliminating the sibling-repository dependency.
+          </p>
+          <pre>
+saple-bridge/
+  crates/
+    saple-engine/       # current saple-mcp + orchestration owner + adapters
+  src-tauri/            # desktop shell and interactive terminals
+  src/                  # React projection and operator controls</pre>
+          <ul>
+            <li>Keep the <code>saple-mcp</code> binary name and compatibility behavior.</li>
+            <li>Run exactly one engine per workspace.</li>
+            <li>Bridge starts, discovers, authenticates to, and updates it invisibly.</li>
+            <li>stdio mode connects to the owner rather than opening another writer.</li>
+            <li>
+              Do not create a separate shared-core crate until two real in-repository consumers
+              require it.
+            </li>
+          </ul>
+        </section>
+
+        <section id="interface">
+          <h2>The deep orchestration interface</h2>
+          <pre>
+submit(spec, requestId) -&gt; WorkflowRef
+
+command(
+  workflowId,
+  expectedRevision,
+  requestId,
+  command
+) -&gt; WorkflowRef
+
+observe(
+  workflowId,
+  afterSequence
+) -&gt; SnapshotAndEvents</pre>
+          <p>
+            <code>command</code> covers pause, resume, cancel, approve, reject, retry, steering,
+            messages, human input, and validated graph extension. Provider arguments, queue
+            internals, and storage shapes remain hidden.
+          </p>
+          <h3>Typed errors</h3>
+          <p>
+            <code>InvalidPlan</code>, <code>InvalidTransition</code>, <code>Conflict</code>,
+            <code>NotFound</code>, <code>Unauthorized</code>, <code>PermissionDenied</code>,
+            <code>ApprovalRequired</code>, <code>Capacity</code>, <code>ProviderUnavailable</code>,
+            <code>LaunchFailed</code>, <code>Persistence</code>, <code>StorageCorrupt</code>, and
+            <code>Unavailable</code>.
+          </p>
+        </section>
+
+        <section id="domain">
+          <h2>Canonical domain model and invariants</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>Workflow</h3>
+              <p>
+                Mission, immutable initial specification, revision, policies, steps, event sequence,
+                and approvals.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Step</h3>
+              <p>
+                Dependencies, runtime configuration, approval/retry/write-isolation policy, and
+                current outcome.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Attempt</h3>
+              <p>
+                Immutable launch identity with provider/model, process correlation, timestamps,
+                artifacts, exit, and outcome.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Event &amp; capability</h3>
+              <p>
+                Monotonic committed events plus short-lived attempt-scoped identities for child
+                agents.
+              </p>
+            </div>
+          </div>
+          <h3>Core invariants</h3>
+          <ul>
+            <li>
+              Canonical project roots; unique IDs; all dependencies exist; graphs remain acyclic.
+            </li>
+            <li>Only the engine actor changes lifecycle state.</li>
+            <li>Retries create new attempts; stale attempt events are ignored and audited.</li>
+            <li>Starting plus running attempts never exceed the configured cap.</li>
+            <li>Paused workflows launch nothing; cancellation persists before teardown.</li>
+            <li>Commands are idempotent and revision-checked.</li>
+            <li>Permission checks occur immediately before engine-mediated side effects.</li>
+          </ul>
+          <h3>Crash-safe mutation order</h3>
+          <ol>
+            <li>Authenticate and validate capability.</li>
+            <li>Deduplicate request and check revision/invariants.</li>
+            <li>Persist state, events, and pending side-effect intent atomically.</li>
+            <li>Execute the side effect.</li>
+            <li>Feed the result back through the same actor and persist the transition.</li>
+            <li>Schedule newly ready steps and publish only committed events.</li>
+          </ol>
+        </section>
+
+        <section id="storage">
+          <h2>Storage strategy</h2>
+          <p>
+            Do not add SQLite in the first orchestration change. Start with one engine owner and one
+            atomic document per workflow:
+          </p>
+          <pre>.saple/orchestration/&lt;workflow-id&gt;.json</pre>
+          <p>
+            It contains revision, graph, attempts, events, idempotency keys, pending side effects,
+            approvals, and messages. Large logs and artifact bodies stay separate.
+          </p>
+          <p>
+            Existing swarm, run, run-event, and session files become compatibility projections
+            rather than competing writable sources. Add SQLite only when rewrite cost, event volume,
+            or query needs become measurably limiting.
+          </p>
+        </section>
+
+        <section id="runtime">
+          <h2>Runtime, transports, and structured agents</h2>
+          <p>
+            A private <code>AgentRuntime</code> seam is justified by a real production process
+            supervisor and a deterministic fake used in state-machine tests. Avoid a provider plugin
+            framework until a second genuinely different implementation exists.
+          </p>
+          <h3>Transport adapters</h3>
+          <ul>
+            <li>Bridge: typed wrapper over authenticated local Streamable HTTP.</li>
+            <li>MCP stdio: connector to the workspace owner.</li>
+            <li>MCP HTTP: standard Streamable HTTP adapter.</li>
+            <li>Headless CLI: workflow submit, command, and observe.</li>
+          </ul>
+          <h3>Scoped child-agent tools</h3>
+          <pre>
+saple_step_report
+saple_message_send
+saple_message_receive
+saple_artifact_publish
+saple_subtask_request
+saple_approval_request</pre>
+          <p>
+            Each runtime session is bound to one attempt. Keep scoped terminal markers and PTY exit
+            fallback for providers that cannot call MCP.
+          </p>
+          <h3>Parallel editing</h3>
+          <p>
+            Read-only steps may share the checkout. Editing steps should use engine-owned Git
+            worktrees, record their base commit, and feed results into an explicit
+            integration/review step. Use Git; do not build a custom merge engine.
+          </p>
+        </section>
+
+        <section id="security">
+          <h2>Security posture</h2>
+          <h3>Reuse</h3>
+          <ul>
+            <li>
+              Path containment, provider allowlisting, safe model validation, keychain secrets,
+              atomic writes, and process-tree termination.
+            </li>
+          </ul>
+          <h3>Correct</h3>
+          <ul>
+            <li>Enable managed-engine authentication by default.</li>
+            <li>Keep operator credentials outside the project.</li>
+            <li>Issue short-lived attempt-scoped child capabilities.</li>
+            <li>Authorize every workflow mutation and event query.</li>
+            <li>Use provider-native sandboxing and worktree isolation for direct CLI execution.</li>
+            <li>
+              Do not claim that advisory application rules sandbox a fully trusted provider CLI.
+            </li>
+            <li>Fail closed on corrupt state, invalid capability, and version mismatch.</li>
+          </ul>
+        </section>
+
+        <section id="roadmap">
+          <h2>Implementation roadmap</h2>
+          <div class="phase">
+            <h3>Phase 0 · Checkpoint and baseline</h3>
+            <p>
+              Checkpoint Saple-MCP's dirty tree, separate existing feature work, correct the tool
+              count, preserve the 118-test baseline, and add compatibility fixtures.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 1 · Repository integration</h3>
+            <p>
+              Move Saple-MCP into Bridge without behavior changes. Update sidecar staging, Cargo
+              paths, CI, and release packaging while preserving the binary name.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 2 · Managed engine lifecycle</h3>
+            <p>
+              Add serve/connect modes, exclusive workspace ownership, authenticated discovery,
+              dynamic endpoint selection, version handshake, and current MCP Streamable HTTP.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 3 · Rust state machine</h3>
+            <p>
+              Port scheduler behavior and tests, add typed
+              commands/snapshots/events/revisions/attempts, persist before side effects, and make
+              Bridge a projection client.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 4 · Reliability</h3>
+            <p>
+              Move orchestrated process ownership to the engine. Add retry, deadline, cancellation,
+              recovery, durable approval/input states, output limits, and worktrees.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 5 · Structured agent runtime</h3>
+            <p>
+              Add scoped runtime MCP sessions, structured reports, durable
+              messages/artifacts/steering, and retain markers as fallback.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 6 · Source-of-truth cutover</h3>
+            <p>
+              Make the engine authoritative, migrate or project legacy files, remove renderer
+              scheduling and duplicate lifecycle/cycle/file logic, and route mutations through the
+              owner.
+            </p>
+          </div>
+          <div class="phase">
+            <h3>Phase 7 · Advanced orchestration</h3>
+            <p>
+              Only after the durable static path: dynamic subtasks, nested teams, conditional
+              branches, budgets, fair scheduling, and richer artifact validation.
+            </p>
+          </div>
+        </section>
+
+        <section id="reuse">
+          <h2>Reuse and delete</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>Reuse</h3>
+              <ul>
+                <li>
+                  Bridge provider validation, process-tree handling, keychain, markers, scheduler
+                  tests, notifications, and Git review.
+                </li>
+                <li>
+                  Saple-MCP containment, canonical storage helpers, structured errors, context,
+                  tasks/runs/events/artifacts, prompts/resources, stdio compatibility, Axum, and
+                  integration tests.
+                </li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Delete after cutover</h3>
+              <ul>
+                <li>Renderer scheduler and launch logic.</li>
+                <li>Terminal-driven swarm state mutation.</li>
+                <li>Duplicate session lifecycle persistence and cycle validation.</li>
+                <li>Duplicate path/lock/memory implementations.</li>
+                <li>Independent mutation paths bypassing the engine.</li>
+                <li>Custom HTTP business routes if no consumer remains.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="risks">
+          <h2>Principal risks and mitigations</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Risk</th>
+                <th>Mitigation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Dirty-tree migration</td>
+                <td>
+                  Checkpoint first; make the repository move mechanical and separately reviewable.
+                </td>
+              </tr>
+              <tr>
+                <td>Split-brain workspace owners</td>
+                <td>
+                  OS-level exclusive ownership, discovery, version handshake, and connector mode.
+                </td>
+              </tr>
+              <tr>
+                <td>Crash around process spawn</td>
+                <td>
+                  Persist attempt and side-effect intent first; reconcile pending intents at
+                  startup.
+                </td>
+              </tr>
+              <tr>
+                <td>Stale attempt completion</td>
+                <td>Attempt-scoped callbacks and capabilities.</td>
+              </tr>
+              <tr>
+                <td>Orphan descendant processes</td>
+                <td>Retain Job Object/process-group teardown and verify per OS.</td>
+              </tr>
+              <tr>
+                <td>MCP compatibility</td>
+                <td>
+                  Retain stdio, negotiate versions, preserve binary/config identity, migrate
+                  additively.
+                </td>
+              </tr>
+              <tr>
+                <td>Permission overclaim</td>
+                <td>Separate engine authorization from OS/provider sandboxing.</td>
+              </tr>
+              <tr>
+                <td>Storage growth</td>
+                <td>Measure; replace storage behind the same interface only when needed.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="acceptance">
+          <h2>Acceptance criteria for the first capable release</h2>
+          <ul>
+            <li>Exactly one engine owner per workspace.</li>
+            <li>Bridge can close and reopen without losing workflow history.</li>
+            <li>Commands are idempotent and revision-checked.</li>
+            <li>Every process event is attempt-scoped.</li>
+            <li>Rust owns DAG scheduling, gates, pause/resume/cancel, retry, and capacity.</li>
+            <li>Crashes between intent and side effect are recoverable.</li>
+            <li>Bridge is a command/event client, not a scheduler.</li>
+            <li>stdio MCP clients reach the same owner.</li>
+            <li>Current negotiation and Streamable HTTP work where advertised.</li>
+            <li>Child mutation tools use scoped capabilities.</li>
+            <li>Editing agents can use isolated worktrees.</li>
+            <li>Existing context data remains readable throughout migration.</li>
+          </ul>
+        </section>
+
+        <section id="non-goals">
+          <h2>Deliberate non-goals</h2>
+          <p>
+            Do not initially add Kafka/NATS/RabbitMQ, Temporal, gRPC, Postgres, multi-machine
+            scheduling, a provider marketplace, distributed leases, a custom Git merge engine, or
+            SQLite before measurement demonstrates the need.
+          </p>
+          <blockquote>
+            The shortest reliable path is one local engine, one writer, a three-operation interface,
+            standard MCP adapters, and the existing provider/process capabilities reused behind it.
+          </blockquote>
+        </section>
+
+        <footer>
+          Generated from the repository-grounded Saple Bridge and Saple-MCP orchestration
+          investigation.
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
