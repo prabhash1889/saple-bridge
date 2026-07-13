@@ -165,19 +165,20 @@ describe('runAgentScan scheduling', () => {
     seed([agent('a'), agent('b'), agent('c'), agent('d')]);
 
     await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
-    await vi.waitFor(() => {
-      const active = useSwarmStore
-        .getState()
-        .activeAgents.filter((x) => x.status === 'running' || x.status === 'starting');
-      expect(active.length).toBe(2);
-    });
+    // addPane fires inside the fire-and-forget launch, a few awaits after the status flips to
+    // 'starting', so wait on the spawn count itself rather than on status (which lands earlier).
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalledTimes(2));
+
+    const active = useSwarmStore
+      .getState()
+      .activeAgents.filter((x) => x.status === 'running' || x.status === 'starting');
+    expect(active.length).toBe(2);
 
     // The over-limit agents stay unstarted until a slot frees; only two panes were spawned.
     const idle = useSwarmStore
       .getState()
       .activeAgents.filter((x) => x.status === 'idle' || x.status === 'waiting');
     expect(idle.length).toBe(2);
-    expect(addPaneMock).toHaveBeenCalledTimes(2);
   });
 });
 

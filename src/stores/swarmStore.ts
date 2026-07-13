@@ -571,23 +571,42 @@ export const useSwarmStore = create<SwarmState>()(
         const { activeAgents, status, swarmActive } = get();
         if (!swarmActive || status !== 'running') return;
 
-        let stateChanged = false;
-        const updatedAgents = [...activeAgents];
+        // The scan decides transitions against a local working copy, then commits them onto LIVE
+        // state by agent id — never by writing back the whole captured array. A launchAgentProcess
+        // kicked off below is NOT awaited: it advances its own agent to 'running' (with a
+        // terminalId) via a functional set during our awaits. Overwriting state with the snapshot
+        // captured here would revert that to 'starting' and drop the terminalId, so the agent's
+        // completion marker (matched by terminalId) never lands and it — plus every dependent —
+        // hangs until a restart reconciles it. Each pending change is applied once and then
+        // dropped, so a later commit can't re-stamp 'starting' over an agent already running.
+        const working = [...activeAgents];
+        let pending = new Map<string, Partial<SwarmAgent>>();
+        const commit = async () => {
+          if (pending.size === 0) return;
+          const changes = pending;
+          pending = new Map();
+          set(state => ({
+            activeAgents: state.activeAgents.map(a =>
+              changes.has(a.id) ? { ...a, ...changes.get(a.id) } : a
+            ),
+          }));
+          await get().saveSwarmState(projectPath);
+        };
 
         // 1. Mark dependents as blocked if any dependency failed or is blocked
         let changedBlocked = true;
         while (changedBlocked) {
           changedBlocked = false;
-          for (let i = 0; i < updatedAgents.length; i++) {
-            const agent = updatedAgents[i];
+          for (let i = 0; i < working.length; i++) {
+            const agent = working[i];
             if (agent.status !== 'blocked' && agent.status !== 'failed' && agent.status !== 'done') {
               const hasFailedDependency = agent.dependencies.some(depId => {
-                const depAgent = updatedAgents.find(a => a.id === depId);
+                const depAgent = working.find(a => a.id === depId);
                 return depAgent && (depAgent.status === 'failed' || depAgent.status === 'blocked');
               });
               if (hasFailedDependency) {
-                updatedAgents[i] = { ...agent, status: 'blocked' };
-                stateChanged = true;
+                working[i] = { ...agent, status: 'blocked' };
+                pending.set(agent.id, { status: 'blocked' });
                 changedBlocked = true;
               }
             }
@@ -595,16 +614,18 @@ export const useSwarmStore = create<SwarmState>()(
         }
 
         // 2. Check general completion
-        const allCompleted = updatedAgents.every(a => a.status === 'done');
-        const anyFailedOrBlocked = updatedAgents.some(a => a.status === 'failed' || a.status === 'blocked');
-        const allFinished = updatedAgents.every(a => ['done', 'failed', 'blocked', 'stopped'].includes(a.status));
+        const allCompleted = working.every(a => a.status === 'done');
+        const anyFailedOrBlocked = working.some(a => a.status === 'failed' || a.status === 'blocked');
+        const allFinished = working.every(a => ['done', 'failed', 'blocked', 'stopped'].includes(a.status));
 
         if (allCompleted) {
-          set({ status: 'completed', activeAgents: updatedAgents });
+          await commit();
+          set({ status: 'completed' });
           await get().saveSwarmState(projectPath);
           return;
         } else if (allFinished && anyFailedOrBlocked) {
-          set({ status: 'failed', activeAgents: updatedAgents });
+          await commit();
+          set({ status: 'failed' });
           await get().saveSwarmState(projectPath);
           return;
         }
@@ -615,25 +636,25 @@ export const useSwarmStore = create<SwarmState>()(
         // Over-limit agents stay 'waiting'/'idle' and launch on a later scan — each completion
         // fires checkAndRunNextAgents, which frees a slot and picks up the next one.
         const maxParallel = useTerminalStore.getState().getMaxPaneLimit();
-        let activeCount = updatedAgents.filter(a => a.status === 'starting' || a.status === 'running').length;
-        for (let i = 0; i < updatedAgents.length; i++) {
+        let activeCount = working.filter(a => a.status === 'starting' || a.status === 'running').length;
+        for (let i = 0; i < working.length; i++) {
           if (activeCount >= maxParallel) break;
-          const agent = updatedAgents[i];
+          const agent = working[i];
           if (agent.status === 'waiting' || agent.status === 'idle') {
             const allDepsDone = agent.dependencies.every(depId => {
-              const depAgent = updatedAgents.find(a => a.id === depId);
+              const depAgent = working.find(a => a.id === depId);
               return depAgent && depAgent.status === 'done';
             });
 
             if (allDepsDone) {
-              updatedAgents[i] = { ...agent, status: 'starting' };
-              stateChanged = true;
+              working[i] = { ...agent, status: 'starting' };
+              pending.set(agent.id, { status: 'starting' });
               activeCount++;
 
-              set({ activeAgents: updatedAgents });
-              await get().saveSwarmState(projectPath);
+              // Commit 'starting' (plus any pending blocks) and persist BEFORE launching, so the
+              // pane shows as starting immediately; then kick off the unawaited async launch.
+              await commit();
 
-              // Launch async process
               launchAgentProcess(projectPath, agent).catch(err => {
                 console.error(`Error launching agent ${agent.id}:`, err);
               });
@@ -641,10 +662,8 @@ export const useSwarmStore = create<SwarmState>()(
           }
         }
 
-        if (stateChanged) {
-          set({ activeAgents: updatedAgents });
-          await get().saveSwarmState(projectPath);
-        }
+        // Flush any leftover changes (e.g. blocks with no launches this scan).
+        await commit();
       },
 
       relaunchAgent: async (projectPath, agentId) => {
