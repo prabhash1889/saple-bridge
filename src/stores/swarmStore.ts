@@ -545,6 +545,22 @@ export const useSwarmStore = create<SwarmState>()(
         ) {
           notifyAgentStatusChanged(previousAgent.name, effectiveStatus);
         }
+        // P0: mirror the swarm agent's terminal/review transition onto its canonical run so the
+        // run is finished (done/failed) or advanced to review — routed through the same session the
+        // launch created, found by the agent's terminal pane. Outcome artifacts (P3) flow in from
+        // agents via MCP; here we just close the run.
+        if (
+          previousAgent &&
+          previousAgent.status !== effectiveStatus &&
+          (effectiveStatus === 'done' || effectiveStatus === 'failed' || effectiveStatus === 'review')
+        ) {
+          const linkedSession = previousAgent.terminalId
+            ? useAgentSessionStore.getState().getSessionByTerminalId(previousAgent.terminalId)
+            : undefined;
+          if (linkedSession) {
+            void useAgentSessionStore.getState().completeSession(projectPath, linkedSession.id, effectiveStatus);
+          }
+        }
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
       },

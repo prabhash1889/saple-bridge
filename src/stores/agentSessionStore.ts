@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { enqueueWrite } from '../lib/writeQueue';
 import { createId } from '../lib/id';
 import { nowIso } from '../lib/date';
-import type { AgentSession, AgentStatus } from '../types/agent';
+import type { AgentSession, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { AgentRole } from '../types/agent';
+import { registerLaunch, recordRunOutcome, writeOutcomeArtifacts } from '../lib/controlPlane';
 
 interface AgentSessionState {
   sessions: AgentSession[];
@@ -28,6 +29,12 @@ interface AgentSessionState {
   }) => Promise<AgentSession>;
   updateSession: (sessionId: string, updates: Partial<AgentSession>) => void;
   setSessionStatus: (sessionId: string, status: AgentStatus, exitCode?: number) => void;
+  completeSession: (
+    projectPath: string,
+    sessionId: string,
+    status: AgentStatus,
+    outcome?: AgentOutcome,
+  ) => Promise<void>;
   getRecoverableSessions: () => AgentSession[];
   getSessionByTerminalId: (terminalId: string) => AgentSession | undefined;
   persistAndUpdate: (projectPath: string, sessionId: string, updates: Partial<AgentSession>) => Promise<void>;
@@ -97,6 +104,17 @@ export const useAgentSessionStore = create<AgentSessionState>()(
         artifacts: [],
       };
 
+      // P0: register the canonical agent + run records and cross-reference them on the session, so
+      // the launch produces exactly one agent record and one run record. Best-effort — a control
+      // plane hiccup must not block the launch.
+      try {
+        const ids = await registerLaunch(opts.projectPath, session);
+        session.agentId = ids.agentId;
+        session.runId = ids.runId;
+      } catch (error) {
+        console.error('Failed to register control-plane records for session:', error);
+      }
+
       set((state) => ({
         sessions: [...state.sessions, session],
       }));
@@ -128,6 +146,22 @@ export const useAgentSessionStore = create<AgentSessionState>()(
           };
         }),
       }));
+    },
+
+    completeSession: async (projectPath, sessionId, status, outcome) => {
+      // Capture the session (with its agentId/runId) before the status flip.
+      const session = get().sessions.find((s) => s.id === sessionId);
+      get().setSessionStatus(sessionId, status);
+      await get().saveSessions(projectPath);
+      if (!session?.runId) return;
+      // P0/P3: write the structured outcome artifacts, then record the run outcome. Best-effort so
+      // a malformed outcome or a control-plane failure can't break completion handling.
+      try {
+        if (outcome) await writeOutcomeArtifacts(projectPath, session, outcome);
+        await recordRunOutcome(projectPath, session.runId, status, outcome);
+      } catch (error) {
+        console.error('Failed to record completion outcome:', error);
+      }
     },
 
     getRecoverableSessions: () => {

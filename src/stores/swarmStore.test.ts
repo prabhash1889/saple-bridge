@@ -42,6 +42,8 @@ vi.mock('./agentSessionStore', () => ({
   useAgentSessionStore: {
     getState: () => ({
       createSession: vi.fn(async () => ({ id: 'session-1' })),
+      getSessionByTerminalId: vi.fn(() => undefined),
+      completeSession: vi.fn(async () => {}),
     }),
   },
 }));
