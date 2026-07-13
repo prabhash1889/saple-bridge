@@ -158,6 +158,15 @@ Support normal text entry first. OS dictation already works at the text-input la
 
 ## Priority 3 — Structured agent outcomes
 
+> **Status: Done.** `AgentOutcome` (summary / changedFiles / tests / decisions / needsReview) is
+> written to the canonical artifact store as `report` + `test_result` records by
+> `completeSession` → `writeOutcomeArtifacts` (never into `sessions.json`). An agent records one by
+> writing `.saple/swarm/outcomes/<agentId>.json`; `parseAgentOutcome` sanitizes the untrusted/partial
+> data so bad input can't break completion. The swarm card surfaces the summary and test result
+> without opening a terminal (`readRunOutcome`), and Review shows the test command/result via the
+> run's `test_result` artifact. Marker-only agents keep working (outcome is optional). Covered by
+> `parseAgentOutcome` robustness tests and the `completeSession` outcome/fallback tests.
+
 ### Problem
 
 Terminal completion markers communicate status but not enough evidence. Review, handoffs, history, and notifications need a predictable summary of what happened.
