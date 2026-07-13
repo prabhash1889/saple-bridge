@@ -9,10 +9,12 @@ import {
   Terminal as TerminalIcon,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { AiProvider, useTerminalStore } from '../../stores/terminalStore';
 import { useTerminalLayoutStore } from '../../stores/terminalLayoutStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { TerminalPane } from './TerminalPane';
+import { formatDroppedPaths } from './terminalFileDrop';
 
 
 const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
@@ -129,6 +131,31 @@ const TerminalGridComponent: React.FC = () => {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Native file drop: dropping files/images from the OS onto a terminal pane inserts their
+  // shell-quoted paths at that pane's prompt - the standard terminal-emulator gesture, and how
+  // AI CLIs (Claude Code, Codex, ...) attach images. Tauri intercepts OS drops at the webview
+  // level, so HTML5 drag-and-drop never fires here; we read the paths and drop point from the
+  // Tauri drag-drop event and hit-test which pane the drop landed on.
+  useEffect(() => {
+    const unlistenPromise = getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type !== 'drop') return;
+      const { paths, position } = event.payload;
+      if (!paths.length) return;
+      // Tauri reports the drop in physical pixels; elementFromPoint expects CSS pixels.
+      const dpr = window.devicePixelRatio || 1;
+      const el = document.elementFromPoint(position.x / dpr, position.y / dpr);
+      const sessionId = el?.closest<HTMLElement>('.terminal-pane[data-session-id]')?.dataset.sessionId;
+      if (!sessionId) return;
+      useTerminalStore.getState().setFocusedPane(sessionId);
+      invoke('write_pty', { id: sessionId, data: formatDroppedPaths(paths) }).catch((err) => {
+        console.error('Failed to insert dropped file path:', err);
+      });
+    });
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   useEffect(() => {
     if (panes.length === 0) {

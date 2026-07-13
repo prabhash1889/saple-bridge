@@ -231,6 +231,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       style={{
         '--terminal-pane-color': paneColor,
       } as React.CSSProperties}
+      data-session-id={sessionId}
       data-focused={isFocused ? 'true' : 'false'}
     >
       <TerminalPaneTitlebar
