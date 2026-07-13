@@ -15,9 +15,11 @@
 use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// Process-wide registry of per-path locks. Keyed by the path string so every writer of a given
 /// file shares one mutex. (Cross-process serialization is impossible here; the temp+rename below
@@ -82,10 +84,28 @@ pub fn is_last_own_write(path: &Path, contents: &[u8]) -> bool {
 
 /// Atomically write `contents` to `path`, serialized against other writers of the same path.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-
     let guard = lock_for(path);
     let _held = guard.lock().unwrap();
+    write_unlocked(path, contents)
+}
+
+/// Run `f` while holding both the per-path mutex AND the cross-process sentinel lock, so a full
+/// read-modify-write (load JSON, mutate, save) against a canonical collection file is serialized
+/// against the saple-mcp sidecar too — not just this process. `f` MUST persist via
+/// [`write_unlocked`] (it already holds the same non-reentrant mutex; [`atomic_write`] would
+/// deadlock re-acquiring it). Mirrors saple-mcp's `with_path_lock` so both crates contend on the
+/// same sentinel.
+pub fn with_path_lock<R>(path: &Path, f: impl FnOnce() -> R) -> R {
+    let guard = lock_for(path);
+    let _held = guard.lock().unwrap();
+    with_cross_process_lock(path, f)
+}
+
+/// Temp-file + rename write **without** taking the per-path lock — only safe while already holding
+/// it (e.g. inside a [`with_path_lock`] closure); otherwise use [`atomic_write`]. Still tags the
+/// write in `own_writes` so the file watcher recognizes the rename event as our own echo.
+pub fn write_unlocked(path: &Path, contents: &[u8]) -> Result<(), String> {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
 
     let parent = path
         .parent()
@@ -118,6 +138,65 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
             Err(format!("Failed to commit file write: {}", e))
         }
     }
+}
+
+/// The sentinel file that serializes cross-process writers of `target`: a sibling `.<name>.lock`
+/// (same directory, same shape as the atomic-write temp files the watcher already tolerates).
+fn sentinel_path(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "f".to_string());
+    target.with_file_name(format!(".{}.lock", name))
+}
+
+/// Hold an OS-wide advisory lock on `target` across `f`, so a Bridge process and a saple-mcp sidecar
+/// never interleave read-modify-write cycles on the same canonical file and drop a record.
+///
+/// The lock is a sentinel file created with `create_new` (an atomic "create only if absent" on both
+/// Windows and Unix — no extra dependency, no per-OS `LockFileEx`/`flock` split). A holder that
+/// crashes leaves the sentinel behind; it is stolen once older than `STALE` so a dead process can't
+/// wedge writes forever. If the lock can't be taken within `WAIT_TIMEOUT` (or the sentinel can't be
+/// created at all), `f` runs anyway — a best-effort lock must never hang or fail a real write.
+///
+/// ponytail: sentinel-file spinlock, not OS byte-range locks. Upgrade path if contention ever
+/// bites: real advisory locks (`LockFileEx`/`flock`) behind a shared saple-core crate.
+pub fn with_cross_process_lock<R>(target: &Path, f: impl FnOnce() -> R) -> R {
+    const STALE: Duration = Duration::from_secs(15);
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    let lock = sentinel_path(target);
+    let start = Instant::now();
+    let mut acquired = false;
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&lock) {
+            Ok(mut file) => {
+                let _ = write!(file, "{}", std::process::id());
+                acquired = true;
+                break;
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // Steal a stale sentinel (previous holder crashed mid-write).
+                if let Ok(modified) = fs::metadata(&lock).and_then(|m| m.modified()) {
+                    if modified.elapsed().map(|d| d > STALE).unwrap_or(false) {
+                        let _ = fs::remove_file(&lock);
+                        continue;
+                    }
+                }
+                if start.elapsed() > WAIT_TIMEOUT {
+                    break; // best-effort: proceed rather than block the caller forever
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => break, // can't create the sentinel (perms?) — proceed unlocked
+        }
+    }
+
+    let out = f();
+    if acquired {
+        let _ = fs::remove_file(&lock);
+    }
+    out
 }
 
 #[cfg(test)]
