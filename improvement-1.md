@@ -22,6 +22,17 @@ The plan deliberately avoids an infinite canvas, a new memory engine, and a gene
 
 ## Priority 0 — Connect the existing control plane
 
+> **Status: Done.** Bridge writes the canonical `agents.json` / `runs.json` / `artifacts.json`
+> directly through a whitelisted, cross-process-locked Rust command (`control_plane.rs`
+> `canonical_record_write`); `sessions.json` gained `agentId`/`runId` cross-references.
+> `createSession` registers one agent + one run per launch (`src/lib/controlPlane.ts`),
+> `completeSession` finishes the run and writes outcome artifacts, and swarm terminal/review
+> transitions route through it. `review.rs` reads completion evidence from the canonical artifact
+> store via the session's `runId` and records the decision back onto the run. Both crates' `fs_lock`
+> gained a shared sentinel-file OS advisory lock so concurrent Bridge/sidecar read-modify-write
+> cycles can't lose updates. Covered by a Rust cross-process lock test, a Rust launch→completion→
+> review integration test, and frontend control-plane tests.
+
 ### Problem
 
 Bridge sessions, Swarm state, and Saple MCP's agents/runs/artifacts are only partially connected. `AgentSession.artifacts` exists, and Review looks for test artifacts, but Bridge initializes sessions with an empty list and does not complete the lifecycle.
@@ -39,6 +50,17 @@ Review decision     → record final run/review outcome
 
 Do not create a new event bus. Route the events through the existing session and status transition functions.
 
+### Canonical store decision
+
+Two agent/artifact stores already exist and this priority must not leave both authoritative:
+
+- Bridge: `.saple/agents/sessions.json` (embedded `artifacts` array, read by `review.rs` today)
+- Saple MCP: `.saple/agents.json`, `.saple/runs.json`, `.saple/artifacts.json` (+ blob bodies under `.saple/artifacts/`)
+
+Decision: the Saple MCP files (`agents.json`, `runs.json`, `artifacts.json`) are canonical for the control plane. `sessions.json` remains Bridge's runtime/PTY state only and gains `agentId` and `runId` cross-reference fields. Bridge is not an MCP client; it writes the canonical files directly through its Rust layer. `review.rs` switches to reading artifacts from the canonical store via the session's `runId`.
+
+Cross-process locking caveat: both crates' `fs_lock` implementations are process-local by their own documentation ("Cross-process serialization is impossible here"). Temp-file-and-rename prevents torn reads but not lost updates: Bridge and one or more sidecar processes (each agent CLI spawns its own `saple-mcp` stdio server) can interleave read-modify-write cycles on the same collection file and silently drop a record. This race already exists today between two concurrent agents; P0 widens the writer set, so P0 must include an OS-level advisory file lock (Windows `LockFileEx`, Unix `flock`, via a shared lock-sentinel convention) held across the whole read-modify-write cycle in both crates for the canonical collection files. The long-term fix is the single mutation owner described in `all-other-files/agent-orchestration-architecture.md`; the OS lock is the bridge until that engine exists.
+
 ### Likely touchpoints
 
 - `src/stores/agentSessionStore.ts`
@@ -55,6 +77,7 @@ Do not create a new event bus. Route the events through the existing session and
 - Completion stores a summary and test result when supplied.
 - Review can display the recorded completion evidence.
 - Restart reconciliation does not duplicate an existing run.
+- Concurrent read-modify-write cycles from two processes against the same canonical file do not lose updates (covered by a cross-process locking test).
 - One integration test covers launch → completion → review evidence.
 
 ---
@@ -141,7 +164,7 @@ Terminal completion markers communicate status but not enough evidence. Review, 
 
 ### Implement
 
-Use the existing artifact model and Saple MCP artifact tools to record:
+Record outcomes as artifacts in the canonical store from the Priority 0 decision (`.saple/artifacts.json`, written by agents through the MCP artifact tools or by Bridge through Rust). Do not write outcome artifacts into `sessions.json`. Shape:
 
 ```json
 {
@@ -230,15 +253,18 @@ Terminal URLs currently open in the system browser. The agent cannot receive a v
 
 ### Implement
 
-Add a small localhost-only Preview panel:
+Add a small localhost-only Preview panel. First release:
 
 - User-entered or detected local URL
 - Refresh
 - Open externally
-- Capture screenshot
-- Attach screenshot to a task, swarm context, or selected agent mailbox
+- Attach the previewed URL to a task, swarm context, or selected agent mailbox
 
-Start with `localhost`, `127.0.0.1`, and `[::1]`. Do not create a general browsing or automation system.
+Start with `localhost`, `127.0.0.1`, and `[::1]`. Do not create a general browsing or automation system. The production CSP in `tauri.conf.json` needs a `frame-src` entry for the loopback origins.
+
+### Screenshot capture (separate follow-up, needs investigation)
+
+Deliberately excluded from the first release. JavaScript cannot capture a cross-origin iframe, and Tauri 2 has no built-in webview-capture API, so this requires native per-OS capture code in Rust (or a vetted plugin). Scope and estimate it as its own item once the preview panel ships; only then add "attach screenshot" on top of the existing attach-URL path.
 
 ### Likely touchpoints
 
@@ -246,15 +272,15 @@ Start with `localhost`, `127.0.0.1`, and `[::1]`. Do not create a general browsi
 - `src/App.tsx`
 - `src/stores/projectStore.ts`
 - Existing context-file and mailbox paths
-- Tauri capability configuration if screenshot capture requires it
+- `src-tauri/tauri.conf.json` CSP (`frame-src` for loopback origins)
 
 ### Acceptance criteria
 
 - Only loopback URLs are accepted in the first release.
 - Preview failure explains whether the server is unavailable or embedding is blocked.
-- Captured images are stored inside the project context area.
 - The selected destination is visible before attachment.
-- Keyboard navigation and a meaningful screenshot alternative label are provided.
+- Keyboard navigation is complete.
+- Screenshot capture ships separately; when it does, captured images are stored inside the project context area.
 
 ---
 
