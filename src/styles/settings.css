@@ -700,3 +700,134 @@
   align-items: center;
   gap: 4px;
 }
+
+/* --- SSH terminal presets (P7) --- */
+.ssh-presets {
+  margin-top: 16px;
+}
+
+.ssh-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ssh-preset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-light);
+}
+
+.ssh-preset-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ssh-preset-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ssh-preset-command {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.ssh-preset-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ssh-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.ssh-preset-btn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ssh-preset-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.ssh-preset-icon:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.ssh-preset-icon.danger:hover {
+  color: var(--color-danger);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.ssh-preset-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-light);
+}
+
+.ssh-preset-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  margin-top: 12px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.ssh-preset-add:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}

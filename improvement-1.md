@@ -427,6 +427,22 @@ Do not allow the MCP sidecar to execute shell commands. It should record the req
 
 ## Priority 7 — SSH terminal presets
 
+> **Status: Done.** A persisted `sshPresetStore` (localStorage, user-level) holds presets of
+> `{ name, hostAlias, remoteDir?, providerCommand? }` - no password/key field exists, so nothing
+> sensitive is ever stored. `buildSshCommand` (`src/lib/sshPreset.ts`) assembles the launch string:
+> `ssh <alias>` for a bare host, or `ssh -t <alias> "cd '<dir>' && <cmd>"` when a remote dir/command
+> is set (TTY forced only when handing ssh a command). Quoting is cross-shell safe - the remote
+> payload is one level of double quotes (passed to ssh as a single arg by both Windows PowerShell and
+> macOS sh) and the remote dir is single-quoted so paths with spaces still `cd` on the remote shell.
+> A new "SSH Terminal Presets" section lives inside Settings > Workspace (no new nav entry, per the
+> no-new-nav rule) with add/edit/delete and a live command preview. Launch routes through the
+> existing custom-command `addPane` path (so its validation is unchanged and the Rust launch gate is
+> the same), behind the shared confirm dialog that shows the exact command first; on success it
+> switches to the Terminals room. Because the custom-command path keeps the pane alive after the
+> process exits (`-NoExit` on Windows, `; exec $shell` on Unix), a failed auth drops to a live shell
+> for manual SSH. The section copy states it's a remote terminal, not a remote workspace. Covered by
+> `sshPreset.test.ts` (bare host, TTY-on-command, space-safe dir quoting, no secrets).
+
 ### Problem
 
 Custom commands can run SSH manually, but remote setup is repetitive and not represented as a reusable terminal configuration.

@@ -3,6 +3,7 @@ import { CheckCircle, Save, Terminal } from 'lucide-react';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useTerminalFontStore } from '../../../stores/terminalFontStore';
 import { MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS } from '../../../lib/terminalLimits';
+import { SshPresetsSection } from './SshPresetsSection';
 
 export const WorkspaceTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -50,6 +51,7 @@ export const WorkspaceTab: React.FC = () => {
   };
 
   return (
+    <>
     <section className="surface">
       <div className="section-header">
         <Terminal size={18} className="section-icon" />
@@ -148,5 +150,7 @@ export const WorkspaceTab: React.FC = () => {
         </div>
       )}
     </section>
+    <SshPresetsSection />
+    </>
   );
 };
