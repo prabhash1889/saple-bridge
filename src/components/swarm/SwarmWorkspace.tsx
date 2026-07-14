@@ -59,6 +59,8 @@ export const SwarmWorkspace: React.FC = () => {
   const activeAgents = useSwarmStore((state) => state.activeAgents);
   const templates = useSwarmStore((state) => state.templates);
   const swarmActive = useSwarmStore((state) => state.swarmActive);
+  const pendingWizardMission = useSwarmStore((state) => state.pendingWizardMission);
+  const setPendingWizardMission = useSwarmStore((state) => state.setPendingWizardMission);
   const loadSwarmState = useSwarmStore((state) => state.loadSwarmState);
   const pauseSwarm = useSwarmStore((state) => state.pauseSwarm);
   const resumeSwarm = useSwarmStore((state) => state.resumeSwarm);
@@ -66,7 +68,7 @@ export const SwarmWorkspace: React.FC = () => {
   const updateAgentStatus = useSwarmStore((state) => state.updateAgentStatus);
   const relaunchAgent = useSwarmStore((state) => state.relaunchAgent);
   const forceCompleteAgent = useSwarmStore((state) => state.forceCompleteAgent);
-  const writeMailbox = useSwarmStore((state) => state.writeMailbox);
+  const postToMailbox = useSwarmStore((state) => state.postToMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   // null until the user picks a template; the wizard then opens pre-seeded with it.
@@ -75,6 +77,8 @@ export const SwarmWorkspace: React.FC = () => {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'graph' | 'grid'>('graph');
   const [wizardOpen, setWizardOpen] = useState(false);
+  // Mission text to pre-fill the wizard with, set by the Command Palette composer's "New swarm".
+  const [wizardMission, setWizardMission] = useState<string | undefined>(undefined);
   const [mailboxContents, setMailboxContents] = useState<Record<string, string>>({});
   const [loadingMailboxIds, setLoadingMailboxIds] = useState<Set<string>>(() => new Set());
   // Handoff bodies keyed by `${from}->${to}`. Polled on the same timer as mailboxes.
@@ -97,6 +101,16 @@ export const SwarmWorkspace: React.FC = () => {
       setSelectedAgentId(activeAgents[0].id);
     }
   }, [swarmActive, activeAgents, selectedAgentId]);
+
+  // Command Palette composer's "New swarm" target: open the wizard pre-filled with the composed
+  // mission, then clear the one-shot flag so it doesn't reopen on the next render.
+  useEffect(() => {
+    if (pendingWizardMission != null) {
+      setWizardMission(pendingWizardMission);
+      setWizardOpen(true);
+      setPendingWizardMission(null);
+    }
+  }, [pendingWizardMission, setPendingWizardMission]);
 
   // Drop any in-progress mailbox draft when the inspected agent changes so a message
   // typed for one agent isn't accidentally sent to another.
@@ -302,12 +316,7 @@ export const SwarmWorkspace: React.FC = () => {
     if (!currentProjectPath || !selectedAgentId || !composeText.trim()) return;
     setSendingMailbox(true);
     try {
-      // Append the operator note beneath any existing mailbox content so a posted message
-      // doesn't clobber what the agent already wrote.
-      const existing = mailboxContents[selectedAgentId] ?? '';
-      const stamp = `\n\n---\n**Operator message:**\n\n${composeText.trim()}\n`;
-      const next = existing ? `${existing.replace(/\s+$/, '')}${stamp}` : stamp.trimStart();
-      await writeMailbox(currentProjectPath, selectedAgentId, next);
+      const next = await postToMailbox(currentProjectPath, selectedAgentId, composeText);
       setMailboxContents((prev) => ({ ...prev, [selectedAgentId]: next }));
       setComposeText('');
     } catch (err) {
@@ -609,8 +618,9 @@ export const SwarmWorkspace: React.FC = () => {
       {wizardOpen && (
         <SwarmWizard
           projectPath={currentProjectPath}
-          onClose={() => setWizardOpen(false)}
+          onClose={() => { setWizardOpen(false); setWizardMission(undefined); }}
           initialTemplateId={selectedTemplateId}
+          initialMission={wizardMission}
         />
       )}
     </div>

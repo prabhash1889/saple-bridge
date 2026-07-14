@@ -277,6 +277,53 @@ describe('loadSwarmState restart reconciliation', () => {
   });
 });
 
+describe('postToMailbox (P2 composer)', () => {
+  it('appends the operator note under existing mailbox content without clobbering it', async () => {
+    let written: string | undefined;
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'read_mailbox_file') return Promise.resolve('agent wrote this earlier');
+      if (cmd === 'write_mailbox_file') {
+        written = args.content as string;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const next = await useSwarmStore.getState().postToMailbox(PROJECT, 'a', '  do the thing  ');
+
+    expect(written).toBe(next);
+    expect(next.startsWith('agent wrote this earlier')).toBe(true);
+    expect(next).toContain('**Operator message:**');
+    expect(next).toContain('do the thing'); // trimmed
+    expect(next).not.toContain('  do the thing  ');
+  });
+
+  it('starts a fresh mailbox when none exists yet', async () => {
+    let written: string | undefined;
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'read_mailbox_file') return Promise.reject(new Error('not found'));
+      if (cmd === 'write_mailbox_file') {
+        written = args.content as string;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const next = await useSwarmStore.getState().postToMailbox(PROJECT, 'a', 'hello');
+
+    expect(written).toBe(next);
+    expect(next.startsWith('---')).toBe(true); // no leading blank lines on a fresh mailbox
+    expect(next).toContain('hello');
+  });
+
+  it('is a no-op for a blank message', async () => {
+    invokeMock.mockClear();
+    const next = await useSwarmStore.getState().postToMailbox(PROJECT, 'a', '   ');
+    expect(next).toBe('');
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('loadSwarmState cross-project signal recovery (P13)', () => {
   const diskState = (agents: SwarmAgent[], status: string) =>
     JSON.stringify({

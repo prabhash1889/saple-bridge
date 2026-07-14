@@ -46,6 +46,8 @@ function App() {
   const themeMode = useThemeStore((state) => state.mode);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // When the palette was opened via the composer shortcut, it starts on the target picker.
+  const [paletteCompose, setPaletteCompose] = useState(false);
   const [mountedHeavyViews, setMountedHeavyViews] = useState<Set<ViewType>>(() => new Set<ViewType>());
   const hideTopBar = HEAVY_VIEWS.includes(activeView);
 
@@ -139,12 +141,21 @@ function App() {
       // 1. Command Palette: Ctrl+P / Cmd+P
       if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
         e.preventDefault();
+        setPaletteCompose(false);
         setPaletteOpen((prev) => !prev);
       }
 
       // 2. Open Command Palette: Ctrl+Shift+P / Cmd+Shift+P
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
         e.preventDefault();
+        setPaletteCompose(false);
+        setPaletteOpen(true);
+      }
+
+      // 2b. Open the composer: Ctrl+Shift+K / Cmd+Shift+K
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteCompose(true);
         setPaletteOpen(true);
       }
 
@@ -213,7 +224,7 @@ function App() {
 
   return (
     <div className={`app-grid ${hideTopBar ? 'no-topbar' : ''}`}>
-      <Sidebar onOpenPalette={() => setPaletteOpen(true)} />
+      <Sidebar onOpenPalette={() => { setPaletteCompose(false); setPaletteOpen(true); }} />
       {!hideTopBar && <TopBar />}
       <main className="content-area">
         {renderHeavyView('terminals', <TerminalGrid />)}
@@ -235,7 +246,7 @@ function App() {
       <ShortcutsHelpDialog />
       {paletteOpen && (
         <Suspense fallback={null}>
-          <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
+          <CommandPalette isOpen={paletteOpen} initialCompose={paletteCompose} onClose={() => setPaletteOpen(false)} />
         </Suspense>
       )}
     </div>

@@ -23,6 +23,8 @@ interface SwarmWizardProps {
   // Template to seed the roster with (from the Swarm room's template picker). The user can
   // still switch presets/templates freely inside the Roster step.
   initialTemplateId?: string | null;
+  // Mission text to pre-fill (from the Command Palette composer's "New swarm" target).
+  initialMission?: string;
 }
 
 const STEPS = [
@@ -34,7 +36,7 @@ const STEPS = [
   { key: 'launch', label: 'Launch', icon: Rocket },
 ] as const;
 
-export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose, initialTemplateId }) => {
+export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose, initialTemplateId, initialMission }) => {
   const [state, setState] = useState<WizardState>(() => {
     const template = initialTemplateId
       ? useSwarmStore.getState().templates.find((t) => t.id === initialTemplateId)
@@ -47,7 +49,7 @@ export const SwarmWizard: React.FC<SwarmWizardProps> = ({ projectPath, onClose, 
         ? template.agents.map((a) => ({ ...a, autoApprove: false }))
         : generateRoster(SIZE_PRESETS[0], 'claude'),
       startedFromTemplateId: template?.id ?? null,
-      mission: '',
+      mission: initialMission ?? '',
       skills: [],
       directory: projectPath || '',
       contextFiles: [],

@@ -16,6 +16,7 @@ const GROUPS: ShortcutGroup[] = [
     items: [
       { keys: ['Ctrl', 'P'], label: 'Toggle command palette' },
       { keys: ['Ctrl', 'Shift', 'P'], label: 'Open command palette' },
+      { keys: ['Ctrl', 'Shift', 'K'], label: 'Compose / send to agent' },
       { keys: ['Ctrl', 'O'], label: 'Open workspace' },
       { keys: ['Alt', '1-9'], label: 'Switch room' },
       { keys: ['Ctrl', 'Shift', 'R'], label: 'Open Review room' },

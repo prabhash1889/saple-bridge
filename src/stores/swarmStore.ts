@@ -58,7 +58,12 @@ interface SwarmState {
   templates: SwarmTemplate[];
   swarmActive: boolean;
   activeTemplateId: string | null;
+  // One-shot: the Command Palette composer requests a new swarm seeded with this mission text.
+  // SwarmWorkspace consumes it on render, opens the wizard pre-filled, and clears it. Transient
+  // (not persisted).
+  pendingWizardMission: string | null;
 
+  setPendingWizardMission: (mission: string | null) => void;
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
   saveSwarmState: (projectPath: string) => Promise<void>;
   startSwarmFromWizard: (input: WizardLaunchInput) => Promise<void>;
@@ -74,6 +79,10 @@ interface SwarmState {
   removeAgent: (agentId: string) => void;
   saveTemplatePreset: (template: SwarmTemplate) => void;
   writeMailbox: (projectPath: string, agentId: string, content: string) => Promise<void>;
+  // Append an operator note under an agent's existing mailbox content (re-reads disk so it never
+  // clobbers what the agent wrote). Returns the new full mailbox content. Shared by the Swarm room
+  // composer and the Command Palette composer.
+  postToMailbox: (projectPath: string, agentId: string, message: string) => Promise<string>;
   readHandoff: (projectPath: string, fromAgent: string, toAgent: string) => Promise<string | null>;
   writeHandoff: (projectPath: string, fromAgent: string, toAgent: string, content: string) => Promise<void>;
 }
@@ -402,6 +411,9 @@ export const useSwarmStore = create<SwarmState>()(
       templates: DEFAULT_TEMPLATES,
       swarmActive: false,
       activeTemplateId: null,
+      pendingWizardMission: null,
+
+      setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
 
       loadSwarmState: async (projectPath, force = false) => {
         // loadedProjectPath is rehydrated from localStorage (persist), so without `force`
@@ -854,6 +866,23 @@ export const useSwarmStore = create<SwarmState>()(
         await enqueueWrite(`mailbox:${projectPath}:${agentId}`, () =>
           invoke('write_mailbox_file', { projectPath, agentId, content })
         );
+      },
+
+      postToMailbox: async (projectPath, agentId, message) => {
+        const trimmed = message.trim();
+        if (!trimmed) return '';
+        // Read the current mailbox from disk (source of truth) so we append rather than clobber.
+        // Missing file -> the command errors -> treat as empty.
+        let existing = '';
+        try {
+          existing = await invoke<string>('read_mailbox_file', { projectPath, agentId });
+        } catch {
+          existing = '';
+        }
+        const stamp = `\n\n---\n**Operator message:**\n\n${trimmed}\n`;
+        const next = existing ? `${existing.replace(/\s+$/, '')}${stamp}` : stamp.trimStart();
+        await get().writeMailbox(projectPath, agentId, next);
+        return next;
       },
 
       // Read a from→to handoff file. Returns null when the file doesn't exist yet (the

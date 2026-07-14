@@ -132,6 +132,23 @@ Do not inject the complete memory graph into prompts.
 
 ## Priority 2 — Universal agent composer
 
+> **Status: Done.** The Command Palette gained a composer: a global `Ctrl+Shift+K` (and a
+> "Compose / Send to Agent..." entry) opens a target picker, and choosing a target moves to a
+> message step whose chip keeps the current target visible before sending. Targets reuse existing
+> primitives - a specific running agent or "All running agents" append to the mailbox via the new
+> shared `swarmStore.postToMailbox` (re-reads disk, appends under the agent's content; the Swarm
+> room's own composer now calls the same action instead of duplicating the stamp); "New terminal
+> agent" and "Existing Kanban task" launch through the existing `addPane`/`buildTaskAgentPrompt`
+> paths with the provider readiness check and a shared pane-limit guard; "New swarm" seeds the
+> wizard mission through a transient `pendingWizardMission` flag consumed by `SwarmWorkspace`;
+> "Project memory" writes a note via `memoryStore.saveNote`. All keyboard-driven (Enter sends, Esc
+> steps back to the target picker), no new dependency, no second command store. Covered by
+> `postToMailbox` append/fresh/blank tests.
+>
+> ponytail: the reviewer is not a separate target - it surfaces in the running-agents list with its
+> role shown; the message field is the palette's single-line input (OS dictation works there, per
+> the plan), a textarea can come later if multi-line operator notes are needed.
+
 ### Problem
 
 Bridge can already launch terminals, launch tasks, switch rooms, and post to Swarm mailboxes, but these actions live in different interfaces.
