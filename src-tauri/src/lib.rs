@@ -26,6 +26,10 @@ fn select_directory() -> Option<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Must run before any webview is built: WebView2's environment (and its remote-debugging
+    // args) is fixed at first-webview creation. No-op unless the user opted in. See browser.rs.
+    browser::apply_agent_browser_port();
+
     let mut builder = tauri::Builder::default();
 
     // The single-instance plugin must be registered FIRST. When a second launch is
@@ -157,7 +161,9 @@ pub fn run() {
             browser::browser_navigate,
             browser::browser_back,
             browser::browser_forward,
-            browser::browser_reload
+            browser::browser_reload,
+            browser::agent_browser_get_enabled,
+            browser::agent_browser_set_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

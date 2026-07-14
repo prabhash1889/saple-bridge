@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Save, Terminal } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useTerminalFontStore } from '../../../stores/terminalFontStore';
 import { MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS } from '../../../lib/terminalLimits';
@@ -22,6 +23,25 @@ export const WorkspaceTab: React.FC = () => {
   // immediately on change rather than through the workspace-config Save button.
   const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
   const setScrollbackRows = useTerminalFontStore((state) => state.setScrollbackRows);
+
+  // Agent browser control is app-global and Windows-only (WebView2 remote-debugging port).
+  // navigator.userAgent reliably reports "Windows NT" in WebView2 vs "Macintosh" in WKWebView.
+  const isWindows = navigator.userAgent.includes('Windows');
+  const [agentBrowser, setAgentBrowser] = useState(false);
+  useEffect(() => {
+    if (isWindows) {
+      invoke<boolean>('agent_browser_get_enabled').then(setAgentBrowser).catch(() => {});
+    }
+  }, [isWindows]);
+
+  const toggleAgentBrowser = async (enabled: boolean) => {
+    setAgentBrowser(enabled); // optimistic; the flag write is fast and rarely fails
+    try {
+      await invoke('agent_browser_set_enabled', { enabled });
+    } catch {
+      setAgentBrowser(!enabled);
+    }
+  };
 
   useEffect(() => {
     if (workspaceConfig) {
@@ -150,6 +170,36 @@ export const WorkspaceTab: React.FC = () => {
         </div>
       )}
     </section>
+    {isWindows && (
+      <section className="surface">
+        <div className="section-header">
+          <Terminal size={18} className="section-icon" />
+          <span className="section-title">Agent Browser Control</span>
+        </div>
+        <p className="section-desc">
+          Let external automation drive the embedded browser tabs over the Chrome DevTools
+          Protocol (Playwright, Puppeteer, or a CDP MCP server). When on, the app launches with a
+          loopback debugging endpoint at <code>127.0.0.1:9222</code>.
+        </p>
+        <div className="settings-checkbox-row input-group checkbox-group">
+          <input
+            type="checkbox"
+            id="agentBrowserControl"
+            checked={agentBrowser}
+            onChange={e => toggleAgentBrowser(e.target.checked)}
+            className="settings-checkbox"
+          />
+          <label htmlFor="agentBrowserControl" className="settings-checkbox-label">
+            Allow agents to control the embedded browser (requires app restart)
+          </label>
+        </div>
+        <p className="input-hint">
+          Security: the debugging port grants control of every webview in this app, including the
+          app shell. Only enable it on a machine you trust. Leave off unless you need agent-driven
+          browsing.
+        </p>
+      </section>
+    )}
     <SshPresetsSection />
     </>
   );

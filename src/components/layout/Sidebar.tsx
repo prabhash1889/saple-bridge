@@ -402,6 +402,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
               type="button"
               className="workspace-context-item"
               role="menuitem"
+              onClick={handleRevealWorkspace}
+            >
+              <FolderOpen size={14} />
+              <span>Open in File Explorer</span>
+            </button>
+            <button
+              type="button"
+              className="workspace-context-item"
+              role="menuitem"
               onClick={handleStartRename}
             >
               <Edit3 size={14} />
@@ -426,15 +435,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
             >
               <ArrowDown size={14} />
               <span>Move down</span>
-            </button>
-            <button
-              type="button"
-              className="workspace-context-item"
-              role="menuitem"
-              onClick={handleRevealWorkspace}
-            >
-              <FolderOpen size={14} />
-              <span>Open in File Explorer</span>
             </button>
           </div>
         </>

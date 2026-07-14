@@ -521,11 +521,10 @@ html[data-theme="latte"] .terminal-provider-menu {
   background-repeat: no-repeat;
 }
 
-/* Theme the native dropdown popup explicitly so its options recompute on every
-   light/dark toggle. Relying on the UA color-scheme rendering leaves the popup
-   stale (gray, low-contrast options) after toggling themes in WebView2. */
-.terminal-color-select option,
-.terminal-font-select option {
+/* Theme native dropdown popups explicitly so they recompute on every theme change.
+   WebView2 can otherwise retain a stale, low-contrast system popup palette. */
+select option,
+select optgroup {
   background-color: var(--bg-surface-light);
   color: var(--text-primary);
 }

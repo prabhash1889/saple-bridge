@@ -12,6 +12,95 @@ use tauri::{
 
 const LABEL_PREFIX: &str = "browser-";
 
+// Agent browser control (Windows only). When enabled, WebView2 is launched with
+// `--remote-debugging-port`, exposing a loopback Chrome DevTools Protocol endpoint that CDP
+// clients (Playwright/Puppeteer, or a CDP MCP server) can attach to and drive the embedded
+// browser tabs. This is off by default and gated behind an explicit opt-in because the port
+// grants full control of *every* webview in the process - including the app shell, which holds
+// the Tauri API. The flag lives in a file (not per-project config) because it must be read at
+// process start, before the WebView2 environment exists. macOS uses WKWebView, which has no
+// equivalent, so the whole feature is compiled out there.
+// ponytail: fixed port; make it configurable only if a second CDP consumer ever needs its own.
+#[cfg(windows)]
+const AGENT_BROWSER_DEBUG_PORT: u16 = 9222;
+
+#[cfg(windows)]
+fn agent_browser_flag_path() -> Option<std::path::PathBuf> {
+    // %APPDATA%\ai.saple.bridge is exactly Tauri's app_config_dir on Windows; computed from the
+    // env here because startup has no AppHandle. Keep the identifier in sync with tauri.conf.json.
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        std::path::PathBuf::from(appdata)
+            .join("ai.saple.bridge")
+            .join("agent-browser.enabled"),
+    )
+}
+
+/// Call once at the very top of `run()`, before any webview is built. If the opt-in flag is set,
+/// inject the remote-debugging port into the WebView2 environment via its env var, preserving any
+/// existing user-supplied args (e.g. the manual CDP debug trick).
+#[cfg(windows)]
+pub fn apply_agent_browser_port() {
+    let enabled = agent_browser_flag_path()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    if !enabled {
+        return;
+    }
+    const VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+    let arg = format!("--remote-debugging-port={AGENT_BROWSER_DEBUG_PORT}");
+    match std::env::var(VAR) {
+        // A debugging port is already configured (user's manual trick) - don't fight it.
+        Ok(existing) if existing.contains("remote-debugging-port") => {}
+        Ok(existing) if !existing.trim().is_empty() => {
+            std::env::set_var(VAR, format!("{existing} {arg}"));
+        }
+        _ => std::env::set_var(VAR, arg),
+    }
+}
+
+#[cfg(not(windows))]
+pub fn apply_agent_browser_port() {}
+
+/// Whether agent browser control is currently enabled (takes effect after the next restart).
+#[tauri::command]
+pub fn agent_browser_get_enabled() -> bool {
+    #[cfg(windows)]
+    {
+        agent_browser_flag_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Toggle agent browser control. Writes/removes the flag file; the change applies on next launch
+/// because the WebView2 environment (and thus its args) is fixed once created.
+#[tauri::command]
+pub fn agent_browser_set_enabled(enabled: bool) -> Result<u16, String> {
+    #[cfg(windows)]
+    {
+        let path = agent_browser_flag_path().ok_or("cannot resolve app config directory")?;
+        if enabled {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, AGENT_BROWSER_DEBUG_PORT.to_string()).map_err(|e| e.to_string())?;
+        } else if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        Ok(AGENT_BROWSER_DEBUG_PORT)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Err("Agent browser control is only available on Windows.".to_string())
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct TabNav {
     id: String,
