@@ -47,6 +47,18 @@ export interface SwarmAgent {
   lastReviewFeedback?: string;
 }
 
+// P6: a durable request from a running agent (coordinator) for another specialist worker. Agents
+// append these to `.saple/swarm/requests.json`; Bridge shows them, gates approval, and inserts
+// approved ones through the existing scheduler. Agents record the request but never execute it.
+export interface WorkerRequest {
+  id: string;
+  role: AgentRole;
+  provider?: AgentProvider;
+  model: string;
+  mission: string;
+  dependsOn: string[];
+}
+
 export interface SwarmTemplate {
   id: string;
   name: string;
@@ -73,6 +85,10 @@ interface SwarmState {
   // SwarmWorkspace consumes it on render, opens the wizard pre-filled, and clears it. Transient
   // (not persisted).
   pendingWizardMission: string | null;
+  // P6: request ids Bridge has already approved or rejected. Persisted in state.json (which Bridge
+  // owns exclusively) so it never has to write back the agent-owned requests.json, and so an
+  // approved/rejected request can't reappear or relaunch a duplicate worker across reloads.
+  resolvedWorkerRequests: string[];
 
   setPendingWizardMission: (mission: string | null) => void;
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
@@ -99,6 +115,11 @@ interface SwarmState {
   forceCompleteAgent: (projectPath: string, agentId: string) => Promise<void>;
   addCustomAgent: (agent: SwarmAgent) => void;
   removeAgent: (agentId: string) => void;
+  // P6: read the pending (unresolved, well-formed) worker requests agents have written.
+  loadWorkerRequests: (projectPath: string) => Promise<WorkerRequest[]>;
+  // P6: approve (insert a worker through the scheduler) or reject (dismiss) a request. Either way
+  // the id is marked resolved so it can't be acted on twice.
+  resolveWorkerRequest: (projectPath: string, request: WorkerRequest, approve: boolean) => Promise<void>;
   saveTemplatePreset: (template: SwarmTemplate) => void;
   writeMailbox: (projectPath: string, agentId: string, content: string) => Promise<void>;
   // Append an operator note under an agent's existing mailbox content (re-reads disk so it never
@@ -273,6 +294,33 @@ const DEFAULT_TEMPLATES: SwarmTemplate[] = [
   }
 ];
 
+const VALID_ROLES: AgentRole[] = ['coordinator', 'builder', 'scout', 'reviewer'];
+
+// Sanitize the untrusted, agent-written `.saple/swarm/requests.json` into well-formed worker
+// requests. Anything missing an id or a mission is dropped, and same-id duplicates collapse to the
+// first — so a malformed or partial file can never break the requests panel or launch a bad worker.
+export const parseWorkerRequests = (raw: unknown): WorkerRequest[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: WorkerRequest[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const id = typeof r.id === 'string' ? r.id.trim() : '';
+    const mission = typeof r.mission === 'string' ? r.mission.trim() : '';
+    if (!id || !mission || seen.has(id)) continue;
+    seen.add(id);
+    const role = VALID_ROLES.includes(r.role as AgentRole) ? (r.role as AgentRole) : 'builder';
+    const provider = typeof r.provider === 'string' ? (r.provider as AgentProvider) : undefined;
+    const model = typeof r.model === 'string' && r.model.trim() ? r.model.trim() : 'default';
+    const dependsOn = Array.isArray(r.dependsOn)
+      ? r.dependsOn.filter((d): d is string => typeof d === 'string')
+      : [];
+    out.push({ id, role, provider, model, mission, dependsOn });
+  }
+  return out;
+};
+
 // A short random token that scopes an agent's completion markers to itself. 8 hex chars is
 // plenty to make accidental collisions with real output effectively impossible, while staying
 // short enough to read in the terminal. Charset stays within agentSignals' MARKER_TOKEN_RE.
@@ -345,6 +393,19 @@ Before you signal completion, write your outcome as JSON to \`.saple/swarm/outco
 { "summary": "one line on what you did", "changedFiles": ["path/to/file"], "tests": { "command": "npm test", "passed": true }, "decisions": ["a decision you made"], "needsReview": true }
 \`\`\`
 `;
+    // P6: coordinators may need another specialist mid-run. They RECORD a request (Bridge shows it
+    // for human approval and does the launching); they never spawn processes themselves.
+    const workerRequestSection = agent.role === 'coordinator'
+      ? `## Requesting a New Worker (optional — needs human approval)
+If you need another specialist during execution, append a request to \`.saple/swarm/requests.json\`
+(a JSON array — create it if missing; keep existing entries). Do NOT spawn any process yourself.
+Each request needs a unique \`id\` and a \`mission\`:
+\`\`\`json
+{ "id": "unique-request-id", "role": "builder", "provider": "codex", "model": "default", "mission": "what the worker must do", "dependsOn": ["${agent.id}"] }
+\`\`\`
+Bridge shows the request to the operator; approved workers join the swarm under the parallel-agent limit.
+`
+      : '';
     const signalsSection = (marker
       ? `## Review / Completion Signals
 Emit EXACTLY ONE of these on its own line when you finish. The \`:${marker}\` suffix identifies
@@ -357,7 +418,7 @@ you — a signal without it is ignored, so always include it verbatim:
 - When you are finished, output \`[AGENT_DONE]\` or \`[TASK_COMPLETE]\` to signify success.
 - If you require human review, output \`[REVIEW_REQUESTED]\` or \`## REVIEW REQUIRED\`.
 - If you encounter a fatal failure, output \`[AGENT_FAILED]\` or \`[TASK_FAILED]\`.
-`) + outcomeSection;
+`) + outcomeSection + workerRequestSection;
 
     // Generate prompt content
     const promptContent = `# Swarm Agent Mission Instructions
@@ -444,6 +505,7 @@ export const useSwarmStore = create<SwarmState>()(
       activeTemplateId: null,
       swarmWorkspaceId: null,
       pendingWizardMission: null,
+      resolvedWorkerRequests: [],
 
       setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
 
@@ -525,6 +587,7 @@ export const useSwarmStore = create<SwarmState>()(
             swarmActive: status === 'running' || status === 'paused',
             activeTemplateId: parsed.templateId || null,
             swarmWorkspaceId: parsed.swarmWorkspaceId || null,
+            resolvedWorkerRequests: parsed.resolvedWorkerRequests || [],
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
@@ -542,7 +605,7 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [] });
         }
       },
 
@@ -556,6 +619,7 @@ export const useSwarmStore = create<SwarmState>()(
             contextFiles: get().contextFiles,
             templateId: get().activeTemplateId,
             swarmWorkspaceId: get().swarmWorkspaceId,
+            resolvedWorkerRequests: get().resolvedWorkerRequests,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -634,6 +698,7 @@ export const useSwarmStore = create<SwarmState>()(
           swarmActive: true,
           loadedProjectPath: projectPath,
           swarmWorkspaceId,
+          resolvedWorkerRequests: [],
         });
 
         await get().saveSwarmState(projectPath);
@@ -937,6 +1002,60 @@ export const useSwarmStore = create<SwarmState>()(
         set(state => ({
           activeAgents: state.activeAgents.filter(a => a.id !== agentId)
         }));
+      },
+
+      loadWorkerRequests: async (projectPath) => {
+        let parsed: WorkerRequest[] = [];
+        try {
+          const raw = await invoke<string>('read_project_file', {
+            projectPath,
+            filePath: '.saple/swarm/requests.json',
+          });
+          parsed = parseWorkerRequests(JSON.parse(raw));
+        } catch {
+          return []; // no requests file yet (the common case) or unreadable
+        }
+        const resolved = new Set(get().resolvedWorkerRequests);
+        return parsed.filter((r) => !resolved.has(r.id));
+      },
+
+      resolveWorkerRequest: async (projectPath, request, approve) => {
+        // Idempotent: a duplicate approval (double-click, re-poll) can't insert a second worker.
+        if (get().resolvedWorkerRequests.includes(request.id)) return;
+
+        if (approve) {
+          // The request's own id is the dedup key; the roster agent gets a fresh unique id so a
+          // request id that happens to collide with an existing agent can't corrupt the roster.
+          const existingIds = new Set(get().activeAgents.map((a) => a.id));
+          // Unknown dependencies would strand the worker as permanently 'waiting', so keep only
+          // dependsOn entries that name a real agent already in the swarm.
+          const dependencies = request.dependsOn.filter((d) => existingIds.has(d));
+          const worker: SwarmAgent = {
+            id: createId('agent'),
+            name: `${request.role.charAt(0).toUpperCase()}${request.role.slice(1)} (requested)`,
+            role: request.role,
+            provider: request.provider,
+            model: request.model,
+            systemPrompt: request.mission,
+            dependencies,
+            marker: createMarker(),
+            maxAttempts: 1,
+            status: dependencies.length > 0 ? 'waiting' : 'idle',
+          };
+          set((state) => ({
+            activeAgents: [...state.activeAgents, worker],
+            resolvedWorkerRequests: [...state.resolvedWorkerRequests, request.id],
+          }));
+          await get().saveSwarmState(projectPath);
+          // The scheduler enforces provider launch + the parallel-agent cap; an idle/ready worker
+          // starts on this scan, an over-limit or dependency-waiting one on a later one.
+          await get().checkAndRunNextAgents(projectPath);
+        } else {
+          set((state) => ({
+            resolvedWorkerRequests: [...state.resolvedWorkerRequests, request.id],
+          }));
+          await get().saveSwarmState(projectPath);
+        }
       },
 
       saveTemplatePreset: (template) => {

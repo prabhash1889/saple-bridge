@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send, Terminal as TerminalIcon } from 'lucide-react';
+import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send, Terminal as TerminalIcon, UserPlus, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSwarmStore } from '../../stores/swarmStore';
+import type { WorkerRequest } from '../../stores/swarmStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
@@ -69,6 +70,8 @@ export const SwarmWorkspace: React.FC = () => {
   const updateAgentStatus = useSwarmStore((state) => state.updateAgentStatus);
   const relaunchAgent = useSwarmStore((state) => state.relaunchAgent);
   const reworkAgent = useSwarmStore((state) => state.reworkAgent);
+  const loadWorkerRequests = useSwarmStore((state) => state.loadWorkerRequests);
+  const resolveWorkerRequest = useSwarmStore((state) => state.resolveWorkerRequest);
   const forceCompleteAgent = useSwarmStore((state) => state.forceCompleteAgent);
   const postToMailbox = useSwarmStore((state) => state.postToMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
@@ -90,6 +93,8 @@ export const SwarmWorkspace: React.FC = () => {
   const [outcomes, setOutcomes] = useState<Record<string, AgentOutcome>>({});
   const [composeText, setComposeText] = useState('');
   const [sendingMailbox, setSendingMailbox] = useState(false);
+  // P6: pending worker requests agents have recorded, polled while the swarm is active.
+  const [pendingRequests, setPendingRequests] = useState<WorkerRequest[]>([]);
 
   useEffect(() => {
     if (currentProjectPath) {
@@ -156,6 +161,52 @@ export const SwarmWorkspace: React.FC = () => {
         },
       });
     }
+  };
+
+  // P6: poll the agent-written worker-requests file while the swarm runs. Bridge reads it; agents
+  // never launch anything themselves.
+  useEffect(() => {
+    if (!currentProjectPath || !swarmActive) {
+      setPendingRequests([]);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      const reqs = await loadWorkerRequests(currentProjectPath);
+      if (!cancelled) setPendingRequests(reqs);
+    };
+    void poll();
+    const interval = window.setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [currentProjectPath, swarmActive, loadWorkerRequests]);
+
+  // Estimated pane picture the operator sees before approving: each approved request adds one pane.
+  const runningPaneCount = useMemo(
+    () => activeAgents.filter((a) => a.status === 'running' || a.status === 'starting').length,
+    [activeAgents],
+  );
+
+  const handleApproveRequest = (req: WorkerRequest) => {
+    if (!currentProjectPath) return;
+    const maxParallel = useTerminalStore.getState().getMaxPaneLimit();
+    useConfirmStore.getState().confirm({
+      title: 'Approve worker request',
+      message: `Launch a ${req.role} (${req.provider || 'codex'} / ${req.model}) for its mission? This adds 1 pane (currently ${runningPaneCount} of ${maxParallel} running).`,
+      confirmLabel: 'Approve & launch',
+      onConfirm: () => {
+        void resolveWorkerRequest(currentProjectPath, req, true);
+        setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+      },
+    });
+  };
+
+  const handleRejectRequest = (req: WorkerRequest) => {
+    if (!currentProjectPath) return;
+    void resolveWorkerRequest(currentProjectPath, req, false);
+    setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
   };
 
   const handleAgentStop = async (agentId: string) => {
@@ -467,6 +518,43 @@ export const SwarmWorkspace: React.FC = () => {
 
         {swarmActive ? (
           <div style={swarmDashboardStyle}>
+            {/* P6: pending worker requests — an agent asked for a specialist; the operator sees the
+                details and must approve before Bridge launches it. */}
+            {pendingRequests.length > 0 && (
+              <div style={requestsPanelStyle}>
+                <div style={requestsPanelHeaderStyle}>
+                  <UserPlus size={13} className="fg-accent" />
+                  <span>Worker requests ({pendingRequests.length}) - approval required</span>
+                </div>
+                {pendingRequests.map((req) => (
+                  <div key={req.id} style={requestCardStyle}>
+                    <div style={requestBodyStyle}>
+                      <div style={requestMissionStyle}>{req.mission}</div>
+                      <div style={requestMetaStyle}>
+                        <span>{req.role}</span>
+                        <span>·</span>
+                        <span>{req.provider || 'codex'} / {req.model}</span>
+                        <span>·</span>
+                        <span>{req.dependsOn.length ? `depends on ${req.dependsOn.join(', ')}` : 'no dependencies'}</span>
+                        <span>·</span>
+                        <span>+1 pane</span>
+                      </div>
+                    </div>
+                    <div style={requestActionsStyle}>
+                      <button onClick={() => handleApproveRequest(req)} style={btnRequestApproveStyle}>
+                        <CheckCircle size={12} />
+                        <span>Approve</span>
+                      </button>
+                      <button onClick={() => handleRejectRequest(req)} className="danger" style={btnRequestRejectStyle}>
+                        <X size={12} />
+                        <span>Reject</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* View Tabs */}
             <div style={tabsBarStyle}>
               <div style={tabsGroupStyle}>
@@ -777,6 +865,90 @@ const swarmDashboardStyle: React.CSSProperties = {
   gap: '16px',
   flex: 1,
   overflowY: 'auto',
+};
+
+const requestsPanelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '10px',
+  padding: '12px 14px',
+  borderRadius: 'var(--radius-md)',
+  border: '1px solid rgba(99, 102, 241, 0.3)',
+  backgroundColor: 'rgba(99, 102, 241, 0.08)',
+};
+
+const requestsPanelHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  fontSize: '11px',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  color: 'var(--text-secondary)',
+};
+
+const requestCardStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '12px',
+  padding: '10px 12px',
+  borderRadius: 'var(--radius-sm)',
+  border: '1px solid var(--border)',
+  backgroundColor: 'var(--bg-surface)',
+};
+
+const requestBodyStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
+  minWidth: 0,
+};
+
+const requestMissionStyle: React.CSSProperties = {
+  fontSize: '12.5px',
+  color: 'var(--text-primary)',
+  fontWeight: 500,
+};
+
+const requestMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '6px',
+  fontSize: '10.5px',
+  color: 'var(--text-muted)',
+};
+
+const requestActionsStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '8px',
+  flexShrink: 0,
+};
+
+const btnRequestApproveStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: '11px',
+  height: '28px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  backgroundColor: 'rgba(34, 197, 94, 0.1)',
+  color: 'var(--color-success)',
+  border: '1px solid rgba(34, 197, 94, 0.2)',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
+};
+
+const btnRequestRejectStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  fontSize: '11px',
+  height: '28px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
 };
 
 const tabsBarStyle: React.CSSProperties = {

@@ -346,6 +346,27 @@ Deliberately excluded from the first release. JavaScript cannot capture a cross-
 
 ## Priority 6 — Approved dynamic worker requests
 
+> **Status: Done.** A running coordinator can request another specialist by appending a JSON entry to
+> `.saple/swarm/requests.json` (contract injected into coordinator launch prompts). It only records
+> the request - Bridge remains the executor. `swarmStore.loadWorkerRequests` reads that file through
+> the existing `read_project_file` command and `parseWorkerRequests` sanitizes the untrusted array
+> (drops entries missing an id/mission, collapses duplicate ids). `SwarmWorkspace` polls it while the
+> swarm is active and renders a requests panel showing role, provider/model, mission, dependencies,
+> and estimated new pane count (+1, against the current running/limit). Approve routes through the
+> shared `confirmStore` gate, then `resolveWorkerRequest` inserts a `SwarmAgent` (fresh unique id,
+> unknown dependencies filtered out) and hands it to the existing scheduler, which enforces provider
+> launch and the parallel-agent cap. Writer separation keeps it race-free: agents own
+> `requests.json` (append-only), Bridge records resolved request ids in `resolvedWorkerRequests`
+> (persisted in the Bridge-owned `state.json`), so a resolved request can't reappear or launch a
+> duplicate worker across reloads. Covered by `swarmStore.test.ts` (parse/filter, approve-inserts +
+> resolves, unknown-dep drop + idempotent double-approve, reject-without-insert).
+>
+> ponytail: no new MCP tool or Rust command - agents already write mailbox/outcome/handoff files by
+> convention, so the request is one more convention file read via the existing project-file command.
+> The residual agent-vs-agent append race on the single `requests.json` is accepted (worker requests
+> are rare and approval-gated); switch to per-request files if concurrent coordinators ever make it
+> real.
+
 ### Problem
 
 Swarm topology is mostly fixed before launch. A coordinator cannot safely request another specialist during execution.

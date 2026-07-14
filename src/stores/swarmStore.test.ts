@@ -90,6 +90,7 @@ const seed = (agents: SwarmAgent[], status: 'running' | 'paused' = 'running') =>
     swarmActive: true,
     activeAgents: agents,
     loadedProjectPath: PROJECT,
+    resolvedWorkerRequests: [],
   });
 };
 
@@ -252,6 +253,73 @@ describe('reworkAgent (P4 bounded review-and-rework)', () => {
     expect(forced.ok).toBe(true);
     expect(getAgent('builder').attempt).toBe(2);
     await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+});
+
+describe('worker requests (P6 approved dynamic workers)', () => {
+  const requestsFile = (reqs: unknown[]) =>
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'read_project_file') return Promise.resolve(JSON.stringify(reqs));
+      return Promise.resolve(undefined);
+    });
+
+  it('returns well-formed pending requests and drops malformed / already-resolved ones', async () => {
+    seed([agent('coord', [], 'running')]);
+    useSwarmStore.setState({ resolvedWorkerRequests: ['done-1'] });
+    requestsFile([
+      { id: 'req-1', mission: 'fix mobile layout', role: 'builder', provider: 'codex', model: 'default', dependsOn: ['coord'] },
+      { id: 'done-1', mission: 'already handled' }, // resolved -> filtered
+      { mission: 'no id' }, // malformed -> dropped
+      { id: 'req-2' }, // no mission -> dropped
+      { id: 'req-1', mission: 'duplicate id' }, // dup id -> collapsed
+    ]);
+
+    const pending = await useSwarmStore.getState().loadWorkerRequests(PROJECT);
+
+    expect(pending.map((r) => r.id)).toEqual(['req-1']);
+    expect(pending[0].role).toBe('builder');
+    expect(pending[0].dependsOn).toEqual(['coord']);
+  });
+
+  it('approving inserts a worker through the scheduler and marks the request resolved', async () => {
+    seed([agent('coord', [], 'done')]);
+    const req = { id: 'req-1', role: 'builder' as const, provider: 'codex' as const, model: 'default', mission: 'do it', dependsOn: ['coord'] };
+
+    await useSwarmStore.getState().resolveWorkerRequest(PROJECT, req, true);
+
+    const agents = useSwarmStore.getState().activeAgents;
+    expect(agents).toHaveLength(2);
+    const worker = agents.find((a) => a.id !== 'coord')!;
+    expect(worker.systemPrompt).toBe('do it');
+    expect(worker.dependencies).toEqual(['coord']); // known dep kept
+    expect(useSwarmStore.getState().resolvedWorkerRequests).toContain('req-1');
+    // Deps are all done, so the scheduler launched it.
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+
+  it('drops unknown dependencies and is idempotent for an already-resolved id', async () => {
+    seed([agent('coord', [], 'running')]);
+    const req = { id: 'req-1', role: 'builder' as const, model: 'default', mission: 'm', dependsOn: ['ghost'] };
+
+    await useSwarmStore.getState().resolveWorkerRequest(PROJECT, req, true);
+    const worker = useSwarmStore.getState().activeAgents.find((a) => a.id !== 'coord')!;
+    expect(worker.dependencies).toEqual([]); // unknown 'ghost' filtered -> launches immediately
+    expect(worker.status === 'idle' || worker.status === 'starting' || worker.status === 'running').toBe(true);
+
+    // A second resolve with the same id must not add a duplicate worker.
+    await useSwarmStore.getState().resolveWorkerRequest(PROJECT, req, true);
+    expect(useSwarmStore.getState().activeAgents).toHaveLength(2);
+  });
+
+  it('rejecting resolves the id without inserting a worker', async () => {
+    seed([agent('coord', [], 'running')]);
+    const req = { id: 'req-9', role: 'builder' as const, model: 'default', mission: 'm', dependsOn: [] };
+
+    await useSwarmStore.getState().resolveWorkerRequest(PROJECT, req, false);
+
+    expect(useSwarmStore.getState().activeAgents).toHaveLength(1);
+    expect(useSwarmStore.getState().resolvedWorkerRequests).toContain('req-9');
+    expect(addPaneMock).not.toHaveBeenCalled();
   });
 });
 
