@@ -1,7 +1,7 @@
 {
   "name": "saple-bridge",
   "private": true,
-  "version": "1.0.25",
+  "version": "1.0.26",
   "type": "module",
   "scripts": {
     "dev": "vite",
