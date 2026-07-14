@@ -12,15 +12,18 @@ import {
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 describe('rowDistribution', () => {
-  it('matches the sketched brick layouts', () => {
-    expect(rowDistribution(2)).toEqual([2]);
+  it('always uses at most two rows, extra panes on top', () => {
+    expect(rowDistribution(2)).toEqual([2]); // 1 row for 1-2 panes
     expect(rowDistribution(4)).toEqual([2, 2]);
     expect(rowDistribution(5)).toEqual([3, 2]); // 3 on top, 2 stretched below
     expect(rowDistribution(6)).toEqual([3, 3]);
     expect(rowDistribution(7)).toEqual([4, 3]);
     expect(rowDistribution(8)).toEqual([4, 4]);
-    expect(rowDistribution(12)).toEqual([4, 4, 4]);
-    expect(rowDistribution(16)).toEqual([4, 4, 4, 4]);
+    expect(rowDistribution(9)).toEqual([5, 4]); // stays 2 rows past 8
+    expect(rowDistribution(12)).toEqual([6, 6]);
+    expect(rowDistribution(16)).toEqual([8, 8]);
+    // Never a third row.
+    for (let n = 3; n <= 16; n++) expect(rowDistribution(n).length).toBe(2);
   });
 
   it('always accounts for every pane', () => {

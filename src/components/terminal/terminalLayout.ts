@@ -36,16 +36,11 @@ export type Gutter =
 // pane to nothing (which would give xterm a degenerate 0-col/row size).
 const MIN = 0.08;
 
-// How many rows for a given pane count. Matches the sketched layouts: 1 row up to 2 panes,
-// 2 rows through 8, 3 through 12, 4 beyond.
-export const rowCountFor = (n: number): number => {
-  if (n <= 2) return 1;
-  if (n <= 8) return 2;
-  if (n <= 12) return 3;
-  return 4;
-};
+// How many rows for a given pane count. Always two rows past 2 panes (1 row for 1-2 panes,
+// 3 is special-cased in evenLayout) - never a third row, no matter how many panes are open.
+export const rowCountFor = (n: number): number => (n <= 2 ? 1 : 2);
 
-// Panes per row, extra panes weighted to the top rows (5 -> [3,2], 7 -> [4,3], 8 -> [4,4]).
+// Panes per row, extra panes weighted to the top rows (5 -> [3,2], 7 -> [4,3], 9 -> [5,4]).
 export const rowDistribution = (n: number): number[] => {
   const rows = rowCountFor(n);
   const base = Math.floor(n / rows);
