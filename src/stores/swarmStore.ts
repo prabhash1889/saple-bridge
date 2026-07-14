@@ -45,6 +45,9 @@ export interface SwarmAgent {
   attempt?: number;
   maxAttempts?: number;
   lastReviewFeedback?: string;
+  // Ms epoch stamped when the agent last went `running`, for the elapsed-time badge (P9). Persisted
+  // in state.json so the duration survives room/project switches and restart; re-stamped on relaunch.
+  startedAt?: number;
 }
 
 // P6: a durable request from a running agent (coordinator) for another specialist worker. Agents
@@ -482,7 +485,7 @@ ${signalsSection}`;
       terminalId: paneId,
     });
 
-    await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, taskId: session.id });
+    await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, taskId: session.id, startedAt: Date.now() });
   } catch (error) {
     console.error(`Failed to launch agent ${agent.id}:`, error);
     await updateAgentStatus(projectPath, agent.id, 'failed', { statusReason: `Launch failed: ${error}` });

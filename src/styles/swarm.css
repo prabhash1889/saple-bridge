@@ -197,6 +197,59 @@
     0 0 22px rgba(167, 139, 250, 0.18);
 }
 
+/* --- Status-tinted surface (grid cards + inspect panel) ---
+   Parity with .swarm-node-card: same soft wash of the per-status color (via --node-border)
+   over the surface, same status-colored border, same running pulse — so the Agent Cards Grid
+   reads status by color just like the graph nodes. Layout (padding/gap/radius) stays inline. */
+.swarm-status-surface {
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--node-border, var(--border)) 12%, var(--bg-surface)) 0%,
+    var(--bg-surface) 62%
+  );
+  border: 1px solid var(--node-border, var(--border));
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.swarm-status-surface.is-running {
+  animation: swarm-node-pulse 2.4s ease-in-out infinite;
+}
+
+/* Elapsed "running for" badge on active nodes/cards. */
+.swarm-elapsed {
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+/* --- Status legend row (above both views) --- */
+.swarm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.swarm-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.swarm-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--legend-color, var(--border));
+  flex-shrink: 0;
+}
+
 /* --- Grid view card wrapper --- */
 .swarm-grid-card {
   cursor: pointer;

@@ -10,6 +10,7 @@ import { useConfirmStore } from '../../stores/confirmStore';
 import { readRunOutcome } from '../../lib/controlPlane';
 import type { AgentOutcome } from '../../types/agent';
 import { isHeadlessProvider } from '../../types/provider';
+import { swarmStatusColor, SWARM_STATUS_LEGEND } from '../../lib/swarmStatus';
 import { SwarmGraph } from './SwarmGraph';
 import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';
 import { SwarmTemplateEditor } from './SwarmTemplateEditor';
@@ -573,6 +574,19 @@ export const SwarmWorkspace: React.FC = () => {
                   <span>Agent Cards Grid</span>
                 </button>
               </div>
+            </div>
+
+            {/* Status legend — the color key both the graph nodes and grid cards read against. */}
+            <div className="swarm-legend">
+              {SWARM_STATUS_LEGEND.map(({ status: legendStatus, label }) => (
+                <span key={legendStatus} className="swarm-legend-item">
+                  <span
+                    className="swarm-legend-dot"
+                    style={{ '--legend-color': swarmStatusColor(legendStatus) } as React.CSSProperties}
+                  />
+                  {label}
+                </span>
+              ))}
             </div>
 
             {/* Split Screen Workspace */}

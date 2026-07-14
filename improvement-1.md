@@ -492,17 +492,22 @@ Replace the free-text input with a per-provider combobox (dropdown plus free tex
 
 ## Priority 9 - Swarm room visual refresh
 
-> **Status: started.** Graph node cards now carry a status-tinted surface wash, running/starting
-> agents pulse, stage headers use the swarm accent, and `starting`/`waiting` states received
-> distinct colors (`SwarmGraph.tsx`, `swarm.css`).
-
-### Remaining
-
-- Bring the Agent Cards Grid view to visual parity with the graph nodes.
-- Add a compact status legend row above the graph.
-- Show elapsed time on running nodes.
-- Verify light-theme contrast for all new tints.
-- Finish with a screenshot-based pixel pass in `tauri:dev` (CDP screenshots per the debug-webview workflow).
+> **Status: Done (code); live visual pass pending.** The status→color mapping is now a single shared
+> source of truth (`src/lib/swarmStatus.ts` `swarmStatusColor`), consumed by both views so they can't
+> drift. A reusable `.swarm-status-surface` class carries the same status-tinted wash, status-colored
+> border, and running pulse the graph nodes already had; the Agent Cards Grid (`SwarmAgentCard`) now
+> opts into it via `--node-border`, bringing it to visual parity with the graph. A compact status
+> legend (`SWARM_STATUS_LEGEND`) renders above both views in `SwarmWorkspace` - running+starting
+> collapse into one "Running" swatch so every swatch is a distinct color. Running nodes and cards show
+> a ticking elapsed-time badge (`ElapsedTime`), fed by a new persisted `SwarmAgent.startedAt` stamped
+> when the agent goes `running` (survives room/project switches and restart, re-stamped on relaunch).
+> All new motion is box-shadow/opacity only. Tints use `color-mix(... , var(--bg-surface))` and the
+> border/legend use the semantic status vars, so they adapt to every light and dark theme in
+> `tokens.css`. Covered by `swarmStatus.test.ts` (elapsed formatting + color-distinctness).
+>
+> Remaining: a screenshot-based pixel pass in `tauri:dev` (CDP per the debug-webview workflow) to
+> eyeball light-theme contrast on the live tints - the code is theme-adaptive by construction but the
+> final pixel sign-off wants a running instance.
 
 ### Acceptance criteria
 

@@ -3,6 +3,8 @@ import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLef
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
 import { isHeadlessProvider } from '../../types/provider';
 import type { AgentOutcome } from '../../types/agent';
+import { swarmStatusColor } from '../../lib/swarmStatus';
+import { ElapsedTime } from './ElapsedTime';
 import { MarkdownPreview } from '../editor/MarkdownPreview';
 
 // A resolved handoff file involving this agent. `direction` is relative to the agent the
@@ -59,7 +61,8 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   // the process exits, so the mailbox is the live surface. Flag it while the agent is working so
   // an empty terminal reads as "headless", not "hung" (P10).
   const headless = isHeadlessProvider(agent.provider);
-  const headlessWorking = headless && (agent.status === 'running' || agent.status === 'starting');
+  const isRunning = agent.status === 'running' || agent.status === 'starting';
+  const headlessWorking = headless && isRunning;
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
       case 'running':
@@ -86,7 +89,10 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   };
 
   return (
-    <div style={cardStyle(agent.status)}>
+    <div
+      className={`swarm-status-surface${isRunning ? ' is-running' : ''}`}
+      style={{ ...cardStyle, '--node-border': swarmStatusColor(agent.status) } as React.CSSProperties}
+    >
       {/* Top Header */}
       <div style={cardHeaderStyle}>
         <div>
@@ -98,6 +104,9 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
         <div style={statusBadgeStyle(agent.status)}>
           {getStatusIcon(agent.status)}
           <span className="swarm-status-label">{agent.status}</span>
+          {isRunning && agent.startedAt && (
+            <ElapsedTime startedAt={agent.startedAt} className="swarm-elapsed" />
+          )}
         </div>
       </div>
 
@@ -308,22 +317,15 @@ export const SwarmAgentCard = memo(SwarmAgentCardComponent);
 
 /* --- Styles --- */
 
-const cardStyle = (status: AgentStatus): React.CSSProperties => {
-  let glow = 'none';
-  if (status === 'running') {
-    glow = '0 0 12px rgba(99, 102, 241, 0.15)';
-  }
-  return {
-    backgroundColor: 'var(--bg-surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius-lg)',
-    padding: '18px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '14px',
-    boxShadow: glow,
-    transition: 'box-shadow 0.2s',
-  };
+// Layout only; the status-tinted surface, border, and running pulse come from the shared
+// `.swarm-status-surface` class (parity with the graph nodes, P9), driven by the `--node-border`
+// CSS var set inline.
+const cardStyle: React.CSSProperties = {
+  borderRadius: 'var(--radius-lg)',
+  padding: '18px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '14px',
 };
 
 const cardHeaderStyle: React.CSSProperties = {

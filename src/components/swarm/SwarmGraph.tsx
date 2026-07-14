@@ -1,6 +1,8 @@
 import React, { useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { Shield, Bot, UserCheck, CheckCircle, Clock, AlertTriangle, Play } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
+import { swarmStatusColor } from '../../lib/swarmStatus';
+import { ElapsedTime } from './ElapsedTime';
 
 interface SwarmGraphProps {
   agents: SwarmAgent[];
@@ -49,19 +51,6 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
     const lvl = levels[a.id] ?? 0;
     levelColumns[lvl].push(a);
   });
-
-  const getStatusColor = (status: AgentStatus) => {
-    switch (status) {
-      case 'running': return 'var(--accent)';
-      case 'starting': return 'var(--accent)';
-      case 'done': return 'var(--color-success)';
-      case 'failed': return 'var(--color-danger)';
-      case 'review': return 'var(--color-warning)';
-      case 'waiting': return 'var(--color-info)';
-      case 'blocked': return 'var(--text-muted)';
-      default: return 'var(--border)';
-    }
-  };
 
   const getStatusIcon = (status: AgentStatus) => {
     switch (status) {
@@ -187,7 +176,7 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
               {columnAgents.map(agent => {
                 const isSelected = selectedAgentId === agent.id;
                 const isRunning = agent.status === 'running' || agent.status === 'starting';
-                const borderClr = getStatusColor(agent.status);
+                const borderClr = swarmStatusColor(agent.status);
 
                 return (
                   <div
@@ -211,6 +200,9 @@ export const SwarmGraph: React.FC<SwarmGraphProps> = ({
                       <div style={nodeStatusStyle(agent.status)}>
                         {getStatusIcon(agent.status)}
                         <span className="swarm-graph-badge">{agent.status}</span>
+                        {isRunning && agent.startedAt && (
+                          <ElapsedTime startedAt={agent.startedAt} className="swarm-elapsed" />
+                        )}
                       </div>
 
                       {agent.status === 'failed' && (
