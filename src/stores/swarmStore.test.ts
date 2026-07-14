@@ -56,6 +56,8 @@ vi.mock('../lib/desktopNotifications', () => ({
 }));
 
 import { useSwarmStore, recordPendingAgentExit, type SwarmAgent, type AgentStatus } from './swarmStore';
+import { useProjectStore } from './projectStore';
+import type { WizardLaunchInput } from '../types/wizard';
 
 const PROJECT = 'C:/proj';
 
@@ -274,6 +276,51 @@ describe('loadSwarmState restart reconciliation', () => {
 
     expect(useSwarmStore.getState().status).toBe('idle');
     expect(useSwarmStore.getState().activeAgents).toEqual([]);
+  });
+});
+
+describe('startSwarmFromWizard workspace isolation (P11)', () => {
+  it('creates a dedicated workspace instance and pins agent panes to it', async () => {
+    const input: WizardLaunchInput = {
+      projectPath: PROJECT,
+      swarmName: 'Iso',
+      mission: 'do work',
+      agents: [
+        { id: 'root', name: 'root', role: 'builder', provider: 'claude', model: 'default', systemPrompt: 's', dependencies: [], autoApprove: false },
+      ],
+      skills: [],
+      contextFiles: [],
+      templateId: null,
+    };
+
+    await useSwarmStore.getState().startSwarmFromWizard(input);
+
+    // A new "(swarm)" instance was activated for the same folder.
+    const swarmWsId = useSwarmStore.getState().swarmWorkspaceId;
+    expect(swarmWsId).toBeTruthy();
+    const instance = useProjectStore.getState().openWorkspaces.find((w) => w.id === swarmWsId);
+    expect(instance?.path).toBe(PROJECT);
+    expect(instance?.name).toMatch(/\(swarm\)$/);
+
+    // The launched pane is pinned to that instance (addPane's 6th arg).
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+    expect(addPaneMock.mock.calls[0][5]).toBe(swarmWsId);
+  });
+
+  it('a force-reload does not clobber a same-path swarm that has a starting agent mid-launch', async () => {
+    // Simulate the workspace-change force-reload firing while a launch is in flight.
+    seed([agent('root', [], 'starting', { terminalId: undefined })]);
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'read_swarm_state'
+        ? Promise.resolve(JSON.stringify({ swarmId: 'x', agents: [], status: 'idle' }))
+        : Promise.resolve(undefined),
+    );
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    // The in-flight 'starting' agent survives - disk (empty/idle) did not overwrite it.
+    expect(getAgent('root').status).toBe('starting');
+    expect(invokeMock).not.toHaveBeenCalledWith('read_swarm_state', expect.anything());
   });
 });
 

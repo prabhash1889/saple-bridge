@@ -8,6 +8,7 @@ import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
 import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
 import { useTerminalStore, getPaneSignalTail } from './terminalStore';
+import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
@@ -58,6 +59,9 @@ interface SwarmState {
   templates: SwarmTemplate[];
   swarmActive: boolean;
   activeTemplateId: string | null;
+  // P11: the workspace instance the running swarm's panes are pinned to (its own instance, so agent
+  // terminals don't mix with the user's interactive panes). null for swarms started before P11.
+  swarmWorkspaceId: string | null;
   // One-shot: the Command Palette composer requests a new swarm seeded with this mission text.
   // SwarmWorkspace consumes it on render, opens the wizard pre-filled, and clears it. Transient
   // (not persisted).
@@ -371,7 +375,10 @@ ${signalsSection}`;
     const provider = agent.provider || 'codex';
     // Remember the launched model so the picker resurfaces it next time (P8).
     useModelCatalogStore.getState().recordUsed(provider, agent.model);
-    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile);
+    // P11: pin the pane to the swarm's own workspace instance so it doesn't land in whatever
+    // instance the user currently has active.
+    const swarmWorkspaceId = useSwarmStore.getState().swarmWorkspaceId || undefined;
+    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile, undefined, swarmWorkspaceId);
 
     // 2. Set terminal metadata
     useTerminalStore.getState().updateSession(paneId, {
@@ -411,6 +418,7 @@ export const useSwarmStore = create<SwarmState>()(
       templates: DEFAULT_TEMPLATES,
       swarmActive: false,
       activeTemplateId: null,
+      swarmWorkspaceId: null,
       pendingWizardMission: null,
 
       setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
@@ -420,6 +428,17 @@ export const useSwarmStore = create<SwarmState>()(
         // reopening a project would skip re-reading .saple/swarm/state.json and discard
         // external/MCP edits. The project-open flow passes force=true to always re-read disk.
         if (!force && get().loadedProjectPath === projectPath) return;
+
+        // P11: a swarm launch now switches workspace instance, which fires App's workspace-change
+        // force-reload while the launch is still in flight. Re-reading disk mid-launch could
+        // reconcile a just-'starting' agent (its pane hasn't spawned yet, so it looks orphaned)
+        // into 'failed'. While an agent of the currently-loaded same-path swarm is 'starting', a
+        // launch is in flight and in-memory state is the fresher writer, so skip the reload.
+        // Cross-project recovery (P13) is unaffected: there loadedProjectPath points at the other
+        // project, so this guard doesn't trigger.
+        if (get().loadedProjectPath === projectPath && get().activeAgents.some((a) => a.status === 'starting')) {
+          return;
+        }
         try {
           const content = await invoke<string>('read_swarm_state', { projectPath });
           const parsed = JSON.parse(content);
@@ -481,6 +500,7 @@ export const useSwarmStore = create<SwarmState>()(
             status,
             swarmActive: status === 'running' || status === 'paused',
             activeTemplateId: parsed.templateId || null,
+            swarmWorkspaceId: parsed.swarmWorkspaceId || null,
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
@@ -498,7 +518,7 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null });
         }
       },
 
@@ -511,6 +531,7 @@ export const useSwarmStore = create<SwarmState>()(
             skills: get().skills,
             contextFiles: get().contextFiles,
             templateId: get().activeTemplateId,
+            swarmWorkspaceId: get().swarmWorkspaceId,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -550,6 +571,19 @@ export const useSwarmStore = create<SwarmState>()(
           }
         }
 
+        // P11: give the swarm its own workspace instance of the same folder so its agent panes don't
+        // mix with the user's interactive terminals. Same path means every store and the lifecycle
+        // signal handling stay loaded when the user flips between the two instances. The id is pinned
+        // onto each launched pane (see launchAgentProcess) so late dependent agents still land here
+        // even after the user has switched back to their own instance.
+        const project = useProjectStore.getState();
+        await project.addWorkspace(projectPath);
+        const swarmWorkspaceId = useProjectStore.getState().currentWorkspaceId;
+        if (swarmWorkspaceId) {
+          const base = projectPath.split(/[\\/]/).pop() || projectPath;
+          project.renameWorkspace(swarmWorkspaceId, `${base} (swarm)`);
+        }
+
         // Seed run-state for each roster agent (drop wizard-only `expanded`).
         const seededAgents: SwarmAgent[] = agents.map((a) => ({
           id: a.id,
@@ -575,6 +609,7 @@ export const useSwarmStore = create<SwarmState>()(
           status: 'running',
           swarmActive: true,
           loadedProjectPath: projectPath,
+          swarmWorkspaceId,
         });
 
         await get().saveSwarmState(projectPath);

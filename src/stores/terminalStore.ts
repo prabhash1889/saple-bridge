@@ -95,7 +95,10 @@ interface TerminalState {
   subscribeOutput: (paneId: string, listener: TerminalOutputListener) => () => void;
   getBufferedOutput: (paneId: string) => string;
   getLatestSequence: (paneId: string) => number;
-  addPane: (cwd: string, aiProvider?: AiProvider, model?: string, promptFile?: string, customCommand?: string) => Promise<string>;
+  // `workspaceId` pins the pane to a specific workspace instance instead of the active one. Used
+  // by the swarm launch path (P11) so late dependent agents still land in the swarm's own instance
+  // even after the user has flipped back to their interactive instance.
+  addPane: (cwd: string, aiProvider?: AiProvider, model?: string, promptFile?: string, customCommand?: string, workspaceId?: string) => Promise<string>;
   splitPane: (paneId: string, cwd: string) => Promise<string>;
   removePane: (paneId: string) => Promise<void>;
   confirmRemovePane: (paneId: string) => void;
@@ -546,11 +549,12 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
 
     getLatestSequence: (paneId) => paneLatestSequence.get(paneId) ?? 0,
 
-    addPane: async (cwd, aiProvider, model, promptFile, customCommand) => {
+    addPane: async (cwd, aiProvider, model, promptFile, customCommand, workspaceId) => {
       const id = createId('term');
       const workspacePath = cwd || getActiveWorkspacePath() || '';
-      // Panes are always added to the active workspace instance; spawn still uses `cwd`.
-      const workspaceKey = getActiveWorkspaceKey() || workspacePath;
+      // Panes go to the active workspace instance unless a specific one is pinned (P11 swarm launch);
+      // spawn still uses `cwd`.
+      const workspaceKey = workspaceId || getActiveWorkspaceKey() || workspacePath;
       const index = get().workspacePanes[workspaceKey]?.length || 0;
       const color = COLOR_PRESETS[index % COLOR_PRESETS.length];
       const claudeSessionId = aiProvider === 'claude' ? crypto.randomUUID() : undefined;

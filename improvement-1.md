@@ -516,6 +516,21 @@ tail parser behind the existing tail view rather than changing the launch comman
 
 ## Priority 11 - Launch swarms into their own workspace instance
 
+> **Status: Done.** `startSwarmFromWizard` now creates and activates a dedicated workspace instance
+> of the same folder (`projectStore.addWorkspace`, renamed `<base> (swarm)`) and records its id as
+> `swarmWorkspaceId` (persisted in `.saple/swarm/state.json`). `addPane` gained an optional
+> `workspaceId` that pins a pane to a specific instance instead of the active one, and
+> `launchAgentProcess` passes `swarmWorkspaceId` on every launch - so late dependent agents still
+> land in the swarm's instance even after the user has flipped back to their own. Same path means
+> every store and the P13 lifecycle-signal handling stay loaded when flipping between the two
+> instances. Because the launch now switches the active instance, App's workspace-change
+> `loadSwarmState(force)` could fire mid-launch and reconcile a just-`starting` agent (pane not
+> spawned yet) into `failed`; `loadSwarmState` now skips the disk reload while an agent of the
+> currently-loaded same-path swarm is `starting` (in-memory is the fresher writer during a live
+> launch; cross-project P13 recovery is unaffected because there `loadedProjectPath` points at the
+> other project). Covered by a workspace-isolation test (dedicated instance + pinned pane) and a
+> mid-launch force-reload guard test.
+
 ### Problem
 
 Swarm panes land in the active workspace, mixing agent terminals with the user's interactive panes.
