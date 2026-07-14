@@ -5,7 +5,7 @@ import { useTerminalStore } from '../../../stores/terminalStore';
 import { useSshPresetStore, SshPreset } from '../../../stores/sshPresetStore';
 import { useConfirmStore } from '../../../stores/confirmStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
-import { buildSshCommand } from '../../../lib/sshPreset';
+import { buildSshCommand, sshPresetIssue } from '../../../lib/sshPreset';
 
 type DraftKey = 'name' | 'hostAlias' | 'remoteDir' | 'providerCommand';
 type Draft = Record<DraftKey, string>;
@@ -40,7 +40,10 @@ export const SshPresetsSection: React.FC = () => {
     setEditingId(preset.id);
   };
 
-  const canSave = draft.name.trim() !== '' && draft.hostAlias.trim() !== '';
+  // Block saving fields the quoting in buildSshCommand cannot carry (quotes, $, backticks) - the
+  // local shell would silently rewrite the command before it reaches the remote host.
+  const draftIssue = sshPresetIssue(draft);
+  const canSave = draft.name.trim() !== '' && draft.hostAlias.trim() !== '' && !draftIssue;
 
   const handleSave = () => {
     if (!canSave) return;
@@ -59,6 +62,12 @@ export const SshPresetsSection: React.FC = () => {
   const handleLaunch = (preset: SshPreset) => {
     const command = buildSshCommand(preset);
     const notify = useNotificationStore.getState();
+    // Presets saved before validation existed can still carry shell-active characters.
+    const issue = sshPresetIssue(preset);
+    if (issue) {
+      notify.error(`Edit this preset before launching: ${issue}`);
+      return;
+    }
     if (!currentProjectPath) {
       notify.error('Open a workspace before launching a terminal.');
       return;
@@ -143,7 +152,10 @@ export const SshPresetsSection: React.FC = () => {
             <label className="input-label">Remote Provider Command (optional)</label>
             <input className="settings-input" value={draft.providerCommand} placeholder="claude / codex / npm run dev" spellCheck={false} onChange={(e) => setDraft({ ...draft, providerCommand: e.target.value })} />
           </div>
-          {draft.hostAlias.trim() && (
+          {draftIssue && (
+            <span className="input-hint" style={{ color: 'var(--color-danger)' }}>{draftIssue}</span>
+          )}
+          {draft.hostAlias.trim() && !draftIssue && (
             <div className="input-group">
               <label className="input-label">Command Preview</label>
               <code className="ssh-preset-command">{buildSshCommand(draft)}</code>
