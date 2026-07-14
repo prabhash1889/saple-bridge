@@ -43,6 +43,20 @@ export const WorkspaceTab: React.FC = () => {
     }
   };
 
+  const [juneControl, setJuneControl] = useState(false);
+  useEffect(() => {
+    invoke<boolean>('june_control_get_enabled').then(setJuneControl).catch(() => {});
+  }, []);
+
+  const toggleJuneControl = async (enabled: boolean) => {
+    setJuneControl(enabled); // optimistic; the flag write is fast and rarely fails
+    try {
+      await invoke('june_control_set_enabled', { enabled });
+    } catch {
+      setJuneControl(!enabled);
+    }
+  };
+
   useEffect(() => {
     if (workspaceConfig) {
       setWorkspaceName(workspaceConfig.workspaceName);
@@ -200,6 +214,33 @@ export const WorkspaceTab: React.FC = () => {
         </p>
       </section>
     )}
+    <section className="surface">
+      <div className="section-header">
+        <Terminal size={18} className="section-icon" />
+        <span className="section-title">June Voice Control</span>
+      </div>
+      <p className="section-desc">
+        Let June (the voice agent) drive this workspace - spawn agents, assign tasks, control
+        terminals and the browser - over a token-authed loopback endpoint. When on, the app
+        publishes a discovery record June reads to connect.
+      </p>
+      <div className="settings-checkbox-row input-group checkbox-group">
+        <input
+          type="checkbox"
+          id="juneControl"
+          checked={juneControl}
+          onChange={e => toggleJuneControl(e.target.checked)}
+          className="settings-checkbox"
+        />
+        <label htmlFor="juneControl" className="settings-checkbox-label">
+          Allow June to control this workspace (requires app restart)
+        </label>
+      </div>
+      <p className="input-hint">
+        Security: the endpoint is loopback-only and every mutating command is token-authed, but it
+        can spawn and control agents in the open workspace. Leave off unless you use June.
+      </p>
+    </section>
     <SshPresetsSection />
     </>
   );

@@ -18,6 +18,7 @@ import { useBrowserStore } from './stores/browserStore';
 import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
+import { startJuneDispatcher } from './lib/juneDispatcher';
 
 const TerminalGrid = lazy(() => import('./components/terminal/TerminalGrid').then((module) => ({ default: module.TerminalGrid })));
 const KanbanBoard = lazy(() => import('./components/kanban/KanbanBoard').then((module) => ({ default: module.KanbanBoard })));
@@ -69,6 +70,15 @@ function App() {
   useEffect(() => {
     useBrowserStore.getState().setSuppressed(paletteOpen);
   }, [paletteOpen]);
+
+  // Listen for June control commands (no-op unless the user enabled the endpoint). See
+  // juneDispatcher.ts and src-tauri/src/june_control.rs.
+  useEffect(() => {
+    const unlisten = startJuneDispatcher();
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   useEffect(() => {
     if (HEAVY_VIEWS.includes(activeView)) {
