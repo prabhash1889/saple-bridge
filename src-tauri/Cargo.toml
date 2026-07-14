@@ -54,6 +54,7 @@ notify-debouncer-mini = "0.4"
 # Blocking HTTP client for best-effort model discovery (models.rs). rustls (ureq default) avoids a
 # system OpenSSL/native-tls dependency; runs inside spawn_blocking like the keychain calls.
 ureq = { version = "2", features = ["json"] }
+tiny_http = "0.12"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 # Opening the app again focuses the existing window instead of starting a second process.

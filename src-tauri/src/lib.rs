@@ -8,6 +8,7 @@ mod memory;
 mod git;
 mod review;
 mod control_plane;
+mod june_control;
 mod swarm;
 mod files;
 mod diagnostics;
@@ -58,12 +59,17 @@ pub fn run() {
     }
 
     builder
-        .setup(|_app| {
+        .setup(|app| {
+            use tauri::Manager;
             // Stage the sidecar to its stable per-user path before any project opens, so
             // `.mcp.json` never has to reference the (versioned, ACL-restricted on MSIX)
             // install directory. Release only: dev resolves the repo-local staging path.
             #[cfg(not(debug_assertions))]
             project::ensure_stable_sidecar();
+            // June control endpoint: a per-process token, then start the loopback server only if the
+            // user opted in (default off, no open port). See june_control.rs.
+            app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
+            june_control::start(app.handle().clone());
             Ok(())
         })
         .manage(pty::PtyRegistry::new())
@@ -84,6 +90,8 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 use tauri::Manager;
                 window.state::<pty::PtyRegistry>().shutdown();
+                // Drop the discovery record so June rejects this dead endpoint immediately.
+                june_control::remove_discovery_record();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -132,6 +140,10 @@ pub fn run() {
             review::run_verification_command,
             review::set_file_viewed,
             control_plane::canonical_record_write,
+            june_control::june_control_get_enabled,
+            june_control::june_control_set_enabled,
+            june_control::june_command_result,
+            june_control::june_emit_event,
             swarm::read_swarm_state,
             swarm::write_swarm_state,
             swarm::read_mailbox_file,
