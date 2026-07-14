@@ -93,57 +93,89 @@
   height: 26px;
 }
 
-.terminal-grid {
-  display: grid;
-  gap: 12px;
+/* Tiled terminal grid: panes are absolutely positioned from the row-based layout model
+   (terminalLayout.ts) so rows can hold different column counts (the staggered "brick" look)
+   and be freely resized. The container is the positioning context; `%` pane rects map to it. */
+.terminal-grid-tiled {
+  position: relative;
   flex: 1;
-  padding: 16px;
-  height: calc(100% - 48px);
+  /* Also pin height: the command-workbench container resolves its height via flex stretch, so
+     100% gives the tiled grid a definite box for its absolutely positioned panes to fill. */
+  height: 100%;
   width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--bg-terminal);
 }
 
-/* Inactive workspaces keep their grid mounted (so switching back never re-creates the
-   panes), but hide it. `display:none` overrides the `.terminal-grid` `display:grid`. */
-.terminal-grid.terminal-grid-hidden {
+.terminal-grid-tiled.terminal-grid-hidden {
   display: none;
 }
 
-.terminal-grid-1 {
-  grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
+.terminal-grid-tiled .terminal-pane {
+  position: absolute;
 }
 
-.terminal-grid-2 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: 1fr;
+/* Invisible drag handle straddling a pane boundary; the visible 1px divider is the panes' own
+   border. Wider than the divider so it is easy to grab, with an accent line on hover/drag. */
+.terminal-grid-gutter {
+  position: absolute;
+  z-index: 4;
+  background: transparent;
 }
 
-.terminal-grid-4 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+/* 8px hit strip: overlaps only ~4px into each neighbour, clear of the titlebar's centered
+   buttons (which start ~7px down) and the title padding, so resizing never steals their clicks. */
+.terminal-grid-gutter-v {
+  width: 8px;
+  cursor: col-resize;
 }
 
-.terminal-grid-6 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+.terminal-grid-gutter-h {
+  height: 8px;
+  cursor: row-resize;
 }
 
-.terminal-grid-9 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+.terminal-grid-gutter::after {
+  content: '';
+  position: absolute;
+  background: var(--accent, #5d5fef);
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 
-.terminal-grid-12 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+.terminal-grid-gutter-v::after {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
 }
 
-.terminal-grid-16 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-template-rows: repeat(4, minmax(0, 1fr));
+.terminal-grid-gutter-h::after {
+  top: 50%;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+
+.terminal-grid-gutter:hover::after {
+  opacity: 0.6;
+}
+
+/* While dragging a gutter, lock the cursor and suppress text selection app-wide. */
+body.resizing-col,
+body.resizing-col * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.resizing-row,
+body.resizing-row * {
+  cursor: row-resize !important;
+  user-select: none !important;
 }
 
 .terminal-empty-state,
@@ -561,11 +593,6 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-}
-
-.terminal-grid-maximized {
-  grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
 }
 
 .terminal-pane-maximized {
@@ -1219,12 +1246,6 @@
 
 .command-workbench-title svg {
   color: var(--accent-info-bright);
-}
-
-.command-workbench .terminal-grid {
-  gap: 0;
-  padding: 0;
-  height: 100%;
 }
 
 .command-workbench .terminal-grid-container {

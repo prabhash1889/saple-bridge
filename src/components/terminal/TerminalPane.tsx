@@ -22,13 +22,16 @@ interface TerminalPaneProps {
   // workspaces stay mounted (so switching back never re-creates them) but give up their
   // WebGL renderer while off-screen — see useXtermSession.
   active?: boolean;
+  // Absolute position/size for the tiled grid (left/top/width/height as `%`). The pane stays a
+  // flat child of the grid so React never unmounts it; only these inline values change on resize.
+  style?: React.CSSProperties;
 }
 
 // Transcript tail poll cadence for the Claude context badge. Reads ~64KB from disk per
 // tick per Claude pane; 4s keeps the number fresh without measurable cost.
 const CONTEXT_POLL_MS = 4000;
 
-const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true }) => {
+const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true, style }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [hasActivity, setHasActivity] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -230,6 +233,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       className={`terminal-pane ${maximized ? 'terminal-pane-maximized' : ''}`}
       style={{
         '--terminal-pane-color': paneColor,
+        ...style,
       } as React.CSSProperties}
       data-session-id={sessionId}
       data-focused={isFocused ? 'true' : 'false'}

@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -17,6 +17,15 @@ import { useBrowserStore } from '../../stores/browserStore';
 import { TerminalPane } from './TerminalPane';
 import { BrowserPanel } from '../browser/BrowserPanel';
 import { formatDroppedPaths } from './terminalFileDrop';
+import {
+  applyDrag,
+  evenLayout,
+  gutters,
+  layoutFitsCount,
+  paneRects,
+  type GridLayout,
+  type Gutter,
+} from './terminalLayout';
 
 
 const AI_PROVIDERS: { value: AiProvider; label: string; icon: string }[] = [
@@ -48,21 +57,42 @@ const workspaceNameFromPath = (path: string) => {
   return parts[parts.length - 1] || path;
 };
 
-const gridClassNameFor = (paneCount: number, maximizedPaneId: string | null) => {
-  if (maximizedPaneId) return 'terminal-grid terminal-grid-maximized';
-  if (paneCount <= 1) return 'terminal-grid terminal-grid-1';
-  if (paneCount === 2) return 'terminal-grid terminal-grid-2';
-  if (paneCount <= 4) return 'terminal-grid terminal-grid-4';
-  if (paneCount <= 6) return 'terminal-grid terminal-grid-6';
-  if (paneCount <= 9) return 'terminal-grid terminal-grid-9';
-  if (paneCount <= 12) return 'terminal-grid terminal-grid-12';
-  return 'terminal-grid terminal-grid-16';
+// Thin drag handle straddling the boundary between two panes. The static 1px divider comes from
+// the panes' own borders; this is a wider invisible hit area (with a hover accent) for resizing.
+const GutterHandle: React.FC<{ gutter: Gutter; onDown: (e: React.MouseEvent, g: Gutter) => void }> = ({
+  gutter,
+  onDown,
+}) => {
+  const { rect } = gutter;
+  const vertical = gutter.kind === 'col' || gutter.kind === 'triple-v';
+  const style: React.CSSProperties = vertical
+    ? {
+        left: `${rect.left * 100}%`,
+        top: `${rect.top * 100}%`,
+        height: `${rect.height * 100}%`,
+        transform: 'translateX(-50%)',
+      }
+    : {
+        top: `${rect.top * 100}%`,
+        left: `${rect.left * 100}%`,
+        width: `${rect.width * 100}%`,
+        transform: 'translateY(-50%)',
+      };
+  return (
+    <div
+      className={`terminal-grid-gutter ${vertical ? 'terminal-grid-gutter-v' : 'terminal-grid-gutter-h'}`}
+      style={style}
+      onMouseDown={(e) => onDown(e, gutter)}
+    />
+  );
 };
 
 interface WorkspaceTerminalGridProps {
   panes: string[];
   maximizedPaneId: string | null;
   active: boolean;
+  // Workspace *path*: the stable key under which this grid's resize fractions persist.
+  workspacePath: string;
 }
 
 // One workspace's terminal grid. Every open workspace renders one of these and they all
@@ -70,24 +100,118 @@ interface WorkspaceTerminalGridProps {
 // `terminal-grid-hidden`). Switching workspaces therefore just flips visibility instead of
 // disposing and re-creating xterm panes — the churn that used to exhaust WebGL contexts and
 // leave the terminals frozen until the next keypress.
-const WorkspaceTerminalGridComponent: React.FC<WorkspaceTerminalGridProps> = ({ panes, maximizedPaneId, active }) => {
-  const gridClassName = useMemo(
-    () => gridClassNameFor(panes.length, maximizedPaneId),
-    [panes.length, maximizedPaneId],
+//
+// Panes are absolutely positioned from a row-based ("brick") layout model (terminalLayout.ts):
+// each pane stays a flat, stable-keyed child, so resizing or restructuring the layout only
+// changes inline `%` positions — React never reparents a pane, so no xterm session is torn down.
+const WorkspaceTerminalGridComponent: React.FC<WorkspaceTerminalGridProps> = ({
+  panes,
+  maximizedPaneId,
+  active,
+  workspacePath,
+}) => {
+  const paneCount = panes.length;
+  const savedLayout = useTerminalLayoutStore((s) => s.gridSizes?.[workspacePath]);
+  const setGridSize = useTerminalLayoutStore((s) => s.setGridSize);
+
+  const [layout, setLayout] = useState<GridLayout>(() =>
+    savedLayout && layoutFitsCount(savedLayout, paneCount) ? savedLayout : evenLayout(paneCount),
   );
+
+  // Adding or removing a pane re-balances to an even split (per design: custom drag sizes are
+  // dropped so the new count lands on the clean "brick" layout every time).
+  const prevCount = useRef(paneCount);
+  useEffect(() => {
+    if (prevCount.current === paneCount) return;
+    prevCount.current = paneCount;
+    const next = evenLayout(paneCount);
+    setLayout(next);
+    setGridSize(workspacePath, next);
+  }, [paneCount, workspacePath, setGridSize]);
+
+  // The count can change a render before the reset effect above runs, leaving `layout` shaped for
+  // the old count; render against an even split until state catches up so pane rects never go NaN.
+  const activeLayout = useMemo(
+    () => (layoutFitsCount(layout, paneCount) ? layout : evenLayout(paneCount)),
+    [layout, paneCount],
+  );
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef(activeLayout);
+  layoutRef.current = activeLayout;
+  const dragRef = useRef<{ gutter: Gutter; start: GridLayout; axis: 'x' | 'y'; startPos: number; size: number } | null>(
+    null,
+  );
+
+  const rects = useMemo(() => paneRects(activeLayout, paneCount), [activeLayout, paneCount]);
+  // No gutters while a pane is maximized (it overlays the whole grid) or when there is nothing to split.
+  const gutterList = useMemo(
+    () => (maximizedPaneId || paneCount < 2 ? [] : gutters(activeLayout, paneCount)),
+    [activeLayout, paneCount, maximizedPaneId],
+  );
+
+  const onGutterDown = useCallback((e: React.MouseEvent, gutter: Gutter) => {
+    const el = containerRef.current;
+    if (!el) return;
+    e.preventDefault();
+    const box = el.getBoundingClientRect();
+    const axis: 'x' | 'y' = gutter.kind === 'col' || gutter.kind === 'triple-v' ? 'x' : 'y';
+    dragRef.current = {
+      gutter,
+      start: layoutRef.current,
+      axis,
+      startPos: axis === 'x' ? e.clientX : e.clientY,
+      size: axis === 'x' ? box.width : box.height,
+    };
+    document.body.classList.add(axis === 'x' ? 'resizing-col' : 'resizing-row');
+  }, []);
+
+  // Global drag listeners: dragging past a pane's edge should keep resizing even when the cursor
+  // leaves the thin gutter, so the move/up handlers live on the window, not the handle.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d || d.size === 0) return;
+      const cur = d.axis === 'x' ? e.clientX : e.clientY;
+      setLayout(applyDrag(d.start, d.gutter, (cur - d.startPos) / d.size));
+    };
+    const onUp = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      document.body.classList.remove('resizing-col', 'resizing-row');
+      setGridSize(workspacePath, layoutRef.current);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [workspacePath, setGridSize]);
 
   return (
     <div
-      className={active ? gridClassName : `${gridClassName} terminal-grid-hidden`}
+      ref={containerRef}
+      className={active ? 'terminal-grid-tiled' : 'terminal-grid-tiled terminal-grid-hidden'}
       aria-hidden={!active}
     >
-      {panes.map((paneId) => (
-        <TerminalPane
-          key={paneId}
-          sessionId={paneId}
-          maximized={maximizedPaneId === paneId}
-          active={active}
-        />
+      {panes.map((paneId, i) => {
+        const isMax = maximizedPaneId === paneId;
+        const rect = rects[i];
+        // Maximized: full-bleed overlay (its .terminal-pane-maximized class also sets inset:0).
+        // Otherwise: exact `%` rect from the layout model.
+        const style: React.CSSProperties = isMax
+          ? { inset: 0, zIndex: 5 }
+          : {
+              left: `${rect.left * 100}%`,
+              top: `${rect.top * 100}%`,
+              width: `${rect.width * 100}%`,
+              height: `${rect.height * 100}%`,
+            };
+        return <TerminalPane key={paneId} sessionId={paneId} maximized={isMax} active={active} style={style} />;
+      })}
+      {gutterList.map((g, i) => (
+        <GutterHandle key={i} gutter={g} onDown={onGutterDown} />
       ))}
     </div>
   );
@@ -371,6 +495,7 @@ const TerminalGridComponent: React.FC = () => {
         panes={wsPanes}
         maximizedPaneId={workspaceMaximizedPaneIds[workspace.id] ?? null}
         active={workspace.id === currentWorkspaceId}
+        workspacePath={workspace.path}
       />
     ));
 
