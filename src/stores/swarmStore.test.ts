@@ -216,6 +216,45 @@ describe('updateAgentStatus', () => {
   });
 });
 
+describe('reworkAgent (P4 bounded review-and-rework)', () => {
+  it('appends feedback to the mailbox, bumps attempt, and relaunches within budget', async () => {
+    let mailbox = '';
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'read_mailbox_file') return Promise.resolve(mailbox);
+      if (cmd === 'write_mailbox_file') {
+        mailbox = args.content as string;
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+    seed([agent('builder', [], 'review', { maxAttempts: 2 })]);
+
+    const result = await useSwarmStore.getState().reworkAgent(PROJECT, 'builder', 'fix the null check');
+
+    expect(result.ok).toBe(true);
+    expect(getAgent('builder').attempt).toBe(2);
+    expect(getAgent('builder').lastReviewFeedback).toBe('fix the null check');
+    expect(mailbox).toContain('fix the null check');
+    // Relaunch spawns a fresh pane.
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+
+  it('refuses to exceed maxAttempts without force, then relaunches when forced', async () => {
+    seed([agent('builder', [], 'review', { attempt: 1, maxAttempts: 1 })]);
+
+    const blocked = await useSwarmStore.getState().reworkAgent(PROJECT, 'builder', 'again');
+    expect(blocked).toEqual({ ok: false, limitReached: true, maxAttempts: 1 });
+    // Nothing launched, attempt untouched — the cap can't be bypassed by repeated rejects.
+    expect(addPaneMock).not.toHaveBeenCalled();
+    expect(getAgent('builder').attempt).toBe(1);
+
+    const forced = await useSwarmStore.getState().reworkAgent(PROJECT, 'builder', 'again', true);
+    expect(forced.ok).toBe(true);
+    expect(getAgent('builder').attempt).toBe(2);
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+});
+
 describe('loadSwarmState restart reconciliation', () => {
   const diskState = (agents: SwarmAgent[], status: string) =>
     JSON.stringify({

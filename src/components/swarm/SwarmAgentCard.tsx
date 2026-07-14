@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft, XCircle, Info } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
 import { isHeadlessProvider } from '../../types/provider';
@@ -20,7 +20,8 @@ interface SwarmAgentCardProps {
   onViewTerminal: (terminalId: string) => void;
   onRelaunch: (agentId: string) => void;
   onForceComplete: (agentId: string) => void;
-  onReject: (agentId: string) => void;
+  // P4: reject with review feedback routed back to the builder for one bounded rework.
+  onReject: (agentId: string, feedback: string) => void;
   onStop: (agentId: string) => void;
   mailboxContent?: string;
   loadingMailbox?: boolean;
@@ -49,6 +50,10 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
   handoffs = [],
   outcome,
 }) => {
+  // P4 rework: the Reject button reveals a feedback box; sending routes it to the builder's mailbox
+  // and relaunches. Local state is fine here — it's transient and per-card.
+  const [reworkOpen, setReworkOpen] = useState(false);
+  const [reworkFeedback, setReworkFeedback] = useState('');
   const hasOutcome = !!outcome && (!!outcome.summary || !!outcome.tests || !!outcome.changedFiles?.length || !!outcome.decisions?.length);
   // Headless agents pipe their prompt into the CLI's print mode: the terminal stays silent until
   // the process exits, so the mailbox is the live surface. Flag it while the agent is working so
@@ -243,7 +248,7 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
                 <span>Approve</span>
               </button>
               <button
-                onClick={() => onReject(agent.id)}
+                onClick={() => setReworkOpen((v) => !v)}
                 className="danger"
                 style={btnControlStyle}
               >
@@ -264,6 +269,36 @@ const SwarmAgentCardComponent: React.FC<SwarmAgentCardProps> = ({
             </button>
           )}
         </div>
+
+        {/* P4 rework panel: capture review feedback, send it to the builder's mailbox, relaunch. */}
+        {agent.status === 'review' && reworkOpen && (
+          <div style={reworkPanelStyle}>
+            <textarea
+              value={reworkFeedback}
+              onChange={(e) => setReworkFeedback(e.target.value)}
+              placeholder="What needs fixing? Sent to this agent's mailbox and included in its relaunch prompt…"
+              rows={3}
+              style={reworkTextareaStyle}
+            />
+            <div style={reworkFooterStyle}>
+              <span style={reworkAttemptStyle}>
+                Attempt {agent.attempt ?? 1} / {agent.maxAttempts ?? 1}
+              </span>
+              <button
+                className="danger"
+                style={btnControlStyle}
+                onClick={() => {
+                  onReject(agent.id, reworkFeedback);
+                  setReworkOpen(false);
+                  setReworkFeedback('');
+                }}
+              >
+                <RefreshCw size={12} />
+                <span>Send feedback &amp; rework</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -522,6 +557,38 @@ const actionsGroupStyle: React.CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',
   gap: '8px',
+};
+
+const reworkPanelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+  marginTop: '10px',
+};
+
+const reworkTextareaStyle: React.CSSProperties = {
+  width: '100%',
+  resize: 'vertical',
+  background: 'var(--bg-deep)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-sm)',
+  padding: '8px 10px',
+  color: 'var(--text-primary)',
+  fontSize: '12px',
+  fontFamily: 'inherit',
+  outline: 'none',
+};
+
+const reworkFooterStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+};
+
+const reworkAttemptStyle: React.CSSProperties = {
+  fontSize: '10.5px',
+  color: 'var(--text-muted)',
 };
 
 const btnViewStreamStyle: React.CSSProperties = {

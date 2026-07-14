@@ -244,6 +244,23 @@ Keep scoped terminal completion markers as the fallback when no structured outco
 
 ## Priority 4 — Bounded review-and-rework loop
 
+> **Status: Done.** Rejecting an in-review agent now routes it through one bounded rework instead of
+> just failing it. `SwarmAgent` gained `attempt` / `maxAttempts` (default 1) / `lastReviewFeedback`
+> (persisted in `.saple/swarm/state.json`, so attempts survive restart). The card's Reject button
+> opens an inline feedback box; sending calls the new `swarmStore.reworkAgent`, which appends the
+> feedback to the agent's mailbox, records it, bumps `attempt`, and relaunches through the existing
+> `relaunchAgent` path (same previous context + a "Review Feedback" prompt section built in
+> `launchAgentProcess`). Starting an attempt past `maxAttempts` returns `limitReached` rather than
+> relaunching — `SwarmWorkspace` then requires explicit human approval via the shared `confirmStore`
+> before forcing another attempt, so repeated review signals can't silently loop past the cap.
+> Dependency scheduling is untouched (rework relaunches the same node, adds no graph edge), so real
+> cycles are still rejected. Covered by `swarmStore.test.ts` rework tests (within-budget relaunch +
+> feedback delivery, and cap-refusal-then-force).
+>
+> ponytail: rework targets the agent that is in `review` (the builder under the gate), not a
+> reviewer's dependency builders — one uniform rule, no ambiguity when a reviewer has several
+> builder deps. Add dependency-routed rework only if a reviewer-agent-driven flow needs it.
+
 ### Problem
 
 The current dependency graph is intentionally acyclic. A reviewer can reject work, but a safe automatic route back to the responsible builder is missing.

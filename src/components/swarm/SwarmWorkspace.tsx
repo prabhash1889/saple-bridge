@@ -5,6 +5,7 @@ import { useSwarmStore } from '../../stores/swarmStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
+import { useConfirmStore } from '../../stores/confirmStore';
 import { readRunOutcome } from '../../lib/controlPlane';
 import type { AgentOutcome } from '../../types/agent';
 import { isHeadlessProvider } from '../../types/provider';
@@ -67,6 +68,7 @@ export const SwarmWorkspace: React.FC = () => {
   const stopSwarm = useSwarmStore((state) => state.stopSwarm);
   const updateAgentStatus = useSwarmStore((state) => state.updateAgentStatus);
   const relaunchAgent = useSwarmStore((state) => state.relaunchAgent);
+  const reworkAgent = useSwarmStore((state) => state.reworkAgent);
   const forceCompleteAgent = useSwarmStore((state) => state.forceCompleteAgent);
   const postToMailbox = useSwarmStore((state) => state.postToMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
@@ -138,10 +140,22 @@ export const SwarmWorkspace: React.FC = () => {
     useProjectStore.getState().setActiveView('terminals');
   };
 
-  // Review gate: reject fails the agent (dependents block, Relaunch stays available).
-  const handleAgentReject = async (agentId: string) => {
+  // Review gate (P4): reject routes the agent back through one bounded rework — feedback to its
+  // mailbox, relaunch with that feedback. Past the attempt budget the store refuses and we require
+  // an explicit human approval before forcing another attempt.
+  const handleAgentReject = async (agentId: string, feedback: string) => {
     if (!currentProjectPath) return;
-    await updateAgentStatus(currentProjectPath, agentId, 'failed', { statusReason: 'Rejected by operator.' });
+    const result = await reworkAgent(currentProjectPath, agentId, feedback);
+    if (result.limitReached) {
+      useConfirmStore.getState().confirm({
+        title: 'Rework limit reached',
+        message: `This agent has already used its ${result.maxAttempts ?? 1} allowed attempt(s). Approve another rework attempt?`,
+        confirmLabel: 'Approve rework',
+        onConfirm: () => {
+          void reworkAgent(currentProjectPath, agentId, feedback, true);
+        },
+      });
+    }
   };
 
   const handleAgentStop = async (agentId: string) => {

@@ -38,6 +38,13 @@ export interface SwarmAgent {
   // narrating the generic marker name. Absent on agents seeded before scoped markers existed —
   // those fall back to bare-marker matching.
   marker?: string;
+  // P4 bounded review-and-rework. `attempt` is the 1-based number of the current/last run (unset =
+  // 1). A reviewer rejection bumps it and relaunches the agent with `lastReviewFeedback` embedded in
+  // the prompt (and appended to the mailbox). Starting an attempt past `maxAttempts` (default 1)
+  // requires explicit human approval, so repeated review signals can't silently loop forever.
+  attempt?: number;
+  maxAttempts?: number;
+  lastReviewFeedback?: string;
 }
 
 export interface SwarmTemplate {
@@ -78,6 +85,17 @@ interface SwarmState {
   checkAndRunNextAgents: (projectPath: string) => Promise<void>;
   runAgentScan: (projectPath: string) => Promise<void>;
   relaunchAgent: (projectPath: string, agentId: string) => Promise<void>;
+  // P4: reject an in-review agent and route it back through one bounded rework. Appends `feedback`
+  // to its mailbox, records it for the relaunch prompt, bumps `attempt`, and relaunches. Returns
+  // `limitReached` (with the configured `maxAttempts`) instead of relaunching when the attempt
+  // budget is spent and `force` is false — the caller must get explicit human approval and retry
+  // with `force: true`.
+  reworkAgent: (
+    projectPath: string,
+    agentId: string,
+    feedback: string,
+    force?: boolean,
+  ) => Promise<{ ok: boolean; limitReached?: boolean; maxAttempts?: number }>;
   forceCompleteAgent: (projectPath: string, agentId: string) => Promise<void>;
   addCustomAgent: (agent: SwarmAgent) => void;
   removeAgent: (agentId: string) => void;
@@ -309,6 +327,12 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
       ? `\n## Provided Context Files\nRead these files for additional context:\n${contextFiles.map((f) => `- ${f.path}`).join('\n')}\n`
       : '';
 
+    // P4: a rejected agent relaunches with the reviewer's feedback front-and-centre so its retry
+    // addresses the rejection rather than repeating the same work.
+    const reviewFeedbackSection = agent.lastReviewFeedback
+      ? `\n## Review Feedback (rework attempt ${agent.attempt ?? 2})\nA previous attempt was rejected in review. Address this feedback before signaling completion:\n\n${agent.lastReviewFeedback}\n`
+      : '';
+
     // Scope this agent's completion markers to its own token so its status can't be flipped by
     // another pane's output or by echoing the generic marker name. Older agents (restored from a
     // pre-marker state.json) have no token — they keep using the bare markers.
@@ -350,7 +374,7 @@ ${agent.systemPrompt}
 - Dependencies: ${agent.dependencies.join(', ') || 'None'}
 - Mailbox Path: .saple/swarm/mailbox/${agent.id}.md (Write your updates/output here)
 - Handoff Path: .saple/swarm/handoffs/${agent.id}-to-[next_agent].json
-${skillsSection}${contextSection}
+${skillsSection}${contextSection}${reviewFeedbackSection}
 ${contextBriefSection({ role: agent.role, agentId: agent.id })}
 ${signalsSection}`;
 
@@ -861,6 +885,40 @@ export const useSwarmStore = create<SwarmState>()(
         if (freshAgent) {
           await launchAgentProcess(projectPath, freshAgent);
         }
+      },
+
+      reworkAgent: async (projectPath, agentId, feedback, force = false) => {
+        const agent = get().activeAgents.find(a => a.id === agentId);
+        if (!agent) return { ok: false };
+        const attempt = agent.attempt ?? 1;
+        const maxAttempts = agent.maxAttempts ?? 1;
+        // Starting an attempt past the budget is the "automatically exceeding maxAttempts" case —
+        // gate it behind explicit human approval instead of silently looping.
+        if (attempt >= maxAttempts && !force) {
+          return { ok: false, limitReached: true, maxAttempts };
+        }
+        const trimmed = feedback.trim();
+        const nextAttempt = attempt + 1;
+        if (trimmed) {
+          // Land the feedback in the builder's mailbox so the relaunched agent (and the operator)
+          // can read it there in addition to the prompt section.
+          await get().postToMailbox(
+            projectPath,
+            agentId,
+            `Review feedback (rework attempt ${nextAttempt}):\n\n${trimmed}`,
+          );
+        }
+        set(state => ({
+          activeAgents: state.activeAgents.map(a =>
+            a.id === agentId
+              ? { ...a, attempt: nextAttempt, lastReviewFeedback: trimmed || a.lastReviewFeedback }
+              : a
+          ),
+        }));
+        // relaunchAgent rebuilds the prompt from the (now feedback-carrying) agent and resets any
+        // dependents that had blocked on this one — the same "previous context + feedback" retry.
+        await get().relaunchAgent(projectPath, agentId);
+        return { ok: true };
       },
 
       forceCompleteAgent: async (projectPath, agentId) => {
