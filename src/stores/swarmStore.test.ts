@@ -228,7 +228,8 @@ describe('reworkAgent (P4 bounded review-and-rework)', () => {
       }
       return Promise.resolve(undefined);
     });
-    seed([agent('builder', [], 'review', { maxAttempts: 2 })]);
+    // Default budget (maxAttempts 1 = one approval-free rework): the first reject relaunches freely.
+    seed([agent('builder', [], 'review')]);
 
     const result = await useSwarmStore.getState().reworkAgent(PROJECT, 'builder', 'fix the null check');
 
@@ -240,18 +241,19 @@ describe('reworkAgent (P4 bounded review-and-rework)', () => {
     await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
   });
 
-  it('refuses to exceed maxAttempts without force, then relaunches when forced', async () => {
-    seed([agent('builder', [], 'review', { attempt: 1, maxAttempts: 1 })]);
+  it('refuses to exceed the rework budget without force, then relaunches when forced', async () => {
+    // attempt 2 = the initial run plus one rework, so the budget of 1 is spent.
+    seed([agent('builder', [], 'review', { attempt: 2, maxAttempts: 1 })]);
 
     const blocked = await useSwarmStore.getState().reworkAgent(PROJECT, 'builder', 'again');
     expect(blocked).toEqual({ ok: false, limitReached: true, maxAttempts: 1 });
     // Nothing launched, attempt untouched — the cap can't be bypassed by repeated rejects.
     expect(addPaneMock).not.toHaveBeenCalled();
-    expect(getAgent('builder').attempt).toBe(1);
+    expect(getAgent('builder').attempt).toBe(2);
 
     const forced = await useSwarmStore.getState().reworkAgent(PROJECT, 'builder', 'again', true);
     expect(forced.ok).toBe(true);
-    expect(getAgent('builder').attempt).toBe(2);
+    expect(getAgent('builder').attempt).toBe(3);
     await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
   });
 });

@@ -155,7 +155,7 @@ export const SwarmWorkspace: React.FC = () => {
     if (result.limitReached) {
       useConfirmStore.getState().confirm({
         title: 'Rework limit reached',
-        message: `This agent has already used its ${result.maxAttempts ?? 1} allowed attempt(s). Approve another rework attempt?`,
+        message: `This agent has already used its ${result.maxAttempts ?? 1} allowed rework attempt(s). Approve another rework?`,
         confirmLabel: 'Approve rework',
         onConfirm: () => {
           void reworkAgent(currentProjectPath, agentId, feedback, true);

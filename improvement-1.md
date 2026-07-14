@@ -250,8 +250,9 @@ Keep scoped terminal completion markers as the fallback when no structured outco
 > opens an inline feedback box; sending calls the new `swarmStore.reworkAgent`, which appends the
 > feedback to the agent's mailbox, records it, bumps `attempt`, and relaunches through the existing
 > `relaunchAgent` path (same previous context + a "Review Feedback" prompt section built in
-> `launchAgentProcess`). Starting an attempt past `maxAttempts` returns `limitReached` rather than
-> relaunching — `SwarmWorkspace` then requires explicit human approval via the shared `confirmStore`
+> `launchAgentProcess`). `maxAttempts` budgets reworks, not total runs (default 1 = one approval-free
+> rework); a rework past the budget returns `limitReached` rather than relaunching - `SwarmWorkspace`
+> then requires explicit human approval via the shared `confirmStore`
 > before forcing another attempt, so repeated review signals can't silently loop past the cap.
 > Dependency scheduling is untouched (rework relaunches the same node, adds no graph edge), so real
 > cycles are still rejected. Covered by `swarmStore.test.ts` rework tests (within-budget relaunch +

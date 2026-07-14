@@ -40,8 +40,9 @@ export interface SwarmAgent {
   marker?: string;
   // P4 bounded review-and-rework. `attempt` is the 1-based number of the current/last run (unset =
   // 1). A reviewer rejection bumps it and relaunches the agent with `lastReviewFeedback` embedded in
-  // the prompt (and appended to the mailbox). Starting an attempt past `maxAttempts` (default 1)
-  // requires explicit human approval, so repeated review signals can't silently loop forever.
+  // the prompt (and appended to the mailbox). `maxAttempts` (default 1) is the REWORK budget: how
+  // many rejections may relaunch without extra approval. Reworks past it require explicit human
+  // approval, so repeated review signals can't silently loop forever.
   attempt?: number;
   maxAttempts?: number;
   lastReviewFeedback?: string;
@@ -960,9 +961,12 @@ export const useSwarmStore = create<SwarmState>()(
         if (!agent) return { ok: false };
         const attempt = agent.attempt ?? 1;
         const maxAttempts = agent.maxAttempts ?? 1;
-        // Starting an attempt past the budget is the "automatically exceeding maxAttempts" case —
-        // gate it behind explicit human approval instead of silently looping.
-        if (attempt >= maxAttempts && !force) {
+        // `maxAttempts` budgets REWORKS, not total runs: attempt 1 is the initial run, so with the
+        // default budget of 1 the first rejection relaunches freely and the second is the
+        // "automatically exceeding maxAttempts" case, gated behind explicit human approval
+        // instead of silently looping.
+        const reworksUsed = attempt - 1;
+        if (reworksUsed >= maxAttempts && !force) {
           return { ok: false, limitReached: true, maxAttempts };
         }
         const trimmed = feedback.trim();
