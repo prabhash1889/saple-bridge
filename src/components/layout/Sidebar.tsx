@@ -19,8 +19,10 @@ import {
   FolderOpen,
   ArrowUp,
   ArrowDown,
+  Globe,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { useBrowserStore } from '../../stores/browserStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore, ViewType } from '../../stores/projectStore';
 import { useSwarmStore } from '../../stores/swarmStore';
@@ -213,7 +215,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
     // update lands after the workspace switch, which is correct — it then only touches the
     // closed workspace's panes, not the newly active one.)
     void useTerminalStore.getState().closeWorkspaceTerminals(id);
+    // Same for its embedded-browser webviews and persisted browser session.
+    void useBrowserStore.getState().closeWorkspaceBrowser(id);
     closeWorkspace(id);
+  };
+
+  const handleOpenBrowser = () => {
+    if (!currentWorkspaceId) return;
+    setActiveView('terminals');
+    useBrowserStore.getState().openPanel(currentWorkspaceId);
   };
 
   const handleRevealWorkspace = async () => {
@@ -620,6 +630,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
               <span>{item.label}</span>
             </button>
           );
+
+          if (item.id === 'editor') {
+            return (
+              <div key={item.id} className="settings-command-row">
+                {navButton}
+                <button
+                  className="icon-button sidebar-command-button"
+                  onClick={handleOpenBrowser}
+                  disabled={disabled}
+                  title={disabled ? 'Open a workspace to access Browser' : 'Browser'}
+                  aria-label="Browser"
+                >
+                  <Globe size={17} />
+                </button>
+              </div>
+            );
+          }
 
           if (item.id === 'settings') {
             return (

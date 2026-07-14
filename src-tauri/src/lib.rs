@@ -1,3 +1,4 @@
+mod browser;
 mod claude_context;
 mod pty;
 mod project;
@@ -148,7 +149,15 @@ pub fn run() {
             diagnostics::check_provider_cli,
             diagnostics::check_provider_signin,
             watcher::watch_project_files,
-            watcher::unwatch_project_files
+            watcher::unwatch_project_files,
+            browser::browser_open_tab,
+            browser::browser_close_tab,
+            browser::browser_set_bounds,
+            browser::browser_set_visible,
+            browser::browser_navigate,
+            browser::browser_back,
+            browser::browser_forward,
+            browser::browser_reload
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

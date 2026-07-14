@@ -13,7 +13,9 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { AiProvider, useTerminalStore } from '../../stores/terminalStore';
 import { useTerminalLayoutStore } from '../../stores/terminalLayoutStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useBrowserStore } from '../../stores/browserStore';
 import { TerminalPane } from './TerminalPane';
+import { BrowserPanel } from '../browser/BrowserPanel';
 import { formatDroppedPaths } from './terminalFileDrop';
 
 
@@ -127,6 +129,9 @@ const TerminalGridComponent: React.FC = () => {
     currentProjectPath ? state.savedLayouts[currentProjectPath] : undefined,
   );
   const savedPaneCount = savedLayout?.panes.length ?? 0;
+  const browserOpen = useBrowserStore((state) =>
+    currentWorkspaceId ? !!state.workspaces[currentWorkspaceId]?.isOpen : false,
+  );
 
 
   useEffect(() => {
@@ -349,7 +354,9 @@ const TerminalGridComponent: React.FC = () => {
     setSetupComplete(true);
   }, [addPane, agentCounts, customCommandCount, clampedLayoutCount, currentProjectPath, maxLimit, panes.length, selectedProvider, customCommand]);
 
-  const showSetup = !setupComplete && panes.length === 0;
+  // An open browser panel suppresses the setup wizard: clicking the sidebar globe with no
+  // panes should show the browser next to the terminal empty state, not the wizard.
+  const showSetup = !setupComplete && panes.length === 0 && !browserOpen;
   const currentStepIndex = SETUP_STEPS.findIndex((item) => item.id === setupStep);
 
   // Build a persistent grid for every open workspace that has panes. Only the active
@@ -413,6 +420,7 @@ const TerminalGridComponent: React.FC = () => {
               </div>
             )}
           </div>
+          {browserOpen && <BrowserPanel />}
         </div>
       </div>
       {showSetup && (

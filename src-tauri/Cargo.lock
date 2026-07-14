@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "saple-bridge"
-version = "1.0.25"
+version = "1.0.26"
 dependencies = [
  "ignore",
  "keyring",

@@ -14,6 +14,7 @@ import { useKanbanStore } from './stores/kanbanStore';
 import { useSwarmStore } from './stores/swarmStore';
 import { useAgentSessionStore } from './stores/agentSessionStore';
 import { useTerminalStore } from './stores/terminalStore';
+import { useBrowserStore } from './stores/browserStore';
 import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
@@ -62,6 +63,12 @@ function App() {
     mql.addEventListener('change', handler);
     return () => mql.removeEventListener('change', handler);
   }, [themeMode]);
+
+  // The command palette floats over the browser region; native browser webviews render
+  // above all DOM, so they must hide while the palette is open (see browserStore.suppressed).
+  useEffect(() => {
+    useBrowserStore.getState().setSuppressed(paletteOpen);
+  }, [paletteOpen]);
 
   useEffect(() => {
     if (HEAVY_VIEWS.includes(activeView)) {
