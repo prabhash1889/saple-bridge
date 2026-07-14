@@ -26,6 +26,7 @@ const SwarmWorkspace = lazy(() => import('./components/swarm/SwarmWorkspace').th
 const ReviewWorkspace = lazy(() => import('./components/review/ReviewWorkspace').then((module) => ({ default: module.ReviewWorkspace })));
 const EditorPanel = lazy(() => import('./components/editor/EditorPanel').then((module) => ({ default: module.EditorPanel })));
 const CommandPalette = lazy(() => import('./components/common/CommandPalette').then((module) => ({ default: module.CommandPalette })));
+const PreviewPanel = lazy(() => import('./components/preview/PreviewPanel').then((module) => ({ default: module.PreviewPanel })));
 
 // Heavy, stateful views are kept mounted once first visited and toggled with CSS
 // visibility, so switching back is instant (no remount, no xterm dispose/replay).
@@ -48,6 +49,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   // When the palette was opened via the composer shortcut, it starts on the target picker.
   const [paletteCompose, setPaletteCompose] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [mountedHeavyViews, setMountedHeavyViews] = useState<Set<ViewType>>(() => new Set<ViewType>());
   const hideTopBar = HEAVY_VIEWS.includes(activeView);
 
@@ -159,6 +161,12 @@ function App() {
         setPaletteOpen(true);
       }
 
+      // 2c. Toggle the Local Preview drawer: Ctrl+Shift+B / Cmd+Shift+B (P5)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setPreviewOpen((prev) => !prev);
+      }
+
       // 3. Switch rooms: Alt + 1-9
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const index = parseInt(e.key, 10) - 1;
@@ -197,6 +205,14 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentProjectPath]);
+
+  // The Command Palette's "Open Local Preview" entry dispatches this so it doesn't need the
+  // overlay's setter (decoupled, same pattern the palette uses to reach the shell).
+  useEffect(() => {
+    const open = () => setPreviewOpen(true);
+    window.addEventListener('open-local-preview', open);
+    return () => window.removeEventListener('open-local-preview', open);
+  }, []);
 
   const renderHeavyView = (view: ViewType, node: ReactNode) => {
     if (!mountedHeavyViews.has(view)) return null;
@@ -247,6 +263,11 @@ function App() {
       {paletteOpen && (
         <Suspense fallback={null}>
           <CommandPalette isOpen={paletteOpen} initialCompose={paletteCompose} onClose={() => setPaletteOpen(false)} />
+        </Suspense>
+      )}
+      {previewOpen && (
+        <Suspense fallback={null}>
+          <PreviewPanel isOpen={previewOpen} onClose={() => setPreviewOpen(false)} />
         </Suspense>
       )}
     </div>

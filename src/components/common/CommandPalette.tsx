@@ -3,7 +3,7 @@ import {
   Search, Terminal, ClipboardList, Network, Users,
   GitPullRequest, Settings, FolderOpen, ShieldCheck,
   HelpCircle, Play, ChevronRight, CornerDownLeft, ArrowLeft, Keyboard,
-  MessageSquarePlus, Send, Bot
+  MessageSquarePlus, Send, Bot, Monitor
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore, AiProvider } from '../../stores/terminalStore';
@@ -330,6 +330,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
         shortcut: 'Ctrl+O',
         icon: FolderOpen,
         action: handleOpenWorkspace,
+      },
+      {
+        id: 'open_local_preview',
+        name: 'Open Local Preview',
+        description: 'Preview a loopback dev URL and attach it to a task, agent, or memory',
+        category: 'Preview',
+        shortcut: 'Ctrl+Shift+B',
+        icon: Monitor,
+        action: () => {
+          onClose();
+          window.dispatchEvent(new Event('open-local-preview'));
+        },
       },
       {
         id: 'keyboard_shortcuts',

@@ -307,6 +307,26 @@ The reviewer rejection should append feedback to the builder mailbox and offer a
 
 ## Priority 5 — Local development preview and screenshot context
 
+> **Status: Done (preview panel); screenshot capture still deferred.** A loopback-only Preview drawer
+> (`src/components/preview/PreviewPanel.tsx`) opens as a global overlay - deliberately not a nav room
+> (respecting the no-new-nav rule) - via `Ctrl+Shift+B` or the Command Palette's "Open Local Preview"
+> entry (which dispatches an `open-local-preview` window event `App` listens for). A single shared
+> validator (`src/lib/loopback.ts` `parseLoopbackUrl`) is the gate: only `localhost`, `127.0.0.1`, and
+> `[::1]` http(s) URLs load, everything else is rejected with a clear message. The panel offers Load,
+> Refresh, and Open-externally (`@tauri-apps/plugin-opener`), and an attach row whose `<select>` shows
+> the chosen destination before attaching - Project memory (`memoryStore.saveNote`), any active swarm
+> agent's mailbox (`swarmStore.postToMailbox`), or a Kanban task (appended to its description via
+> `kanbanStore.updateTask`) - all existing store writes, no new persistence. A preflight
+> `fetch(url, { mode: 'no-cors' })` distinguishes "server unavailable" (rejected) from a reachable
+> server whose blank frame means embedding is blocked (a persistent hint explains X-Frame-Options /
+> frame-ancestors). Keyboard is complete: `useFocusTrap` traps Tab + Esc-to-close and the URL field
+> autofocuses. The production and dev CSPs gained `frame-src` and loopback `connect-src` entries for
+> the three loopback origins (http/https, any port). Covered by `loopback.test.ts`
+> (accept/reject/normalize).
+>
+> Screenshot capture stays deferred exactly as scoped below - it needs native per-OS webview capture
+> and is its own follow-up once this ships.
+
 ### Problem
 
 Terminal URLs currently open in the system browser. The agent cannot receive a visual screenshot feedback loop from inside Bridge.
