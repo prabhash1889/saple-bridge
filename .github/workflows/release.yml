@@ -2,8 +2,8 @@ name: Release
 
 # Cut a release by pushing a version tag (see `npm run release`, which bumps + tags + pushes):
 #   git tag v1.1.0 && git push --follow-tags
-# This builds the signed, updater-ready Windows and macOS (Apple Silicon) bundles and publishes a
-# DRAFT GitHub release with `latest.json`. Both matrix legs upload into the same draft; tauri-action
+# This builds the signed, updater-ready Windows, macOS (Apple Silicon), and Linux bundles and
+# publishes a DRAFT GitHub release with `latest.json`. All matrix legs upload into the same draft; tauri-action
 # merges each platform's entry into `latest.json` rather than overwriting. Installed apps only see
 # the update once you review and publish that draft.
 on:
@@ -18,15 +18,14 @@ permissions:
 jobs:
   release:
     name: Build & publish (${{ matrix.os }})
-    # fail-fast: false so a mac failure never cancels the Windows leg. Worst case: the Windows
-    # installer + its latest.json entry still publish, the draft just lacks the .dmg.
+    # fail-fast: false so one platform failure never cancels the other release legs.
     # macos-latest is Apple Silicon (arm64); Intel Macs would need a separate x86_64 / universal
     # build. macOS artifacts are updater-signed (minisign) but NOT Apple-notarized yet, so Gatekeeper
     # will warn on first open until an Apple Developer cert is wired in.
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
       # Two sibling checkouts: prepare-sidecar.mjs builds ../saple-mcp relative to the bridge root,
@@ -59,6 +58,23 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: saple-bridge/src-tauri
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libxdo-dev
 
       - name: Install dependencies
         run: npm ci
