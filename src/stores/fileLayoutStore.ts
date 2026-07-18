@@ -11,6 +11,10 @@ export interface SavedFileLayout {
   expanded: string[];
   openFiles: string[];
   activeFile: string | null;
+  // Files side-panel (terminals room) open state + width, so it survives room/project switches and
+  // restart the same way the browser panel does. Optional for backward compat with v1 layouts.
+  panelOpen?: boolean;
+  panelWidth?: number;
 }
 
 interface FileLayoutState {

@@ -20,9 +20,11 @@ import {
   ArrowUp,
   ArrowDown,
   Globe,
+  PanelRight,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useBrowserStore } from '../../stores/browserStore';
+import { useFileStore } from '../../stores/fileStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore, ViewType } from '../../stores/projectStore';
 import { useSwarmStore } from '../../stores/swarmStore';
@@ -92,6 +94,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
   const closeWorkspace = useProjectStore((state) => state.closeWorkspace);
   const moveWorkspace = useProjectStore((state) => state.moveWorkspace);
   const renameWorkspace = useProjectStore((state) => state.renameWorkspace);
+  const filesPanelOpen = useFileStore((state) => state.panelOpen);
+  const browserPanelOpen = useBrowserStore((state) =>
+    currentWorkspaceId ? !!state.workspaces[currentWorkspaceId]?.isOpen : false,
+  );
 
   const [selectedProvider, setSelectedProvider] = useState<AiProvider>('claude');
   const [controlsCollapsed, setControlsCollapsed] = useState(true);
@@ -220,10 +226,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
     closeWorkspace(id);
   };
 
-  const handleOpenBrowser = () => {
+  const handleToggleBrowser = () => {
     if (!currentWorkspaceId) return;
+    // Toggle only closes when the panel is already visible (on terminals); otherwise bring it into view.
+    if (browserPanelOpen && activeView === 'terminals') {
+      useBrowserStore.getState().closePanel(currentWorkspaceId);
+      return;
+    }
     setActiveView('terminals');
     useBrowserStore.getState().openPanel(currentWorkspaceId);
+  };
+
+  const handleToggleFilesPanel = () => {
+    if (!currentWorkspaceId) return;
+    if (filesPanelOpen && activeView === 'terminals') {
+      useFileStore.getState().closePanel();
+      return;
+    }
+    setActiveView('terminals');
+    useFileStore.getState().openPanel();
   };
 
   const handleRevealWorkspace = async () => {
@@ -636,11 +657,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
               <div key={item.id} className="settings-command-row">
                 {navButton}
                 <button
-                  className="icon-button sidebar-command-button"
-                  onClick={handleOpenBrowser}
+                  className={`icon-button sidebar-command-button ${filesPanelOpen ? 'active' : ''}`}
+                  onClick={handleToggleFilesPanel}
+                  disabled={disabled}
+                  title={disabled ? 'Open a workspace to view the files panel' : 'Files panel'}
+                  aria-label="Files panel"
+                  aria-pressed={filesPanelOpen}
+                >
+                  <PanelRight size={17} />
+                </button>
+                <button
+                  className={`icon-button sidebar-command-button ${browserPanelOpen ? 'active' : ''}`}
+                  onClick={handleToggleBrowser}
                   disabled={disabled}
                   title={disabled ? 'Open a workspace to access Browser' : 'Browser'}
                   aria-label="Browser"
+                  aria-pressed={browserPanelOpen}
                 >
                   <Globe size={17} />
                 </button>

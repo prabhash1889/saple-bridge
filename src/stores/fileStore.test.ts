@@ -6,9 +6,11 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { useFileStore } from './fileStore';
+import { useFileStore, DEFAULT_PANEL_WIDTH } from './fileStore';
 import { useFileLayoutStore } from './fileLayoutStore';
 import { useConfirmStore } from './confirmStore';
+import { useBrowserStore } from './browserStore';
+import { useProjectStore } from './projectStore';
 
 const reset = () => {
   invokeMock.mockReset();
@@ -19,6 +21,8 @@ const reset = () => {
   });
   useFileStore.getState().reset();
   useConfirmStore.setState({ isOpen: false, onConfirm: null, onCancel: null });
+  useBrowserStore.setState({ workspaces: {}, live: {} });
+  useProjectStore.setState({ currentWorkspaceId: null });
 };
 
 describe('fileStore tab logic', () => {
@@ -165,5 +169,72 @@ describe('fileStore layout persistence (P12)', () => {
     expect(st.openFiles).toEqual([]);
     expect(st.activeFile).toBeNull();
     expect(st.layoutPath).toBeNull();
+  });
+
+  it('persists and restores the files-panel open state and width', () => {
+    useFileLayoutStore.getState().setLayout('/w', {
+      expanded: [],
+      openFiles: [],
+      activeFile: null,
+      panelOpen: true,
+      panelWidth: 640,
+    });
+
+    useFileStore.getState().restoreLayout('/w');
+
+    const st = useFileStore.getState();
+    expect(st.panelOpen).toBe(true);
+    expect(st.panelWidth).toBe(640);
+  });
+
+  it('defaults panel state when a restored layout predates the feature', () => {
+    useFileLayoutStore.getState().setLayout('/w', {
+      expanded: [],
+      openFiles: [],
+      activeFile: null,
+    });
+
+    useFileStore.getState().restoreLayout('/w');
+
+    const st = useFileStore.getState();
+    expect(st.panelOpen).toBe(false);
+    expect(st.panelWidth).toBe(DEFAULT_PANEL_WIDTH);
+  });
+});
+
+describe('fileStore / browser panel mutual exclusion', () => {
+  beforeEach(reset);
+
+  it('togglePanel opens then closes the files panel', () => {
+    useProjectStore.setState({ currentWorkspaceId: 'w1' });
+
+    useFileStore.getState().togglePanel();
+    expect(useFileStore.getState().panelOpen).toBe(true);
+
+    useFileStore.getState().togglePanel();
+    expect(useFileStore.getState().panelOpen).toBe(false);
+  });
+
+  it('opening the files panel closes an open browser panel', () => {
+    useProjectStore.setState({ currentWorkspaceId: 'w1' });
+    useBrowserStore.getState().openPanel('w1');
+    expect(useBrowserStore.getState().workspaces['w1'].isOpen).toBe(true);
+
+    useFileStore.getState().openPanel();
+
+    expect(useFileStore.getState().panelOpen).toBe(true);
+    expect(useBrowserStore.getState().workspaces['w1'].isOpen).toBe(false);
+  });
+
+  it('opening the browser panel closes an open files panel', () => {
+    useProjectStore.setState({ currentWorkspaceId: 'w1' });
+    useFileStore.getState().openPanel();
+    expect(useFileStore.getState().panelOpen).toBe(true);
+
+    // Browser opening fires the subscription that closes the files panel.
+    useBrowserStore.getState().openPanel('w1');
+
+    expect(useBrowserStore.getState().workspaces['w1'].isOpen).toBe(true);
+    expect(useFileStore.getState().panelOpen).toBe(false);
   });
 });

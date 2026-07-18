@@ -306,6 +306,13 @@ html[data-theme="latte"] .terminal-provider-menu {
   border-color: var(--border);
 }
 
+/* Toggle-on state for the browser / files-panel command buttons. */
+.sidebar-command-button.active {
+  color: var(--accent);
+  background: var(--accent-light);
+  border-color: var(--border);
+}
+
 .room-nav-item {
   justify-content: flex-start;
   width: 100%;

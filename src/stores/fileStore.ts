@@ -3,6 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { toErrorMessage } from '../lib/errors';
 import { useConfirmStore } from './confirmStore';
 import { useFileLayoutStore } from './fileLayoutStore';
+import { useProjectStore } from './projectStore';
+import { useBrowserStore } from './browserStore';
+
+// Files side-panel default/min width (terminals room). Sized so the 200px tree plus a usable code
+// column both fit; MIN keeps the editor from collapsing on drag.
+export const DEFAULT_PANEL_WIDTH = 580;
+export const MIN_PANEL_WIDTH = 400;
 
 export interface FileEntry {
   name: string;
@@ -44,9 +51,17 @@ interface FileState {
   error: string | null;
   // One-shot request (from the command palette) for the Files room to open its Search tab.
   pendingSearchOpen: boolean;
+  // Files side-panel (terminals room) open state + width, for the current workspace. Persisted per
+  // workspace via fileLayoutStore, mutually exclusive with the browser panel (see subscription below).
+  panelOpen: boolean;
+  panelWidth: number;
 
   requestSearch: () => void;
   consumeSearchRequest: () => void;
+  openPanel: () => void;
+  closePanel: () => void;
+  togglePanel: () => void;
+  setPanelWidth: (width: number) => void;
   // Restore this workspace's persisted layout (expanded folders + tabs), or clear when path is null.
   restoreLayout: (projectPath: string | null) => void;
   toggleExpanded: (path: string) => void;
@@ -80,12 +95,14 @@ export const useFileStore = create<FileState>((set, get) => {
   // Snapshot the current layout (expanded folders + tabs) into the persisted per-workspace store.
   // No-op until a workspace is restored, so unit tests and the no-project state don't write.
   const captureLayout = () => {
-    const { layoutPath, expanded, openFiles, activeFile } = get();
+    const { layoutPath, expanded, openFiles, activeFile, panelOpen, panelWidth } = get();
     if (!layoutPath) return;
     useFileLayoutStore.getState().setLayout(layoutPath, {
       expanded: [...expanded],
       openFiles,
       activeFile,
+      panelOpen,
+      panelWidth,
     });
   };
 
@@ -109,9 +126,32 @@ export const useFileStore = create<FileState>((set, get) => {
     loading: false,
     error: null,
     pendingSearchOpen: false,
+    panelOpen: false,
+    panelWidth: DEFAULT_PANEL_WIDTH,
 
     requestSearch: () => set({ pendingSearchOpen: true }),
     consumeSearchRequest: () => set({ pendingSearchOpen: false }),
+
+    openPanel: () => {
+      // Only one aux panel per terminals row: opening files closes the browser (current workspace).
+      const wsId = useProjectStore.getState().currentWorkspaceId;
+      if (wsId) useBrowserStore.getState().closePanel(wsId);
+      set({ panelOpen: true });
+      captureLayout();
+    },
+    closePanel: () => {
+      if (!get().panelOpen) return;
+      set({ panelOpen: false });
+      captureLayout();
+    },
+    togglePanel: () => {
+      if (get().panelOpen) get().closePanel();
+      else get().openPanel();
+    },
+    setPanelWidth: (width) => {
+      set({ panelWidth: width });
+      captureLayout();
+    },
 
     restoreLayout: (projectPath) => {
       if (!projectPath) {
@@ -131,6 +171,8 @@ export const useFileStore = create<FileState>((set, get) => {
         expanded: new Set(saved?.expanded ?? []),
         openFiles: saved?.openFiles ?? [],
         activeFile: saved?.activeFile ?? null,
+        panelOpen: saved?.panelOpen ?? false,
+        panelWidth: saved?.panelWidth ?? DEFAULT_PANEL_WIDTH,
       });
       // Show the persisted active tab's content immediately. Best-effort: if it was deleted while
       // this workspace was closed, loadFiles' prune (on the next tree load) drops it.
@@ -382,6 +424,18 @@ export const useFileStore = create<FileState>((set, get) => {
         pendingSearchOpen: false,
         error: null,
         loading: false,
+        panelOpen: false,
+        panelWidth: DEFAULT_PANEL_WIDTH,
       }),
   };
+});
+
+// Only one aux panel (files or browser) shows in the terminals row at a time. When the browser
+// panel opens for the active workspace, close the files panel. One-directional (fileStore ->
+// browserStore) so there's no import cycle; the reverse is handled inside openPanel above.
+useBrowserStore.subscribe((state) => {
+  if (!useFileStore.getState().panelOpen) return;
+  const wsId = useProjectStore.getState().currentWorkspaceId;
+  const browserOpen = wsId ? !!state.workspaces[wsId]?.isOpen : false;
+  if (browserOpen) useFileStore.getState().closePanel();
 });

@@ -180,3 +180,44 @@
 .toast-container {
   right: calc(20px + var(--browser-panel-width, 0px));
 }
+
+/* Files docked panel (terminals room, right side). Same shell as the browser panel; the body
+   hosts the full Files room (EditorPanel) so it shares the tree/tabs/editor. Reuses .browser-resizer
+   and .browser-toolbar-btn (close) for a consistent look. */
+.files-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.files-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  min-height: 37px;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-panel-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.files-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Narrow the tree column in the panel (the room uses 260px, but the panel is tighter). */
+.files-panel .editor-room-sidebar {
+  width: 200px;
+}
