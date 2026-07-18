@@ -279,14 +279,16 @@ html[data-theme="latte"] .terminal-provider-menu {
 }
 
 .settings-command-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  display: flex;
   gap: 6px;
   align-items: center;
   min-width: 0;
 }
 
+/* The nav item flexes; each trailing 38px icon button holds its size, so the row fits any
+   number of command buttons (1 for Settings, 2 for Files) on a single line without wrapping. */
 .settings-command-row .room-nav-item {
+  flex: 1;
   min-width: 0;
 }
 
