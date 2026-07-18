@@ -14,6 +14,20 @@ export type ThemeMode =
   | 'latte';
 export type ResolvedTheme = Exclude<ThemeMode, 'system'>;
 
+/** Single source of truth for the selectable themes, used by the toolbar menu and settings. */
+export const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'ember', label: 'Ember' },
+  { value: 'mocha', label: 'Mocha' },
+  { value: 'nord', label: 'Nord' },
+  { value: 'dracula', label: 'Dracula' },
+  { value: 'tokyonight', label: 'Tokyo Night' },
+  { value: 'solarized', label: 'Solarized Light' },
+  { value: 'latte', label: 'Catppuccin Latte' },
+];
+
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
 /** Resolve a theme mode to a concrete theme value, consulting the OS only for 'system'. */
@@ -34,22 +48,15 @@ function applyTheme(mode: ThemeMode) {
 interface ThemeState {
   mode: ThemeMode;
   setMode: (mode: ThemeMode) => void;
-  /** Flip between explicit light/dark (resolving 'system' to its current value first). */
-  toggle: () => void;
 }
 
 export const useThemeStore = create<ThemeState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       mode: 'system',
       setMode: (mode) => {
         applyTheme(mode);
         set({ mode });
-      },
-      toggle: () => {
-        const next: ThemeMode = resolveTheme(get().mode) === 'dark' ? 'light' : 'dark';
-        applyTheme(next);
-        set({ mode: next });
       },
     }),
     {

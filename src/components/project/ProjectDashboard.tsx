@@ -26,7 +26,7 @@ import { useProjectStore, ViewType } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useTerminalStore } from '../../stores/terminalStore';
-import { useThemeStore, ThemeMode } from '../../stores/themeStore';
+import { useThemeStore, ThemeMode, THEME_OPTIONS } from '../../stores/themeStore';
 import bridgeMark from '../../assets/logo/saple-bridge-mark.png';
 
 const workspaceEntries: Array<{
@@ -465,18 +465,12 @@ export const ProjectDashboard: React.FC = () => {
           <select
             id="theme-select"
             className="settings-select"
-            value={themeMode === 'system' ? 'dark' : themeMode}
+            value={themeMode}
             onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
           >
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-            <option value="ember">Ember</option>
-            <option value="mocha">Mocha</option>
-            <option value="nord">Nord</option>
-            <option value="dracula">Dracula</option>
-            <option value="tokyonight">Tokyo Night</option>
-            <option value="solarized">Solarized Light</option>
-            <option value="latte">Catppuccin Latte</option>
+            {THEME_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
         </div>
 
