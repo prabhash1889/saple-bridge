@@ -705,6 +705,20 @@ select optgroup {
   color: var(--text-primary);
 }
 
+.theme-menu-item span {
+  flex: 1;
+}
+
+.theme-menu-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.theme-menu-item:hover .theme-menu-icon,
+.theme-menu-item[aria-checked='true'] .theme-menu-icon {
+  color: var(--text-primary);
+}
+
 .theme-menu-check {
   flex-shrink: 0;
   color: var(--accent, var(--text-primary));

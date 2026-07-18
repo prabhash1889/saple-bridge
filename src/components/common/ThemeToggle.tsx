@@ -1,11 +1,38 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Moon, Sun } from 'lucide-react';
-import { useThemeStore, resolveTheme, THEME_OPTIONS } from '../../stores/themeStore';
+import {
+  Building2,
+  Check,
+  Coffee,
+  Flame,
+  Ghost,
+  LucideIcon,
+  Milk,
+  Monitor,
+  Moon,
+  Snowflake,
+  Sun,
+  Sunrise,
+} from 'lucide-react';
+import { useThemeStore, resolveTheme, THEME_OPTIONS, ThemeMode } from '../../stores/themeStore';
 
 interface ThemeToggleProps {
   size?: number;
   className?: string;
 }
+
+/** A recognizable icon per theme so the menu reads at a glance, not just by label. */
+const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
+  system: Monitor,
+  light: Sun,
+  dark: Moon,
+  ember: Flame,
+  mocha: Coffee,
+  nord: Snowflake,
+  dracula: Ghost,
+  tokyonight: Building2,
+  solarized: Sunrise,
+  latte: Milk,
+};
 
 /**
  * Toolbar button that opens a menu of every available theme. The trigger shows a
@@ -50,21 +77,25 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ size = 17, className }
 
       {open && (
         <div className="theme-menu" role="menu">
-          {THEME_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              className="theme-menu-item"
-              role="menuitemradio"
-              aria-checked={mode === option.value}
-              onClick={() => {
-                setMode(option.value);
-                setOpen(false);
-              }}
-            >
-              <Check size={14} className="theme-menu-check" style={{ opacity: mode === option.value ? 1 : 0 }} />
-              <span>{option.label}</span>
-            </button>
-          ))}
+          {THEME_OPTIONS.map((option) => {
+            const Icon = THEME_ICONS[option.value];
+            return (
+              <button
+                key={option.value}
+                className="theme-menu-item"
+                role="menuitemradio"
+                aria-checked={mode === option.value}
+                onClick={() => {
+                  setMode(option.value);
+                  setOpen(false);
+                }}
+              >
+                <Icon size={15} className="theme-menu-icon" />
+                <span>{option.label}</span>
+                <Check size={14} className="theme-menu-check" style={{ opacity: mode === option.value ? 1 : 0 }} />
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
