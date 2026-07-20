@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, FileText, Play, X } from 'lucide-react';
+import { Clock, FileText, Play, Trash2, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useAgentSessionStore } from '../../../stores/agentSessionStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useTerminalStore } from '../../../stores/terminalStore';
+import { useConfirmStore } from '../../../stores/confirmStore';
 
 export const SessionsTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
-  const { sessions, loadSessions, setSessionStatus, saveSessions } = useAgentSessionStore();
+  const { sessions, loadSessions, setSessionStatus, saveSessions, deleteSession } = useAgentSessionStore();
   const [activeLogContent, setActiveLogContent] = useState<string | null>(null);
   const [activeLogTitle, setActiveLogTitle] = useState<string | null>(null);
 
@@ -116,6 +117,25 @@ export const SessionsTab: React.FC = () => {
                         >
                           <Play size={11} />
                           <span>Resume</span>
+                        </button>
+                      )}
+                      {session.status !== 'running' && session.status !== 'starting' && (
+                        <button
+                          className="settings-action-chip secondary btn-sm danger-button"
+                          onClick={() => {
+                            useConfirmStore.getState().confirm({
+                              title: 'Delete Session',
+                              message: `Delete the session record for "${session.name}"? This cannot be undone.`,
+                              confirmLabel: 'Delete',
+                              onConfirm: async () => {
+                                await deleteSession(currentProjectPath, session.id);
+                                successNotification('Agent session deleted.');
+                              },
+                            });
+                          }}
+                        >
+                          <Trash2 size={11} />
+                          <span>Delete</span>
                         </button>
                       )}
                     </div>

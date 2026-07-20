@@ -35,6 +35,7 @@ interface AgentSessionState {
     status: AgentStatus,
     outcome?: AgentOutcome,
   ) => Promise<void>;
+  deleteSession: (projectPath: string, sessionId: string) => Promise<void>;
   getRecoverableSessions: () => AgentSession[];
   getSessionByTerminalId: (terminalId: string) => AgentSession | undefined;
   persistAndUpdate: (projectPath: string, sessionId: string, updates: Partial<AgentSession>) => Promise<void>;
@@ -162,6 +163,13 @@ export const useAgentSessionStore = create<AgentSessionState>()(
       } catch (error) {
         console.error('Failed to record completion outcome:', error);
       }
+    },
+
+    deleteSession: async (projectPath, sessionId) => {
+      set((state) => ({
+        sessions: state.sessions.filter((s) => s.id !== sessionId),
+      }));
+      await get().saveSessions(projectPath);
     },
 
     getRecoverableSessions: () => {
