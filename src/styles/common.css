@@ -1681,6 +1681,32 @@ button.text-btn:hover {
   background: var(--bg-card);
   border-color: var(--border);
 }
+.editor-sidebar-switch button.editor-sidebar-collapse-btn {
+  flex: 0 0 auto;
+  width: 28px;
+}
+.editor-room-sidebar.collapsed {
+  width: auto;
+  padding: 8px 4px;
+  border-right: 1px solid var(--border);
+  align-items: center;
+}
+.editor-room-sidebar.collapsed .editor-sidebar-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.editor-room-sidebar.collapsed .editor-sidebar-collapse-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
 
 /* CodeMirror host fills the editor body */
 .cm-editor-host {
