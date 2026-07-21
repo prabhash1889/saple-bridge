@@ -6,13 +6,14 @@ import { enqueueWrite } from '../lib/writeQueue';
 import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
-import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
+import type { SwarmPlan, AutonomyMode } from '../types/swarmPlan';
 import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
-import { contextBriefSection } from '../lib/contextBrief';
+import { parsePlan, diffPlan } from '../lib/swarmPlan';
+import { buildAgentPrompt } from '../lib/swarmPrompts';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 
@@ -79,6 +80,16 @@ interface SwarmState {
   contextFiles: ContextFileRef[];
   status: 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
   activeAgents: SwarmAgent[];
+  // Swarm v2 (Phase 2). The coordinator's parsed plan (last-read snapshot), the append-only set of
+  // plan task ids already materialized into the roster (dedup key for `diffPlan`), and the run's
+  // autonomy/wave/limit knobs. All persisted in state.json and round-tripped through reconciliation.
+  plan: SwarmPlan | null;
+  appliedPlanTaskIds: string[];
+  autonomy: AutonomyMode;
+  wave: number;
+  maxWaves: number;
+  // 0 = fall back to the global pane limit; a positive value caps concurrent agents below it.
+  maxParallel: number;
   templates: SwarmTemplate[];
   swarmActive: boolean;
   activeTemplateId: string | null;
@@ -98,6 +109,17 @@ interface SwarmState {
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
   saveSwarmState: (projectPath: string) => Promise<void>;
   startSwarmFromWizard: (input: WizardLaunchInput) => Promise<void>;
+  // Swarm v2 (Phase 2): mission-first launch. Seeds ONE coordinator; its plan.json materializes the
+  // workers. Replaces the wizard DAG as the real launch path.
+  startSwarm: (
+    projectPath: string,
+    mission: string,
+    options?: { autonomy?: AutonomyMode; maxParallel?: number; maxWaves?: number; provider?: AgentProvider; model?: string },
+  ) => Promise<void>;
+  // Read `.saple/swarm/plan.json`, sanitize it, and materialize any not-yet-applied tasks as worker
+  // agents wired by dependency. Idempotent (dedup on `appliedPlanTaskIds`); safe to call from the
+  // coordinator's plan marker, the plan.json watcher event, or coordinator completion.
+  ingestPlan: (projectPath: string) => Promise<void>;
   pauseSwarm: (projectPath: string) => Promise<void>;
   resumeSwarm: (projectPath: string) => Promise<void>;
   stopSwarm: (projectPath: string) => Promise<void>;
@@ -370,78 +392,9 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
 
     const { mission, skills, contextFiles } = useSwarmStore.getState();
 
-    // Inject active swarm skills (global) into every agent's brief.
-    const activeSkills = SWARM_SKILLS.filter((s) => skills.includes(s.id));
-    const skillsSection = activeSkills.length > 0
-      ? `\n## Active Swarm Skills\n${activeSkills.map((s) => `- **${s.label}:** ${s.promptText}`).join('\n')}\n`
-      : '';
-    const contextSection = contextFiles.length > 0
-      ? `\n## Provided Context Files\nRead these files for additional context:\n${contextFiles.map((f) => `- ${f.path}`).join('\n')}\n`
-      : '';
-
-    // P4: a rejected agent relaunches with the reviewer's feedback front-and-centre so its retry
-    // addresses the rejection rather than repeating the same work.
-    const reviewFeedbackSection = agent.lastReviewFeedback
-      ? `\n## Review Feedback (rework attempt ${agent.attempt ?? 2})\nA previous attempt was rejected in review. Address this feedback before signaling completion:\n\n${agent.lastReviewFeedback}\n`
-      : '';
-
-    // Scope this agent's completion markers to its own token so its status can't be flipped by
-    // another pane's output or by echoing the generic marker name. Older agents (restored from a
-    // pre-marker state.json) have no token — they keep using the bare markers.
-    const marker = agent.marker;
-    // P3: before signaling, an agent may record a structured outcome so reviewers see what it did
-    // without opening the terminal. Optional — a marker on its own still completes the agent.
-    const outcomeSection = `## Structured Outcome (optional but recommended)
-Before you signal completion, write your outcome as JSON to \`.saple/swarm/outcomes/${agent.id}.json\`:
-\`\`\`json
-{ "summary": "one line on what you did", "changedFiles": ["path/to/file"], "tests": { "command": "npm test", "passed": true }, "decisions": ["a decision you made"], "needsReview": true }
-\`\`\`
-`;
-    // P6: coordinators may need another specialist mid-run. They RECORD a request (Bridge shows it
-    // for human approval and does the launching); they never spawn processes themselves.
-    const workerRequestSection = agent.role === 'coordinator'
-      ? `## Requesting a New Worker (optional — needs human approval)
-If you need another specialist during execution, append a request to \`.saple/swarm/requests.json\`
-(a JSON array — create it if missing; keep existing entries). Do NOT spawn any process yourself.
-Each request needs a unique \`id\` and a \`mission\`:
-\`\`\`json
-{ "id": "unique-request-id", "role": "builder", "provider": "codex", "model": "default", "mission": "what the worker must do", "dependsOn": ["${agent.id}"] }
-\`\`\`
-Bridge shows the request to the operator; approved workers join the swarm under the parallel-agent limit.
-`
-      : '';
-    const signalsSection = (marker
-      ? `## Review / Completion Signals
-Emit EXACTLY ONE of these on its own line when you finish. The \`:${marker}\` suffix identifies
-you — a signal without it is ignored, so always include it verbatim:
-- Success: \`[AGENT_DONE:${marker}]\`
-- Human review needed: \`[REVIEW_REQUESTED:${marker}]\`
-- Fatal failure: \`[AGENT_FAILED:${marker}]\`
-`
-      : `## Review / Completion Signals
-- When you are finished, output \`[AGENT_DONE]\` or \`[TASK_COMPLETE]\` to signify success.
-- If you require human review, output \`[REVIEW_REQUESTED]\` or \`## REVIEW REQUIRED\`.
-- If you encounter a fatal failure, output \`[AGENT_FAILED]\` or \`[TASK_FAILED]\`.
-`) + outcomeSection + workerRequestSection;
-
-    // Generate prompt content
-    const promptContent = `# Swarm Agent Mission Instructions
-
-**Mission:** ${mission || "Execute coordinated tasks"}
-**Agent Name:** ${agent.name}
-**Role:** ${agent.role}
-**Agent ID:** ${agent.id}
-
-## System Instructions
-${agent.systemPrompt}
-
-## Swarm Integration Context
-- Dependencies: ${agent.dependencies.join(', ') || 'None'}
-- Mailbox Path: .saple/swarm/mailbox/${agent.id}.md (Write your updates/output here)
-- Handoff Path: .saple/swarm/handoffs/${agent.id}-to-[next_agent].json
-${skillsSection}${contextSection}${reviewFeedbackSection}
-${contextBriefSection({ role: agent.role, agentId: agent.id })}
-${signalsSection}`;
+    // Coordinators get the plan-contract brief; workers get their own systemPrompt (the plan task
+    // mission) as the assignment. Built in swarmPrompts.ts (Phase 2).
+    const promptContent = buildAgentPrompt(agent, { mission, skills, contextFiles });
 
     const promptFile = `.saple/agents/prompts/swarm_${agent.id}.md`;
     await invoke('write_project_file', {
@@ -504,6 +457,12 @@ export const useSwarmStore = create<SwarmState>()(
       contextFiles: [],
       status: 'idle',
       activeAgents: [],
+      plan: null,
+      appliedPlanTaskIds: [],
+      autonomy: 'gated',
+      wave: 1,
+      maxWaves: 3,
+      maxParallel: 0,
       templates: DEFAULT_TEMPLATES,
       swarmActive: false,
       activeTemplateId: null,
@@ -592,6 +551,12 @@ export const useSwarmStore = create<SwarmState>()(
             activeTemplateId: parsed.templateId || null,
             swarmWorkspaceId: parsed.swarmWorkspaceId || null,
             resolvedWorkerRequests: parsed.resolvedWorkerRequests || [],
+            plan: parsed.plan || null,
+            appliedPlanTaskIds: parsed.appliedPlanTaskIds || [],
+            autonomy: parsed.autonomy || 'gated',
+            wave: parsed.wave || 1,
+            maxWaves: parsed.maxWaves || 3,
+            maxParallel: parsed.maxParallel || 0,
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
@@ -609,7 +574,7 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [] });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0 });
         }
         // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
         // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
@@ -628,6 +593,12 @@ export const useSwarmStore = create<SwarmState>()(
             templateId: get().activeTemplateId,
             swarmWorkspaceId: get().swarmWorkspaceId,
             resolvedWorkerRequests: get().resolvedWorkerRequests,
+            plan: get().plan,
+            appliedPlanTaskIds: get().appliedPlanTaskIds,
+            autonomy: get().autonomy,
+            wave: get().wave,
+            maxWaves: get().maxWaves,
+            maxParallel: get().maxParallel,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -713,6 +684,132 @@ export const useSwarmStore = create<SwarmState>()(
         await get().checkAndRunNextAgents(projectPath);
       },
 
+      startSwarm: async (projectPath, mission, options = {}) => {
+        const {
+          autonomy = 'gated',
+          maxParallel = 0,
+          maxWaves = 3,
+          provider = 'codex',
+          model = 'default',
+        } = options;
+
+        try {
+          await invoke('ensure_workspace_dirs', { projectPath });
+        } catch (error) {
+          console.error('Failed to ensure workspace dirs:', error);
+        }
+
+        // P11: give the swarm its own workspace instance so its agent panes don't mix with the
+        // user's interactive terminals (same flow as startSwarmFromWizard).
+        const project = useProjectStore.getState();
+        await project.addWorkspace(projectPath);
+        const swarmWorkspaceId = useProjectStore.getState().currentWorkspaceId;
+        if (swarmWorkspaceId) {
+          const base = projectPath.split(/[\\/]/).pop() || projectPath;
+          project.renameWorkspace(swarmWorkspaceId, `${base} (swarm)`);
+        }
+
+        // Seed ONE coordinator. Its plan.json materializes every worker (see ingestPlan); the
+        // wizard DAG is gone. A fresh marker scopes its PLAN_READY/PLAN_UPDATED/AGENT_DONE signals.
+        const coordinator: SwarmAgent = {
+          id: 'coordinator',
+          name: 'Coordinator',
+          role: 'coordinator',
+          provider,
+          model,
+          systemPrompt: 'You are the Swarm Coordinator. Decompose the mission into a plan.',
+          dependencies: [],
+          marker: createMarker(),
+          status: 'idle',
+        };
+
+        set({
+          swarmId: createId('swarm'),
+          swarmName: 'Swarm',
+          mission,
+          skills: [],
+          contextFiles: [],
+          activeTemplateId: null,
+          activeAgents: [coordinator],
+          plan: null,
+          appliedPlanTaskIds: [],
+          autonomy,
+          wave: 1,
+          maxWaves,
+          maxParallel,
+          status: 'running',
+          swarmActive: true,
+          loadedProjectPath: projectPath,
+          swarmWorkspaceId,
+          resolvedWorkerRequests: [],
+        });
+
+        await get().saveSwarmState(projectPath);
+        await get().checkAndRunNextAgents(projectPath);
+      },
+
+      ingestPlan: async (projectPath) => {
+        // Only the loaded project's swarm materializes here; an away-project plan is picked up when
+        // its swarm loads. Guards a watcher/marker event that fires just after a project switch.
+        if (get().loadedProjectPath !== projectPath) return;
+
+        let plan: SwarmPlan;
+        try {
+          const raw = await invoke<string>('read_project_file', {
+            projectPath,
+            filePath: '.saple/swarm/plan.json',
+          });
+          plan = parsePlan(JSON.parse(raw));
+        } catch {
+          return; // no plan written yet (the common case before PLAN_READY) or unreadable
+        }
+
+        const newTasks = diffPlan(get().appliedPlanTaskIds, plan);
+        if (newTasks.length === 0) {
+          set({ plan }); // keep the latest snapshot even when nothing new to apply
+          return;
+        }
+
+        // Map plan task ids -> agent ids. Seed with tasks already materialized in earlier waves,
+        // then pre-assign ids for this batch so a task depending on a sibling later in the same
+        // plan still resolves (parsePlan preserves input order, not topological order).
+        const taskToAgent = new Map<string, string>();
+        for (const a of get().activeAgents) if (a.taskId) taskToAgent.set(a.taskId, a.id);
+        const ids = newTasks.map(() => createId('agent'));
+        newTasks.forEach((task, i) => taskToAgent.set(task.id, ids[i]));
+
+        // `provider: "auto"` resolves to the coordinator's provider for now (the Phase 6 subscription
+        // assigner refines this); an explicit provider is kept verbatim.
+        const coordinatorProvider = get().activeAgents.find((a) => a.role === 'coordinator')?.provider;
+
+        const materialized: SwarmAgent[] = newTasks.map((task, i) => {
+          const dependencies = task.dependsOn
+            .map((d) => taskToAgent.get(d))
+            .filter((x): x is string => !!x);
+          return {
+            id: ids[i],
+            taskId: task.id,
+            name: `${task.role.charAt(0).toUpperCase()}${task.role.slice(1)}: ${task.id}`,
+            role: task.role,
+            provider: task.provider === 'auto' ? coordinatorProvider : (task.provider as AgentProvider),
+            model: task.model,
+            systemPrompt: task.mission,
+            dependencies,
+            marker: createMarker(),
+            maxAttempts: 1,
+            status: dependencies.length > 0 ? 'waiting' : 'idle',
+          };
+        });
+
+        set((state) => ({
+          plan,
+          activeAgents: [...state.activeAgents, ...materialized],
+          appliedPlanTaskIds: [...state.appliedPlanTaskIds, ...newTasks.map((t) => t.id)],
+        }));
+        await get().saveSwarmState(projectPath);
+        await get().checkAndRunNextAgents(projectPath);
+      },
+
       pauseSwarm: async (projectPath) => {
         set({ status: 'paused' });
         await get().saveSwarmState(projectPath);
@@ -752,6 +849,24 @@ export const useSwarmStore = create<SwarmState>()(
         // Auto-approve: an agent that requests review but is flagged auto-approve
         // advances straight to 'done' so dependents unblock without manual sign-off.
         const previousAgent = get().activeAgents.find(a => a.id === agentId);
+
+        // Coordinator completion containment (Phase 2): before treating the coordinator's
+        // done/review as terminal, make sure its plan has been ingested (a plan written right
+        // before the marker/exit must not be missed). If it never produced a valid task, park it
+        // in 'review' — relaunching the coordinator retries planning — instead of a silent finish.
+        if (previousAgent?.role === 'coordinator' && (status === 'done' || status === 'review')) {
+          await get().ingestPlan(projectPath);
+          if (get().appliedPlanTaskIds.length === 0) {
+            status = 'review';
+            extra = { ...extra, statusReason: 'Planning produced no valid tasks — relaunch to retry planning.' };
+          } else {
+            // Planning succeeded: the coordinator is done whether it printed AGENT_DONE or just
+            // exited cleanly after writing the plan (Phase 2 fire-and-forget; Phase 3 keeps it
+            // live). Its own completion never needs a human click — the plan is the deliverable.
+            status = 'done';
+          }
+        }
+
         let effectiveStatus = status;
         if (status === 'review') {
           if (previousAgent?.autoApprove) {
@@ -892,7 +1007,8 @@ export const useSwarmStore = create<SwarmState>()(
         // would spawn every CLI at once, blowing past maxParallelAgents and swamping the machine.
         // Over-limit agents stay 'waiting'/'idle' and launch on a later scan — each completion
         // fires checkAndRunNextAgents, which frees a slot and picks up the next one.
-        const maxParallel = useTerminalStore.getState().getMaxPaneLimit();
+        // The swarm's own cap when set (Phase 2 `maxParallel`), else the global pane limit.
+        const maxParallel = get().maxParallel || useTerminalStore.getState().getMaxPaneLimit();
         let activeCount = working.filter(a => a.status === 'starting' || a.status === 'running').length;
         for (let i = 0; i < working.length; i++) {
           if (activeCount >= maxParallel) break;

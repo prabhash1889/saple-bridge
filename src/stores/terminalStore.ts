@@ -7,7 +7,7 @@ import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
-import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
+import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, getPlanSignalFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
 
@@ -442,6 +442,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
               if (useSwarmStore.getState().loadedProjectPath !== projectPath) return;
               const linkedAgent = useSwarmStore.getState().activeAgents.find((agent) => agent.terminalId === id);
               if (!linkedAgent) return;
+              // Swarm v2: a coordinator's plan marker drives plan intake (materialize workers). The
+              // watcher event is the fallback; the marker is the primary, ms-latency trigger.
+              if (getPlanSignalFromOutput(signalTail, linkedAgent.marker)) {
+                void useSwarmStore.getState().ingestPlan(projectPath);
+              }
               const scopedReview = hasReviewSignal(signalTail, linkedAgent.marker);
               const nextSwarmStatus = getSwarmStatusFromOutput(signalTail, scopedReview, linkedAgent.marker);
               if (!nextSwarmStatus || linkedAgent.status === nextSwarmStatus) return;

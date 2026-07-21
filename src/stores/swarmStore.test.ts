@@ -557,3 +557,110 @@ describe('loadSwarmState cross-project signal recovery (P13)', () => {
     expect(getAgent('d').status).toBe('running');
   });
 });
+
+describe('startSwarm + plan intake (Phase 2)', () => {
+  const mockPlan = (plan: unknown) =>
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'read_project_file' && args.filePath === '.saple/swarm/plan.json') {
+        return Promise.resolve(JSON.stringify(plan));
+      }
+      return Promise.resolve(undefined);
+    });
+
+  it('seeds a single coordinator and launches it', async () => {
+    await useSwarmStore.getState().startSwarm(PROJECT, 'ship the feature', { provider: 'claude' });
+
+    const agents = useSwarmStore.getState().activeAgents;
+    expect(agents).toHaveLength(1);
+    expect(agents[0].role).toBe('coordinator');
+    expect(agents[0].marker).toBeTruthy();
+    expect(useSwarmStore.getState().mission).toBe('ship the feature');
+    expect(useSwarmStore.getState().status).toBe('running');
+    // The coordinator has no dependencies, so the scheduler launches it immediately.
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+
+  it('materializes plan tasks with mapped dependencies and is idempotent on re-ingest', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: [], plan: null });
+    mockPlan({
+      version: 2,
+      acceptance: { command: 'npm test' },
+      // 'build' depends on a sibling that appears BEFORE it here, but the mapping must resolve
+      // regardless of order (parsePlan preserves input order, not topological order).
+      tasks: [
+        { id: 'design', mission: 'design it', role: 'builder' },
+        { id: 'build', mission: 'build it', role: 'builder', dependsOn: ['design'] },
+      ],
+    });
+
+    await useSwarmStore.getState().ingestPlan(PROJECT);
+
+    const agents = useSwarmStore.getState().activeAgents;
+    const design = agents.find((a) => a.taskId === 'design')!;
+    const build = agents.find((a) => a.taskId === 'build')!;
+    expect(design).toBeTruthy();
+    expect(build).toBeTruthy();
+    expect(build.dependencies).toEqual([design.id]); // task id -> agent id
+    expect(build.status).toBe('waiting'); // design not done yet
+    expect(useSwarmStore.getState().appliedPlanTaskIds).toEqual(['design', 'build']);
+
+    // Re-ingesting the same plan adds nothing (dedup on appliedPlanTaskIds).
+    await useSwarmStore.getState().ingestPlan(PROJECT);
+    expect(useSwarmStore.getState().activeAgents.filter((a) => a.taskId)).toHaveLength(2);
+  });
+
+  it('drops cyclic and malformed tasks via the sanitizer', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: [], plan: null });
+    mockPlan({
+      version: 2,
+      tasks: [
+        { id: 'a', mission: 'a', role: 'builder', dependsOn: ['b'] },
+        { id: 'b', mission: 'b', role: 'builder', dependsOn: ['a'] }, // cycle -> both dropped
+        { mission: 'no id' }, // malformed -> dropped
+        { id: 'ok', mission: 'standalone', role: 'builder' },
+      ],
+    });
+
+    await useSwarmStore.getState().ingestPlan(PROJECT);
+
+    expect(useSwarmStore.getState().appliedPlanTaskIds).toEqual(['ok']);
+  });
+
+  it('a coordinator that produced a plan completes normally and its workers exist', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: [], plan: null });
+    mockPlan({ version: 2, tasks: [{ id: 't1', mission: 'do the thing', role: 'builder' }] });
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'coordinator', 'done');
+
+    expect(getAgent('coordinator').status).toBe('done');
+    expect(useSwarmStore.getState().activeAgents.some((a) => a.taskId === 't1')).toBe(true);
+  });
+
+  it('promotes a clean-exit coordinator review to done when it produced a plan', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: [], plan: null });
+    mockPlan({ version: 2, tasks: [{ id: 't1', mission: 'do', role: 'builder' }] });
+
+    // Clean exit without an AGENT_DONE marker parks the agent in 'review' via the exit fallback;
+    // for a coordinator that already planned, that must resolve to done, not sit blocking completion.
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'coordinator', 'review');
+
+    expect(getAgent('coordinator').status).toBe('done');
+  });
+
+  it('a coordinator that never produced a valid plan is parked in review for retry', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: [], plan: null });
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'read_project_file' ? Promise.reject(new Error('no plan')) : Promise.resolve(undefined),
+    );
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'coordinator', 'done');
+
+    expect(getAgent('coordinator').status).toBe('review');
+    expect(getAgent('coordinator').statusReason).toMatch(/retry planning/i);
+  });
+});

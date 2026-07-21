@@ -14,8 +14,7 @@ import { isHeadlessProvider } from '../../types/provider';
 import { swarmStatusColor, SWARM_STATUS_LEGEND } from '../../lib/swarmStatus';
 import { SwarmGraph } from './SwarmGraph';
 import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';
-import { SwarmTemplateEditor } from './SwarmTemplateEditor';
-import { SwarmWizard } from './wizard/SwarmWizard';
+import { SwarmComposer } from './SwarmComposer';
 
 const handoffKey = (from: string, to: string) => `${from}->${to}`;
 
@@ -61,7 +60,6 @@ export const SwarmWorkspace: React.FC = () => {
   const mission = useSwarmStore((state) => state.mission);
   const status = useSwarmStore((state) => state.status);
   const activeAgents = useSwarmStore((state) => state.activeAgents);
-  const templates = useSwarmStore((state) => state.templates);
   const swarmActive = useSwarmStore((state) => state.swarmActive);
   const pendingWizardMission = useSwarmStore((state) => state.pendingWizardMission);
   const setPendingWizardMission = useSwarmStore((state) => state.setPendingWizardMission);
@@ -77,15 +75,13 @@ export const SwarmWorkspace: React.FC = () => {
   const forceCompleteAgent = useSwarmStore((state) => state.forceCompleteAgent);
   const postToMailbox = useSwarmStore((state) => state.postToMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
+  const ingestPlan = useSwarmStore((state) => state.ingestPlan);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
-  // null until the user picks a template; the wizard then opens pre-seeded with it.
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
-  const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'graph' | 'grid'>('graph');
-  const [wizardOpen, setWizardOpen] = useState(false);
-  // Mission text to pre-fill the wizard with, set by the Command Palette composer's "New swarm".
-  const [wizardMission, setWizardMission] = useState<string | undefined>(undefined);
+  const [composerOpen, setComposerOpen] = useState(false);
+  // Mission text to pre-fill the composer with, set by the Command Palette composer's "New swarm".
+  const [composerMission, setComposerMission] = useState<string | undefined>(undefined);
   const [mailboxContents, setMailboxContents] = useState<Record<string, string>>({});
   const [loadingMailboxIds, setLoadingMailboxIds] = useState<Set<string>>(() => new Set());
   // Handoff bodies keyed by `${from}->${to}`. Polled on the same timer as mailboxes.
@@ -111,15 +107,26 @@ export const SwarmWorkspace: React.FC = () => {
     }
   }, [swarmActive, activeAgents, selectedAgentId]);
 
-  // Command Palette composer's "New swarm" target: open the wizard pre-filled with the composed
-  // mission, then clear the one-shot flag so it doesn't reopen on the next render.
+  // Command Palette composer's "New swarm" target: open the mission composer pre-filled with the
+  // composed mission, then clear the one-shot flag so it doesn't reopen on the next render.
   useEffect(() => {
     if (pendingWizardMission != null) {
-      setWizardMission(pendingWizardMission);
-      setWizardOpen(true);
+      setComposerMission(pendingWizardMission);
+      setComposerOpen(true);
       setPendingWizardMission(null);
     }
   }, [pendingWizardMission, setPendingWizardMission]);
+
+  // Plan intake fallback (Phase 2): the coordinator's plan marker is the primary trigger; if the
+  // room is open, re-ingest whenever the Rust watcher reports plan.json changed (belt and braces).
+  useEffect(() => {
+    if (!currentProjectPath || !swarmActive) return;
+    const unsubscribe = subscribeSwarmEvents((event) => {
+      if (event.projectPath !== currentProjectPath) return; // drop away-project events
+      if (event.category === 'plan') void ingestPlan(currentProjectPath);
+    });
+    return () => unsubscribe();
+  }, [currentProjectPath, swarmActive, ingestPlan]);
 
   // Drop any in-progress mailbox draft when the inspected agent changes so a message
   // typed for one agent isn't accidentally sent to another.
@@ -418,59 +425,17 @@ export const SwarmWorkspace: React.FC = () => {
     }
   };
 
-  const selectedTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
   const selectedAgent = activeAgents.find(a => a.id === selectedAgentId);
-
-  if (isEditingTemplate) {
-    return (
-      <div className="swarm-scroll-pane">
-        <SwarmTemplateEditor
-          template={selectedTemplate}
-          onSave={() => setIsEditingTemplate(false)}
-          onCancel={() => setIsEditingTemplate(false)}
-        />
-      </div>
-    );
-  }
 
   return (
     <div style={containerStyle}>
-      {/* Sidebar - Templates & General Settings */}
+      {/* Sidebar - General Settings */}
       <div style={sidebarStyle}>
         <div style={sectionGroupStyle}>
-          <h3 style={sectionTitleStyle}>Swarm Templates</h3>
-          <p style={subTextStyle}>Select the orchestration pattern to deploy.</p>
-          
-          <div style={templateListStyle}>
-            {templates.map(t => {
-              const selected = selectedTemplateId === t.id;
-              const cardClass = [
-                'swarm-template-card',
-                selected ? 'is-selected' : '',
-                swarmActive ? 'is-disabled' : '',
-              ].filter(Boolean).join(' ');
-              return (
-                <div
-                  key={t.id}
-                  onClick={() => !swarmActive && setSelectedTemplateId(t.id)}
-                  className={cardClass}
-                >
-                  <div className="swarm-template-title">{t.name}</div>
-                  <div className="swarm-template-desc">{t.description}</div>
-                </div>
-              );
-            })}
-          </div>
-
-          {!swarmActive && (
-            <button
-              onClick={() => setIsEditingTemplate(true)}
-              className="swarm-ghost-btn"
-            >
-              <Edit size={11} />
-              <span>Modify Template Preset</span>
-            </button>
-          )}
+          <h3 style={sectionTitleStyle}>Swarm</h3>
+          <p style={subTextStyle}>
+            Describe a mission; the coordinator plans the tasks and materializes the workers.
+          </p>
         </div>
 
         {/* Global Controls */}
@@ -495,7 +460,7 @@ export const SwarmWorkspace: React.FC = () => {
             </div>
           ) : (
             <button
-              onClick={() => setWizardOpen(true)}
+              onClick={() => setComposerOpen(true)}
               className="primary swarm-cta"
               style={btnStartStyle}
               disabled={!currentProjectPath}
@@ -723,7 +688,7 @@ export const SwarmWorkspace: React.FC = () => {
             </p>
 
             <button
-              onClick={() => setWizardOpen(true)}
+              onClick={() => setComposerOpen(true)}
               className="primary swarm-cta"
               style={btnLaunchMissionStyle}
               disabled={!currentProjectPath}
@@ -740,12 +705,11 @@ export const SwarmWorkspace: React.FC = () => {
         )}
       </div>
 
-      {wizardOpen && (
-        <SwarmWizard
+      {composerOpen && (
+        <SwarmComposer
           projectPath={currentProjectPath}
-          onClose={() => { setWizardOpen(false); setWizardMission(undefined); }}
-          initialTemplateId={selectedTemplateId}
-          initialMission={wizardMission}
+          onClose={() => { setComposerOpen(false); setComposerMission(undefined); }}
+          initialMission={composerMission}
         />
       )}
     </div>
@@ -802,12 +766,6 @@ const subTextStyle: React.CSSProperties = {
   color: 'var(--text-muted)',
   lineHeight: '1.4',
   margin: 0,
-};
-
-const templateListStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '10px',
 };
 
 const actionsContainerStyle: React.CSSProperties = {
