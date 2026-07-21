@@ -8,6 +8,7 @@ import { useTerminalStore } from '../../stores/terminalStore';
 import { useAgentSessionStore } from '../../stores/agentSessionStore';
 import { useConfirmStore } from '../../stores/confirmStore';
 import { readRunOutcome } from '../../lib/controlPlane';
+import { subscribeSwarmEvents } from '../../lib/swarmEvents';
 import type { AgentOutcome } from '../../types/agent';
 import { isHeadlessProvider } from '../../types/provider';
 import { swarmStatusColor, SWARM_STATUS_LEGEND } from '../../lib/swarmStatus';
@@ -164,23 +165,27 @@ export const SwarmWorkspace: React.FC = () => {
     }
   };
 
-  // P6: poll the agent-written worker-requests file while the swarm runs. Bridge reads it; agents
-  // never launch anything themselves.
+  // P6/P1: the agent-written worker-requests file (`.saple/swarm/requests.json`). Read once on
+  // entry, then re-read only when the Rust swarm watcher reports that exact file changed - no poll.
+  // Bridge reads it; agents never launch anything themselves.
   useEffect(() => {
     if (!currentProjectPath || !swarmActive) {
       setPendingRequests([]);
       return;
     }
     let cancelled = false;
-    const poll = async () => {
+    const refresh = async () => {
       const reqs = await loadWorkerRequests(currentProjectPath);
       if (!cancelled) setPendingRequests(reqs);
     };
-    void poll();
-    const interval = window.setInterval(poll, 5000);
+    void refresh();
+    const unsubscribe = subscribeSwarmEvents((event) => {
+      if (event.projectPath !== currentProjectPath) return; // drop away-project events
+      if (event.category === 'requests') void refresh();
+    });
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      unsubscribe();
     };
   }, [currentProjectPath, swarmActive, loadWorkerRequests]);
 
@@ -356,11 +361,15 @@ export const SwarmWorkspace: React.FC = () => {
     void fetchVisibleMailboxesRef.current();
     if (!currentProjectPath || polledAgentKey.length === 0) return;
 
-    const interval = window.setInterval(() => {
-      void fetchVisibleMailboxesRef.current();
-    }, 5000);
-
-    return () => window.clearInterval(interval);
+    // P1: re-read the visible mailboxes/handoffs/outcomes only when the Rust swarm watcher reports
+    // one of those files changed - no 5 s poll. The fetch itself scopes to the visible agent set.
+    const unsubscribe = subscribeSwarmEvents((event) => {
+      if (event.projectPath !== currentProjectPath) return; // drop away-project events
+      if (event.category === 'mailbox' || event.category === 'handoff' || event.category === 'outcome') {
+        void fetchVisibleMailboxesRef.current();
+      }
+    });
+    return () => unsubscribe();
     // Only re-run when the actual set of polled agents (polledAgentKey), the set of polled
     // handoff pairs (polledHandoffKey), or the project changes — not on every render that
     // leaves the polled sets identical.

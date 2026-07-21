@@ -129,9 +129,13 @@ Shipped: `src/types/swarmPlan.ts` (`SwarmPlan`, `PlanTask`, `Verdict`, `SwarmWav
 
 ---
 
-## Phase 1 - Realtime event backbone (kill all polling)
+## Phase 1 - Realtime event backbone (kill all polling) - DONE
 
 Replace every `setInterval` with push events from the Rust file watcher.
+
+Shipped: a second, independent Rust watcher (`watcher.rs`: `SwarmWatcherState`, `watch_swarm_dir` / `unwatch_swarm_dir`, registered in `lib.rs`) - recursive, 150 ms debounce on `.saple/swarm/`, emits `swarm-file-changed { projectPath, relPath }` with the swarm-dir-relative path, reusing the existing debouncer + `is_last_own_write` self-write filter (unit-tested `swarm_rel_path`). `src/lib/swarmEvents.ts` is a module-level bus (single lazily-started `swarm-file-changed` listener, mirrors `startPtyOutputListener`) that classifies `relPath` (`plan` / `state` / `requests` / `verdict` / `outcome` / `mailbox` / `handoff` / `unknown`) and fans out to subscribers via `subscribeSwarmEvents`. `swarmStore.loadSwarmState` arms the watcher (`watch_swarm_dir`); `App.tsx` disarms it on project close (`unwatch_swarm_dir`) alongside `unwatch_project_files` - tied to project lifecycle, not swarm-run lifecycle, so a stop→start within a project stays watched. `SwarmWorkspace.tsx`'s two 5 s polls (worker-requests + mailbox/handoff/outcome) are gone: each now fetches once, then re-reads only on its matching classified event, with an away-project guard dropping events whose `projectPath` isn't current. Vitest for `classifySwarmPath`; `cargo test`, `npm run typecheck`, `npm test` (202) and `npm run lint` (0 errors) green.
+
+> Deviation from the step list: watching is disarmed on project close (App.tsx), not in `stopSwarm`. Unwatching in `stopSwarm` would leave a new swarm launched after a stop (which never re-runs `loadSwarmState`) unwatched. Store routing to stub handlers (step 3) was skipped as speculative - the real consumer is `SwarmWorkspace`; Phases 2-5 add store handlers when they have behavior.
 
 **Steps**
 

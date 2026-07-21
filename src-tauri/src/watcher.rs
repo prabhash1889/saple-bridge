@@ -131,6 +131,110 @@ pub fn unwatch_project_files(state: State<'_, WatcherState>) -> Result<(), Strin
     Ok(())
 }
 
+// --- Swarm event backbone (Phase 1) ---------------------------------------------------------
+//
+// The swarm room needs finer-grained, faster events than the project watcher above: every file
+// under `.saple/swarm/` (plan, verdicts, outcomes, mailbox, handoffs) drives a distinct UI
+// reaction, and the coordinator loop wants milliseconds, not the 300 ms project debounce. This is
+// a second, independent watcher scoped to the swarm dir that emits `swarm-file-changed` with the
+// path relative to `.saple/swarm/`; the TS event bus (`swarmEvents.ts`) classifies from there.
+
+/// Separate slot so the swarm watcher's lifecycle (starts/stops with the loaded swarm) is
+/// independent of the project-files watcher above.
+pub struct SwarmWatcherState(pub Mutex<Option<ActiveWatcher>>);
+
+impl SwarmWatcherState {
+    pub fn new() -> Self {
+        SwarmWatcherState(Mutex::new(None))
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SwarmFileChangedPayload {
+    project_path: String,
+    /// Path relative to `.saple/swarm/`, forward-slashed: `plan.json`, `verdicts/fe_auth.json`, …
+    rel_path: String,
+}
+
+/// The `.saple/swarm/`-relative, forward-slashed path for `path`, or `None` when `path` is not
+/// under the swarm dir (defensive; a recursive watch on the dir should never hand us one).
+fn swarm_rel_path(swarm_dir: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(swarm_dir)
+        .ok()
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .filter(|rel| !rel.is_empty())
+}
+
+/// Watch `.saple/swarm/` recursively and emit `swarm-file-changed` per external edit. Idempotent
+/// for the path already watched. Debounced tighter (150 ms) than the project watcher so the
+/// coordinator loop stays seamless.
+#[tauri::command]
+pub fn watch_swarm_dir(
+    project_path: String,
+    app_handle: AppHandle,
+    state: State<'_, SwarmWatcherState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+
+    if guard.as_ref().map(|w| w.project_path == project_path).unwrap_or(false) {
+        return Ok(());
+    }
+
+    // Drop the old watcher (stops its thread) before arming the new one.
+    *guard = None;
+
+    let swarm_dir = Path::new(&project_path).join(".saple").join("swarm");
+    if !swarm_dir.exists() {
+        // No swarm has ever run here yet — re-armed on the next load once the dir exists.
+        return Ok(());
+    }
+
+    let emit_path = project_path.clone();
+    let watch_dir = swarm_dir.clone();
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(150),
+        move |res: DebounceEventResult| {
+            let Ok(events) = res else { return };
+            // Coalesce repeated writes to the same file within the burst into one emit.
+            let mut emitted: Vec<String> = Vec::new();
+            for event in events {
+                let Some(rel) = swarm_rel_path(&watch_dir, &event.path) else { continue };
+                if emitted.contains(&rel) {
+                    continue;
+                }
+                // Skip our own atomic_write echoing back (e.g. Bridge writing state.json).
+                if let Ok(bytes) = std::fs::read(&event.path) {
+                    if crate::fs_lock::is_last_own_write(&event.path, &bytes) {
+                        continue;
+                    }
+                }
+                emitted.push(rel.clone());
+                let _ = app_handle.emit(
+                    "swarm-file-changed",
+                    SwarmFileChangedPayload { project_path: emit_path.clone(), rel_path: rel },
+                );
+            }
+        },
+    )
+    .map_err(|e| format!("Failed to create swarm watcher: {}", e))?;
+
+    debouncer
+        .watcher()
+        .watch(&swarm_dir, RecursiveMode::Recursive)
+        .map_err(|e| format!("Failed to watch {}: {}", swarm_dir.display(), e))?;
+
+    *guard = Some(ActiveWatcher { project_path, _debouncer: debouncer });
+    Ok(())
+}
+
+/// Stop watching the swarm dir (swarm stopped / project closed).
+#[tauri::command]
+pub fn unwatch_swarm_dir(state: State<'_, SwarmWatcherState>) -> Result<(), String> {
+    *state.0.lock().unwrap() = None;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +260,24 @@ mod tests {
         // Unrelated `.saple` files (prompts, memory, mailbox) are ignored.
         assert_eq!(tracked_kind(Path::new("/home/u/proj/.saple/memory/note.md")), None);
         assert_eq!(tracked_kind(Path::new("/home/u/proj/tasks.json")), None);
+    }
+
+    #[test]
+    fn swarm_rel_path_strips_dir_and_forward_slashes() {
+        let dir = Path::new("/home/u/proj/.saple/swarm");
+        assert_eq!(swarm_rel_path(dir, Path::new("/home/u/proj/.saple/swarm/plan.json")).as_deref(), Some("plan.json"));
+        assert_eq!(
+            swarm_rel_path(dir, Path::new("/home/u/proj/.saple/swarm/verdicts/fe_auth.json")).as_deref(),
+            Some("verdicts/fe_auth.json")
+        );
+        // Windows separators normalize to forward slashes.
+        let win = Path::new(r"C:\proj\.saple\swarm");
+        assert_eq!(
+            swarm_rel_path(win, Path::new(r"C:\proj\.saple\swarm\mailbox\a.md")).as_deref(),
+            Some("mailbox/a.md")
+        );
+        // The dir itself and paths outside it yield nothing.
+        assert_eq!(swarm_rel_path(dir, dir), None);
+        assert_eq!(swarm_rel_path(dir, Path::new("/home/u/proj/.saple/tasks.json")), None);
     }
 }

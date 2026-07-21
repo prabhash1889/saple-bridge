@@ -74,6 +74,7 @@ pub fn run() {
         })
         .manage(pty::PtyRegistry::new())
         .manage(watcher::WatcherState::new())
+        .manage(watcher::SwarmWatcherState::new())
         // Restore the window's last size/position/maximized state on launch and save it on exit.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -166,6 +167,8 @@ pub fn run() {
             diagnostics::check_provider_signin,
             watcher::watch_project_files,
             watcher::unwatch_project_files,
+            watcher::watch_swarm_dir,
+            watcher::unwatch_swarm_dir,
             browser::browser_open_tab,
             browser::browser_close_tab,
             browser::browser_set_bounds,

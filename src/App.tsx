@@ -96,6 +96,7 @@ function App() {
     restoreFileLayout(currentProjectPath);
     if (!currentProjectPath) {
       void invoke('unwatch_project_files').catch(() => {});
+      void invoke('unwatch_swarm_dir').catch(() => {});
       return;
     }
 

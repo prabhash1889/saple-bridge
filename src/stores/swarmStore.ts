@@ -611,6 +611,10 @@ export const useSwarmStore = create<SwarmState>()(
           // Reset if file not found
           set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [] });
         }
+        // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
+        // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
+        // yet (no swarm has run here); re-armed on the next load once it does.
+        void invoke('watch_swarm_dir', { projectPath }).catch(() => {});
       },
 
       saveSwarmState: async (projectPath) => {
