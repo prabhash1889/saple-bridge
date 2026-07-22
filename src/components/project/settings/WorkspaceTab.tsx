@@ -60,7 +60,8 @@ export const WorkspaceTab: React.FC = () => {
   useEffect(() => {
     if (workspaceConfig) {
       setWorkspaceName(workspaceConfig.workspaceName);
-      setMemoryMode(workspaceConfig.memoryMode);
+      // Only 'saple' mode is supported; normalize any legacy value.
+      setMemoryMode('saple');
       setDefaultProvider(workspaceConfig.defaultProvider);
       setMaxAgents(workspaceConfig.maxParallelAgents);
       setEnableEditMode(workspaceConfig.enableEditMode ?? true);
