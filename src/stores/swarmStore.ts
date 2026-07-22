@@ -14,8 +14,10 @@ import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
 import { parsePlan, diffPlan } from '../lib/swarmPlan';
 import { buildAgentPrompt } from '../lib/swarmPrompts';
+import { buildResultsDigest, type DigestEntry } from '../lib/swarmDigest';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
+import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
 
@@ -104,6 +106,16 @@ interface SwarmState {
   // owns exclusively) so it never has to write back the agent-owned requests.json, and so an
   // approved/rejected request can't reappear or relaunch a duplicate worker across reloads.
   resolvedWorkerRequests: string[];
+  // Phase 3 (live coordinator). `digestLog` is the durable record of every results digest Bridge
+  // produced — relaunch prompts (fallback providers, crash recovery, restart) embed it so no
+  // digest is ever lost. `coordinatorCrashes` counts mid-swarm coordinator crashes (one free
+  // auto-relaunch; the second escalates to a human). `lastDigestWave` makes the wave digest fire
+  // once per wave. All three persist in state.json. `coordinatorState` is transient
+  // observability: what the live coordinator is doing right now.
+  digestLog: string[];
+  coordinatorCrashes: number;
+  lastDigestWave: number;
+  coordinatorState: 'planning' | 'idle' | 'digesting';
 
   setPendingWizardMission: (mission: string | null) => void;
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
@@ -120,6 +132,12 @@ interface SwarmState {
   // agents wired by dependency. Idempotent (dedup on `appliedPlanTaskIds`); safe to call from the
   // coordinator's plan marker, the plan.json watcher event, or coordinator completion.
   ingestPlan: (projectPath: string) => Promise<void>;
+  // Phase 3: deliver a results digest to the coordinator. Records it in `digestLog`, then either
+  // injects it into the live coordinator's PTY as a typed user turn (injection-capable provider,
+  // pane alive — queued until the pane is idle), or relaunches the coordinator with the digest
+  // history embedded in its prompt (the fallback guarantee). `relaunch: false` restricts delivery
+  // to injection so per-task failure digests can't trigger a relaunch storm.
+  notifyCoordinator: (projectPath: string, digest: string, options?: { relaunch?: boolean }) => Promise<void>;
   pauseSwarm: (projectPath: string) => Promise<void>;
   resumeSwarm: (projectPath: string) => Promise<void>;
   stopSwarm: (projectPath: string) => Promise<void>;
@@ -378,6 +396,102 @@ const consumePendingAgentExits = (projectPath: string) => {
   return forProject;
 };
 
+// Statuses after which an agent will not run again without human/coordinator action. Mirrors the
+// scheduler's `allFinished` set.
+const FINISHED_AGENT_STATUSES: AgentStatus[] = ['done', 'failed', 'blocked', 'stopped'];
+
+// ---- Phase 3: live coordinator ---------------------------------------------------------------
+// The coordinator stays alive in an interactive TUI for the whole swarm; Bridge injects results
+// digests into its PTY as typed user turns. Module-level like the scan guard: one live swarm per
+// app session. Injection only happens when the pane has been quiet for IDLE_QUIET_MS (the "at its
+// input prompt" heuristic); digests queue while it is busy.
+const IDLE_QUIET_MS = 3000;
+const DIGEST_ENTER_DELAY_MS = 150;
+let coordinatorWatch: { paneId: string; unsubscribe: () => void } | null = null;
+let coordinatorLastOutputAt = 0;
+const digestQueue: string[] = [];
+let digestTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopCoordinatorWatch = () => {
+  coordinatorWatch?.unsubscribe();
+  coordinatorWatch = null;
+  digestQueue.length = 0;
+  if (digestTimer) {
+    clearTimeout(digestTimer);
+    digestTimer = null;
+  }
+};
+
+const watchCoordinatorPane = (paneId: string) => {
+  if (coordinatorWatch?.paneId === paneId) return;
+  coordinatorWatch?.unsubscribe();
+  coordinatorLastOutputAt = Date.now();
+  const unsubscribe = useTerminalStore.getState().subscribeOutput(paneId, () => {
+    coordinatorLastOutputAt = Date.now();
+  });
+  coordinatorWatch = { paneId, unsubscribe };
+};
+
+// Drain queued digests into the coordinator's PTY, one per idle window, then flip 'digesting'
+// back to 'idle' once its response settles. This is a settle-timer on live PTY output that only
+// runs while there is something to deliver — not a file poll.
+const pumpDigests = () => {
+  if (digestTimer) return;
+  const tick = async () => {
+    digestTimer = null;
+    const state = useSwarmStore.getState();
+    const paneId = coordinatorWatch?.paneId;
+    const coordinator = state.activeAgents.find((a) => a.role === 'coordinator');
+    if (!paneId || !coordinator || coordinator.terminalId !== paneId || state.status !== 'running') {
+      digestQueue.length = 0; // digests live on in digestLog; a relaunch prompt replays them
+      return;
+    }
+    const quietFor = Date.now() - coordinatorLastOutputAt;
+    if (quietFor < IDLE_QUIET_MS) {
+      digestTimer = setTimeout(tick, IDLE_QUIET_MS - quietFor + 50);
+      return;
+    }
+    if (digestQueue.length === 0) {
+      if (state.coordinatorState === 'digesting') useSwarmStore.setState({ coordinatorState: 'idle' });
+      return;
+    }
+    const digest = digestQueue.shift()!;
+    useSwarmStore.setState({ coordinatorState: 'digesting' });
+    try {
+      // Bracketed paste so the TUI treats embedded newlines as pasted text; Enter follows as its
+      // own keypress (mirrors the Rust-side interactive prompt delivery).
+      await invoke('write_pty', { id: paneId, data: `\u001b[200~${digest}\u001b[201~` });
+      await new Promise((resolve) => setTimeout(resolve, DIGEST_ENTER_DELAY_MS));
+      await invoke('write_pty', { id: paneId, data: '\r' });
+    } catch (error) {
+      console.error('Failed to inject digest into coordinator PTY:', error);
+    }
+    coordinatorLastOutputAt = Date.now(); // injection counts as activity: wait for quiet again
+    digestTimer = setTimeout(tick, IDLE_QUIET_MS);
+  };
+  digestTimer = setTimeout(tick, 0);
+};
+
+// Snapshot the workers (with best-effort outcome summaries) for a coordinator digest.
+const collectDigestEntries = async (projectPath: string): Promise<DigestEntry[]> => {
+  const workers = useSwarmStore.getState().activeAgents.filter((a) => a.role !== 'coordinator');
+  return Promise.all(
+    workers.map(async (a) => {
+      let summary: string | undefined;
+      try {
+        const raw = await invoke<string>('read_project_file', {
+          projectPath,
+          filePath: `.saple/swarm/outcomes/${a.id}.json`,
+        });
+        summary = parseAgentOutcome(JSON.parse(raw))?.summary;
+      } catch {
+        // no outcome written — statusReason (if any) carries the detail
+      }
+      return { taskId: a.taskId, name: a.name, role: a.role, status: a.status, statusReason: a.statusReason, summary };
+    }),
+  );
+};
+
 // Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
 // updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
 // launch the same agent's PTY + prompt file twice. Concurrent triggers coalesce into one queued
@@ -390,11 +504,23 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
   try {
     await updateAgentStatus(projectPath, agent.id, 'starting');
 
-    const { mission, skills, contextFiles } = useSwarmStore.getState();
+    const { mission, skills, contextFiles, digestLog } = useSwarmStore.getState();
+
+    // Phase 3: coordinators on injection-capable providers run LIVE — the CLI launches as an
+    // interactive TUI, the prompt is typed into it after startup, and results digests are
+    // injected into the same session later. Workers (and fallback-provider coordinators) stay
+    // headless with the prompt piped in.
+    const interactive = agent.role === 'coordinator' && providerSupportsTurnInjection(agent.provider || 'codex');
 
     // Coordinators get the plan-contract brief; workers get their own systemPrompt (the plan task
     // mission) as the assignment. Built in swarmPrompts.ts (Phase 2).
-    const promptContent = buildAgentPrompt(agent, { mission, skills, contextFiles });
+    const promptContent = buildAgentPrompt(agent, {
+      mission,
+      skills,
+      contextFiles,
+      digests: agent.role === 'coordinator' ? digestLog : undefined,
+      live: interactive,
+    });
 
     const promptFile = `.saple/agents/prompts/swarm_${agent.id}.md`;
     await invoke('write_project_file', {
@@ -420,7 +546,13 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
     // P11: pin the pane to the swarm's own workspace instance so it doesn't land in whatever
     // instance the user currently has active.
     const swarmWorkspaceId = useSwarmStore.getState().swarmWorkspaceId || undefined;
-    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile, undefined, swarmWorkspaceId);
+    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile, undefined, swarmWorkspaceId, interactive);
+
+    // Phase 3: track the live coordinator's output for the busy/idle injection heuristic.
+    if (interactive) {
+      watchCoordinatorPane(paneId);
+      useSwarmStore.setState({ coordinatorState: 'planning' });
+    }
 
     // 2. Set terminal metadata
     useTerminalStore.getState().updateSession(paneId, {
@@ -469,6 +601,10 @@ export const useSwarmStore = create<SwarmState>()(
       swarmWorkspaceId: null,
       pendingWizardMission: null,
       resolvedWorkerRequests: [],
+      digestLog: [],
+      coordinatorCrashes: 0,
+      lastDigestWave: 0,
+      coordinatorState: 'idle',
 
       setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
 
@@ -557,11 +693,22 @@ export const useSwarmStore = create<SwarmState>()(
             wave: parsed.wave || 1,
             maxWaves: parsed.maxWaves || 3,
             maxParallel: parsed.maxParallel || 0,
+            digestLog: parsed.digestLog || [],
+            coordinatorCrashes: parsed.coordinatorCrashes || 0,
+            lastDigestWave: parsed.lastDigestWave || 0,
+            coordinatorState: 'idle',
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
             await get().saveSwarmState(projectPath);
           }
+          // Phase 3: re-arm the live coordinator's output watch (module state doesn't survive a
+          // project switch). Without it, notifyCoordinator would treat a healthy live pane as
+          // uninjectable and relaunch it.
+          const liveCoordinator = reconciledAgents.find(
+            (a) => a.role === 'coordinator' && a.status === 'running' && a.terminalId && liveSessions[a.terminalId],
+          );
+          if (liveCoordinator?.terminalId) watchCoordinatorPane(liveCoordinator.terminalId);
           // P13: replay recovered transitions now that this project's agents are loaded. Each one
           // persists, notifies, closes out the run/outcome, and advances dependents.
           for (const r of recovered) {
@@ -574,7 +721,7 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0 });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle' });
         }
         // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
         // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
@@ -599,6 +746,9 @@ export const useSwarmStore = create<SwarmState>()(
             wave: get().wave,
             maxWaves: get().maxWaves,
             maxParallel: get().maxParallel,
+            digestLog: get().digestLog,
+            coordinatorCrashes: get().coordinatorCrashes,
+            lastDigestWave: get().lastDigestWave,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -678,6 +828,9 @@ export const useSwarmStore = create<SwarmState>()(
           loadedProjectPath: projectPath,
           swarmWorkspaceId,
           resolvedWorkerRequests: [],
+          digestLog: [],
+          coordinatorCrashes: 0,
+          lastDigestWave: 0,
         });
 
         await get().saveSwarmState(projectPath);
@@ -742,6 +895,10 @@ export const useSwarmStore = create<SwarmState>()(
           loadedProjectPath: projectPath,
           swarmWorkspaceId,
           resolvedWorkerRequests: [],
+          digestLog: [],
+          coordinatorCrashes: 0,
+          lastDigestWave: 0,
+          coordinatorState: 'planning',
         });
 
         await get().saveSwarmState(projectPath);
@@ -805,9 +962,38 @@ export const useSwarmStore = create<SwarmState>()(
           plan,
           activeAgents: [...state.activeAgents, ...materialized],
           appliedPlanTaskIds: [...state.appliedPlanTaskIds, ...newTasks.map((t) => t.id)],
+          // Phase 3: new tasks arriving after this wave's digest was delivered open the next
+          // build wave (Phase 5 adds acceptance gating and the maxWaves guard around this).
+          wave: state.lastDigestWave >= state.wave ? state.wave + 1 : state.wave,
+          // Planning has produced something; the live coordinator settles back toward idle.
+          coordinatorState: state.coordinatorState === 'planning' ? 'idle' : state.coordinatorState,
         }));
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
+      },
+
+      notifyCoordinator: async (projectPath, digest, options = {}) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+        if (!coordinator) return;
+        // Record first: the digest log is the durable channel every relaunch prompt replays, so
+        // a digest whose injection never lands is still never lost.
+        set((state) => ({ digestLog: [...state.digestLog, digest] }));
+        await get().saveSwarmState(projectPath);
+
+        const injectable =
+          providerSupportsTurnInjection(coordinator.provider) &&
+          coordinator.status === 'running' &&
+          !!coordinator.terminalId &&
+          coordinatorWatch?.paneId === coordinator.terminalId &&
+          !useTerminalStore.getState().exitedPanes?.[coordinator.terminalId];
+        if (injectable) {
+          digestQueue.push(digest);
+          pumpDigests();
+        } else if (options.relaunch !== false) {
+          // Digest-relaunch fallback: a fresh coordinator whose prompt embeds the digest log.
+          await get().relaunchAgent(projectPath, coordinator.id);
+        }
       },
 
       pauseSwarm: async (projectPath) => {
@@ -822,6 +1008,9 @@ export const useSwarmStore = create<SwarmState>()(
       },
 
       stopSwarm: async (projectPath) => {
+        // Phase 3: drop the live-coordinator machinery (output watch, queued digests, pump timer)
+        // before the panes die under it.
+        stopCoordinatorWatch();
         // Deactivate BEFORE tearing panes down: the removePane awaits below yield to PTY-output
         // handlers, and a concurrent [AGENT_DONE] -> checkAndRunNextAgents must see the swarm as
         // stopped or it launches a fresh agent mid-shutdown, outside the kill list.
@@ -829,6 +1018,7 @@ export const useSwarmStore = create<SwarmState>()(
           swarmId: null,
           status: 'stopped',
           swarmActive: false,
+          coordinatorState: 'idle',
           activeAgents: get().activeAgents.map(a => ({ ...a, status: 'stopped' }))
         });
 
@@ -854,16 +1044,46 @@ export const useSwarmStore = create<SwarmState>()(
         // done/review as terminal, make sure its plan has been ingested (a plan written right
         // before the marker/exit must not be missed). If it never produced a valid task, park it
         // in 'review' — relaunching the coordinator retries planning — instead of a silent finish.
-        if (previousAgent?.role === 'coordinator' && (status === 'done' || status === 'review')) {
+        if (previousAgent?.role === 'coordinator' && (status === 'done' || status === 'review' || status === 'failed')) {
           await get().ingestPlan(projectPath);
-          if (get().appliedPlanTaskIds.length === 0) {
+          // Phase 3 crash containment: a LIVE coordinator's pane exiting while workers are still
+          // unfinished is a crash, not a completion — its TUI is supposed to stay open receiving
+          // digests. Auto-relaunch once with the digest-carrying prompt; a second crash escalates
+          // to a human. Marker-driven transitions (pane still alive) never enter this branch.
+          const paneExited =
+            !!previousAgent.terminalId && !!useTerminalStore.getState().exitedPanes?.[previousAgent.terminalId];
+          const workersUnfinished = get().activeAgents.some(
+            (a) => a.role !== 'coordinator' && !FINISHED_AGENT_STATUSES.includes(a.status),
+          );
+          const liveCoordinator = providerSupportsTurnInjection(previousAgent.provider);
+          if (liveCoordinator && paneExited && workersUnfinished && get().status === 'running') {
+            if (get().coordinatorCrashes < 1) {
+              const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
+                kind: 'crash_recovery',
+                wave: get().wave,
+                marker: previousAgent.marker,
+              });
+              set((state) => ({
+                coordinatorCrashes: state.coordinatorCrashes + 1,
+                digestLog: [...state.digestLog, digest],
+              }));
+              await get().saveSwarmState(projectPath);
+              void get().relaunchAgent(projectPath, agentId);
+              return;
+            }
             status = 'review';
-            extra = { ...extra, statusReason: 'Planning produced no valid tasks — relaunch to retry planning.' };
-          } else {
-            // Planning succeeded: the coordinator is done whether it printed AGENT_DONE or just
-            // exited cleanly after writing the plan (Phase 2 fire-and-forget; Phase 3 keeps it
-            // live). Its own completion never needs a human click — the plan is the deliverable.
-            status = 'done';
+            extra = { ...extra, statusReason: 'Coordinator crashed twice mid-swarm — relaunch it manually to continue.' };
+          } else if (status === 'done' || status === 'review') {
+            if (get().appliedPlanTaskIds.length === 0) {
+              status = 'review';
+              extra = { ...extra, statusReason: 'Planning produced no valid tasks — relaunch to retry planning.' };
+            } else {
+              // Planning succeeded: the coordinator is done whether it printed AGENT_DONE or just
+              // exited cleanly after writing the plan (fallback fire-and-forget; live coordinators
+              // reach here via their marker). Its own completion never needs a human click — the
+              // plan is the deliverable.
+              status = 'done';
+            }
           }
         }
 
@@ -915,6 +1135,27 @@ export const useSwarmStore = create<SwarmState>()(
             void useAgentSessionStore
               .getState()
               .completeSession(projectPath, linkedSession.id, effectiveStatus, outcome);
+          }
+        }
+        // Phase 3: a worker's terminal failure is pushed to the live coordinator right away so it
+        // can react (repair task, replanning) before the wave ends. Injection-only — a
+        // fallback-provider coordinator gets failures in the wave digest instead of one relaunch
+        // per failure.
+        if (
+          previousAgent &&
+          previousAgent.role !== 'coordinator' &&
+          previousAgent.status !== effectiveStatus &&
+          effectiveStatus === 'failed' &&
+          get().swarmActive
+        ) {
+          const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+          if (coordinator) {
+            const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
+              kind: 'task_failed',
+              wave: get().wave,
+              marker: coordinator.marker,
+            });
+            void get().notifyCoordinator(projectPath, digest, { relaunch: false });
           }
         }
         await get().saveSwarmState(projectPath);
@@ -989,6 +1230,32 @@ export const useSwarmStore = create<SwarmState>()(
         const allCompleted = working.every(a => a.status === 'done');
         const anyFailedOrBlocked = working.some(a => a.status === 'failed' || a.status === 'blocked');
         const allFinished = working.every(a => ['done', 'failed', 'blocked', 'stopped'].includes(a.status));
+
+        // Phase 3: wave completion. Every materialized worker is finished but the coordinator
+        // hasn't received this wave's results yet — instead of ending the swarm, deliver the
+        // results digest (injected live, or via digest-relaunch) and let the coordinator decide:
+        // final report (AGENT_DONE) or more tasks (PLAN_UPDATED). `lastDigestWave` makes this
+        // fire once per wave; the swarm then completes on a later scan.
+        const coordinatorAgent = working.find(a => a.role === 'coordinator');
+        const workerAgents = working.filter(a => a.role !== 'coordinator');
+        if (
+          coordinatorAgent &&
+          (coordinatorAgent.status === 'running' || coordinatorAgent.status === 'done') &&
+          workerAgents.length > 0 &&
+          workerAgents.every(a => FINISHED_AGENT_STATUSES.includes(a.status)) &&
+          get().lastDigestWave < get().wave
+        ) {
+          set({ lastDigestWave: get().wave });
+          await commit();
+          await get().saveSwarmState(projectPath);
+          const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
+            kind: 'wave',
+            wave: get().wave,
+            marker: coordinatorAgent.marker,
+          });
+          void get().notifyCoordinator(projectPath, digest);
+          return;
+        }
 
         if (allCompleted) {
           await commit();

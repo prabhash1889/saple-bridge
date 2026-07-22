@@ -28,6 +28,8 @@ const terminalSessions = vi.hoisted(() => ({} as Record<string, unknown>));
 const maxPaneLimitRef = vi.hoisted(() => ({ value: 16 }));
 // Per-pane rolling signal tails, as terminalStore would hold them (P13 recovery reads these).
 const signalTails = vi.hoisted(() => ({} as Record<string, string>));
+// Panes whose PTY child exited (Phase 3 coordinator crash detection reads this).
+const exitedPanes = vi.hoisted(() => ({} as Record<string, boolean>));
 vi.mock('./terminalStore', () => ({
   useTerminalStore: {
     getState: () => ({
@@ -36,6 +38,8 @@ vi.mock('./terminalStore', () => ({
       updateSession: vi.fn(),
       getMaxPaneLimit: () => maxPaneLimitRef.value,
       sessions: terminalSessions,
+      exitedPanes,
+      subscribeOutput: vi.fn(() => () => {}),
     }),
   },
   getPaneSignalTail: (paneId: string) => signalTails[paneId] ?? '',
@@ -101,6 +105,8 @@ beforeEach(() => {
   maxPaneLimitRef.value = 16;
   for (const key of Object.keys(terminalSessions)) delete terminalSessions[key];
   for (const key of Object.keys(signalTails)) delete signalTails[key];
+  for (const key of Object.keys(exitedPanes)) delete exitedPanes[key];
+  useSwarmStore.setState({ digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, wave: 1, coordinatorState: 'idle' });
   seed([]);
 });
 
@@ -662,5 +668,108 @@ describe('startSwarm + plan intake (Phase 2)', () => {
 
     expect(getAgent('coordinator').status).toBe('review');
     expect(getAgent('coordinator').statusReason).toMatch(/retry planning/i);
+  });
+});
+
+describe('live coordinator (Phase 3)', () => {
+  const coordinator = (extra: Partial<SwarmAgent> = {}) =>
+    agent('coordinator', [], 'running', {
+      role: 'coordinator',
+      provider: 'claude',
+      terminalId: 'coord-pane',
+      marker: 'tokcccc',
+      ...extra,
+    });
+
+  it('wave completion records a digest and defers swarm completion until the coordinator reacts', async () => {
+    seed([coordinator(), agent('worker', [], 'done', { taskId: 't1' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: ['t1'], wave: 1, lastDigestWave: 0 });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    expect(useSwarmStore.getState().lastDigestWave).toBe(1);
+    await vi.waitFor(() => expect(useSwarmStore.getState().digestLog).toHaveLength(1));
+    expect(useSwarmStore.getState().digestLog[0]).toContain('[Bridge digest] Wave 1');
+    expect(useSwarmStore.getState().digestLog[0]).toContain('t1 (worker)');
+    // The swarm did NOT complete: the coordinator gets the results first.
+    expect(useSwarmStore.getState().status).toBe('running');
+    // No live pane watch is armed in tests, so delivery falls back to a digest-relaunch.
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+
+  it('after the digest wave is delivered, an all-done roster completes the swarm', async () => {
+    seed([coordinator({ status: 'done' }), agent('worker', [], 'done', { taskId: 't1' })]);
+    useSwarmStore.setState({ wave: 1, lastDigestWave: 1 });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    expect(useSwarmStore.getState().status).toBe('completed');
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('a terminally failed worker records a failure digest without relaunching the coordinator', async () => {
+    seed([
+      coordinator(),
+      agent('w1', [], 'running', { taskId: 't1', terminalId: 'w1-pane' }),
+      agent('w2', [], 'running', { taskId: 't2', terminalId: 'w2-pane' }),
+    ]);
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'w1', 'failed');
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().digestLog).toHaveLength(1));
+    expect(useSwarmStore.getState().digestLog[0]).toContain('a task failed terminally');
+    // Injection-only delivery: no pane watch armed, but a failure must never relaunch.
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('a live coordinator crash mid-swarm auto-relaunches once with the digest prompt', async () => {
+    exitedPanes['coord-pane'] = true;
+    seed([coordinator(), agent('worker', [], 'running', { taskId: 't1', terminalId: 'w-pane' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: ['t1'] });
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'read_project_file' ? Promise.reject(new Error('nope')) : Promise.resolve(undefined),
+    );
+
+    // Exit fallback shape: the pane died without a marker while a worker is still running.
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'coordinator', 'review');
+
+    expect(useSwarmStore.getState().coordinatorCrashes).toBe(1);
+    expect(useSwarmStore.getState().digestLog.some((d) => d.includes('ended unexpectedly'))).toBe(true);
+    // Relaunched, not parked: a fresh pane spawns for the coordinator.
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+    expect(getAgent('coordinator').status).not.toBe('review');
+  });
+
+  it('a second crash escalates to a human instead of relaunching again', async () => {
+    exitedPanes['coord-pane'] = true;
+    seed([coordinator(), agent('worker', [], 'running', { taskId: 't1', terminalId: 'w-pane' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: ['t1'], coordinatorCrashes: 1 });
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'read_project_file' ? Promise.reject(new Error('nope')) : Promise.resolve(undefined),
+    );
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'coordinator', 'review');
+
+    expect(getAgent('coordinator').status).toBe('review');
+    expect(getAgent('coordinator').statusReason).toMatch(/crashed twice/i);
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('new plan tasks after a delivered wave digest open the next wave', async () => {
+    seed([coordinator()]);
+    useSwarmStore.setState({ appliedPlanTaskIds: ['t1'], wave: 1, lastDigestWave: 1 });
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'read_project_file' && args.filePath === '.saple/swarm/plan.json') {
+        return Promise.resolve(
+          JSON.stringify({ version: 2, tasks: [{ id: 't2', mission: 'repair it', role: 'builder' }] }),
+        );
+      }
+      return Promise.resolve(undefined);
+    });
+
+    await useSwarmStore.getState().ingestPlan(PROJECT);
+
+    expect(useSwarmStore.getState().wave).toBe(2);
+    expect(useSwarmStore.getState().appliedPlanTaskIds).toEqual(['t1', 't2']);
   });
 });

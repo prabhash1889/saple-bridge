@@ -258,6 +258,18 @@ fn provider_accepts_prompt_pipe(provider: &str) -> bool {
     !matches!(provider, "cursor" | "copilot")
 }
 
+// Interactive prompt delivery (Phase 3 live coordinator): how long to wait after spawn before
+// typing the prompt into the provider TUI, and the gap between the paste and the Enter keypress.
+// ponytail: fixed delay; promote to a per-provider readiness probe if a CLI proves slower to boot.
+const INTERACTIVE_PROMPT_DELAY: Duration = Duration::from_millis(2500);
+const INTERACTIVE_ENTER_DELAY: Duration = Duration::from_millis(250);
+
+/// Wrap an injected prompt in a bracketed-paste sequence so TUIs treat embedded newlines as
+/// pasted text rather than individual Enter presses. CRLF is normalized to LF first.
+fn bracketed_paste(prompt: &str) -> String {
+    format!("\x1b[200~{}\x1b[201~", prompt.replace("\r\n", "\n"))
+}
+
 // `spawn_pty`'s provider/model/prompt-file inputs cross the renderer→Rust trust boundary and are
 // interpolated into a `powershell -Command` / `bash -lc` string, so everything that reaches that
 // string must pass through the validators below. (`custom_command` is exempt by design: like the
@@ -321,6 +333,7 @@ pub async fn spawn_pty(
     prompt_file: Option<String>,
     custom_command: Option<String>,
     session_uuid: Option<String>,
+    interactive_prompt: Option<bool>,
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
 ) -> Result<(), String> {
@@ -345,8 +358,9 @@ pub async fn spawn_pty(
         Box<dyn Child + Send + Sync>,
         Box<dyn Read + Send>,
         Option<proc_tree::JobObject>,
+        Option<String>,
     );
-    let (writer, pair, child, mut reader, job) =
+    let (writer, pair, child, mut reader, job, injected_prompt) =
         tauri::async_runtime::spawn_blocking(move || -> Result<PtyParts, String> {
     // 1. Setup PTY system
     let pty_system = NativePtySystem::default();
@@ -376,6 +390,9 @@ pub async fn spawn_pty(
     // Tracks whether we launch the shell with a command (provider/custom). If
     // not, it's a plain terminal and we start a login shell below.
     let mut launched_command = false;
+    // Phase 3: prompt content to type into an interactively-launched CLI after startup, instead
+    // of piping it on stdin. Read here (inside the validators) and injected after spawn.
+    let mut injected_prompt: Option<String> = None;
 
     if let Some(provider) = ai_provider.as_deref() {
         if provider != "custom" {
@@ -387,12 +404,23 @@ pub async fn spawn_pty(
             if use_model_flag && !is_safe_model(model_str) {
                 return Err(format!("Invalid model name: {}", model_str));
             }
-            // Only redirect the prompt file into providers that accept a piped prompt.
+            let interactive_delivery = interactive_prompt.unwrap_or(false);
+            // Only redirect the prompt file into providers that accept a piped prompt, and never
+            // when the caller asked for interactive delivery (live coordinator: the CLI runs as a
+            // TUI and the prompt is typed into it once it is ready).
             let pipe_file = prompt_file
                 .as_ref()
-                .filter(|_| provider_accepts_prompt_pipe(provider));
+                .filter(|_| provider_accepts_prompt_pipe(provider) && !interactive_delivery);
             if let Some(p_file) = pipe_file {
                 validate_prompt_file(&cwd, p_file)?;
+            }
+            if interactive_delivery {
+                if let Some(p_file) = prompt_file.as_ref() {
+                    validate_prompt_file(&cwd, p_file)?;
+                    let resolved = crate::project::get_project_file_path(&cwd, p_file)?;
+                    injected_prompt =
+                        Some(std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?);
+                }
             }
 
             // Claude panes are tagged with a bridge-generated session id so the context
@@ -440,11 +468,11 @@ pub async fn spawn_pty(
                 }
             };
 
-            // Headless agent panes (prompt piped in) must let the shell EXIT when the CLI
-            // finishes, so `pty-exit` fires and the swarm scheduler gets a real completion
-            // signal even when the agent never printed a lifecycle marker. Interactive
-            // provider panes keep the shell alive after the CLI ends, as before.
-            let headless = pipe_file.is_some();
+            // Agent panes (prompt piped in OR delivered interactively) must let the shell EXIT
+            // when the CLI finishes, so `pty-exit` fires and the swarm gets a real completion /
+            // crash signal even when the agent never printed a lifecycle marker. Plain
+            // interactive provider panes keep the shell alive after the CLI ends, as before.
+            let headless = pipe_file.is_some() || injected_prompt.is_some();
             if cfg!(target_os = "windows") {
                 if !headless {
                     cmd.arg("-NoExit");
@@ -561,7 +589,7 @@ pub async fn spawn_pty(
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    Ok((writer, pair, child, reader, job))
+    Ok((writer, pair, child, reader, job, injected_prompt))
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -570,6 +598,9 @@ pub async fn spawn_pty(
     // task). A bounded channel gives backpressure instead of unbounded growth if a child stalls;
     // 256 queued input events is far more than interactive use ever needs.
     let (writer_tx, writer_rx) = mpsc::sync_channel::<Vec<u8>>(256);
+    // Cloned for the (optional) interactive prompt injection thread below, before the original
+    // moves into the session struct. An unused clone just drops at end of scope.
+    let injection_tx = writer_tx.clone();
     let session = Arc::new(Mutex::new(PtySession {
         writer_tx: Some(writer_tx),
         pair,
@@ -609,6 +640,22 @@ pub async fn spawn_pty(
             // buffered, so a per-write flush is just a wasted syscall.
         }
     });
+
+    // Interactive prompt delivery (Phase 3): once the TUI has had time to start, type the prompt
+    // into it through the writer thread — bracketed paste, then Enter as its own keypress so TUIs
+    // that debounce pasted input still submit. If the session is killed first, the sends fail and
+    // the thread exits quietly.
+    if let Some(prompt) = injected_prompt {
+        let tx = injection_tx;
+        thread::spawn(move || {
+            thread::sleep(INTERACTIVE_PROMPT_DELAY);
+            if tx.send(bracketed_paste(&prompt).into_bytes()).is_err() {
+                return;
+            }
+            thread::sleep(INTERACTIVE_ENTER_DELAY);
+            let _ = tx.send(b"\r".to_vec());
+        });
+    }
 
     // 8. Spawn background threads for reading output.
     //
@@ -902,6 +949,12 @@ mod tests {
         fs::create_dir_all(dir.join(".saple/agents/prompts")).unwrap();
         fs::write(dir.join(".saple/agents/prompts/p.md"), "prompt").unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn bracketed_paste_wraps_and_normalizes_newlines() {
+        assert_eq!(bracketed_paste("a\r\nb\nc"), "\x1b[200~a\nb\nc\x1b[201~");
+        assert_eq!(bracketed_paste(""), "\x1b[200~\x1b[201~");
     }
 
     #[test]

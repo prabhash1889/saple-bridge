@@ -11,6 +11,11 @@ export interface PromptContext {
   mission: string;
   skills: string[];
   contextFiles: ContextFileRef[];
+  // Phase 3: prior Bridge results digests, embedded on coordinator (re)launches so a fresh
+  // session resumes from the recorded swarm state instead of re-planning finished work.
+  digests?: string[];
+  // Phase 3: true when the coordinator runs live (interactive TUI; digests injected mid-run).
+  live?: boolean;
 }
 
 const skillsSectionFor = (skills: string[]): string => {
@@ -46,6 +51,21 @@ const PLAN_CONTRACT = `{
 
 const buildCoordinatorPrompt = (agent: SwarmAgent, ctx: PromptContext): string => {
   const marker = agent.marker;
+  const digestsSection =
+    ctx.digests && ctx.digests.length > 0
+      ? `\n## Results So Far\nBridge recorded these digests earlier in this swarm (oldest first). Resume from this state - do not re-plan work that is already done:\n\n${ctx.digests.join('\n\n')}\n`
+      : '';
+  const liveSection = ctx.live
+    ? `\n## Live Session
+You stay in this interactive session for the entire swarm. After emitting your plan marker, WAIT
+here - Bridge injects a results digest into this session as workers finish. React to each digest:
+append repair/follow-up tasks to plan.json (then emit the plan-updated marker) or, when the
+mission is complete, write a short final report and emit your done marker.
+`
+    : '';
+  const doneWhen = ctx.live
+    ? 'When the whole mission is complete and you have written your final report'
+    : 'When planning is complete and you have nothing to add';
   return `# Swarm Coordinator Mission Instructions
 
 **Mission:** ${ctx.mission || 'Coordinate the swarm.'}
@@ -72,18 +92,18 @@ Rules:
 
 ## Mailbox
 Write status notes to \`.saple/swarm/mailbox/${agent.id}.md\`; the operator can reply there mid-run.
-${skillsSectionFor(ctx.skills)}${contextSectionFor(ctx.contextFiles)}
+${skillsSectionFor(ctx.skills)}${contextSectionFor(ctx.contextFiles)}${digestsSection}${liveSection}
 ${contextBriefSection({ role: 'coordinator', agentId: agent.id })}
 ## Coordinator Signals
 Emit EXACTLY ONE marker per event, each on its own line. ${marker ? `The \`:${marker}\` suffix identifies you — a signal without it is ignored, so include it verbatim.` : ''}
 ${marker
       ? `- After you write plan.json: \`[PLAN_READY:${marker}]\`
 - If you later revise/append tasks (rewrite plan.json first): \`[PLAN_UPDATED:${marker}]\`
-- When planning is complete and you have nothing to add: \`[AGENT_DONE:${marker}]\`
+- ${doneWhen}: \`[AGENT_DONE:${marker}]\`
 - Fatal failure (you cannot produce a plan): \`[AGENT_FAILED:${marker}]\``
       : `- After you write plan.json: \`[PLAN_READY]\`
 - If you later revise/append tasks: \`[PLAN_UPDATED]\`
-- When planning is complete: \`[AGENT_DONE]\`
+- ${doneWhen}: \`[AGENT_DONE]\`
 - Fatal failure: \`[AGENT_FAILED]\``}
 `;
 };
