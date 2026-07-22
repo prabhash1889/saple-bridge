@@ -60,6 +60,7 @@ vi.mock('../lib/desktopNotifications', () => ({
 }));
 
 import { useSwarmStore, recordPendingAgentExit, type SwarmAgent, type AgentStatus } from './swarmStore';
+import { hashAcceptanceOutput } from '../lib/swarmDigest';
 import { useProjectStore } from './projectStore';
 import type { WizardLaunchInput } from '../types/wizard';
 
@@ -106,7 +107,20 @@ beforeEach(() => {
   for (const key of Object.keys(terminalSessions)) delete terminalSessions[key];
   for (const key of Object.keys(signalTails)) delete signalTails[key];
   for (const key of Object.keys(exitedPanes)) delete exitedPanes[key];
-  useSwarmStore.setState({ digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, wave: 1, coordinatorState: 'idle' });
+  useSwarmStore.setState({
+    digestLog: [],
+    coordinatorCrashes: 0,
+    lastDigestWave: 0,
+    wave: 1,
+    maxWaves: 3,
+    coordinatorState: 'idle',
+    plan: null,
+    acceptanceStatus: 'idle',
+    lastAcceptanceOutput: null,
+    lastAcceptanceFailureHash: null,
+    identicalAcceptanceFailures: 0,
+    escalation: null,
+  });
   seed([]);
 });
 
@@ -771,6 +785,158 @@ describe('live coordinator (Phase 3)', () => {
 
     expect(useSwarmStore.getState().wave).toBe(2);
     expect(useSwarmStore.getState().appliedPlanTaskIds).toEqual(['t1', 't2']);
+  });
+});
+
+describe('acceptance and repair waves (Phase 5)', () => {
+  const PLAN = { version: 2, acceptance: { command: 'npm test' }, tasks: [] };
+
+  // Coordinator + one finished worker, wave digest not yet delivered - the scan's wave branch.
+  const seedAcceptanceWave = () => {
+    seed([
+      agent('coordinator', [], 'running', { role: 'coordinator', provider: 'claude', terminalId: 'coord-pane', marker: 'tokcccc' }),
+      agent('worker', [], 'done', { taskId: 't1' }),
+    ]);
+    useSwarmStore.setState({ plan: PLAN, appliedPlanTaskIds: ['t1'], wave: 1, lastDigestWave: 0 });
+  };
+
+  // run_acceptance_command resolves with the given result; project-file reads miss (no outcomes).
+  const mockAcceptance = (result: { exitCode: number | null; output: string; timedOut: boolean }) => {
+    const runs: Array<Record<string, unknown>> = [];
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'run_acceptance_command') {
+        runs.push(args);
+        return Promise.resolve(result);
+      }
+      if (cmd === 'read_project_file') return Promise.reject(new Error('missing'));
+      return Promise.resolve(undefined);
+    });
+    return runs;
+  };
+
+  it('a fully-approved wave runs the acceptance command; a pass records the synthesis digest', async () => {
+    seedAcceptanceWave();
+    const runs = mockAcceptance({ exitCode: 0, output: 'all green', timedOut: false });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('passed'));
+    expect(runs[0].commandStr).toBe('npm test');
+    await vi.waitFor(() => expect(useSwarmStore.getState().digestLog).toHaveLength(1));
+    expect(useSwarmStore.getState().digestLog[0]).toContain('acceptance command passed');
+    // No plain wave digest was sent - acceptance replaced it.
+    expect(useSwarmStore.getState().digestLog[0]).not.toContain('all worker tasks have finished');
+    // The swarm did NOT complete: the coordinator writes the final report first.
+    expect(useSwarmStore.getState().status).toBe('running');
+  });
+
+  it('completes the swarm only after acceptance passed', async () => {
+    seed([
+      agent('coordinator', [], 'done', { role: 'coordinator' }),
+      agent('worker', [], 'done', { taskId: 't1' }),
+    ]);
+    useSwarmStore.setState({ plan: PLAN, wave: 1, lastDigestWave: 1, acceptanceStatus: 'passed' });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    expect(useSwarmStore.getState().status).toBe('completed');
+  });
+
+  it('a failing acceptance sends a repair digest and keeps the swarm running', async () => {
+    seedAcceptanceWave();
+    mockAcceptance({ exitCode: 1, output: 'FAIL: expected 2 got 3', timedOut: false });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('failed'));
+    expect(useSwarmStore.getState().identicalAcceptanceFailures).toBe(1);
+    await vi.waitFor(() => expect(useSwarmStore.getState().digestLog).toHaveLength(1));
+    expect(useSwarmStore.getState().digestLog[0]).toContain('FAILED');
+    expect(useSwarmStore.getState().digestLog[0]).toContain('expected 2 got 3');
+    expect(useSwarmStore.getState().status).toBe('running');
+    expect(useSwarmStore.getState().escalation).toBeNull();
+  });
+
+  it('two consecutive identical failures short-circuit to escalation', async () => {
+    seedAcceptanceWave();
+    useSwarmStore.setState({
+      lastAcceptanceFailureHash: hashAcceptanceOutput('FAIL: same wall'),
+      identicalAcceptanceFailures: 1,
+      lastAcceptanceOutput: 'FAIL: same wall',
+    });
+    mockAcceptance({ exitCode: 1, output: 'FAIL: same wall', timedOut: false });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().status).toBe('failed'));
+    const escalation = useSwarmStore.getState().escalation!;
+    expect(escalation.reason).toBe('repeated_failure');
+    expect(escalation.wavesAttempted).toBe(1);
+    expect(escalation.maxWaves).toBe(3);
+    expect(escalation.acceptanceCommand).toBe('npm test');
+    expect(escalation.failureOutput).toContain('same wall');
+    expect(escalation.proposedTasks).toEqual([]);
+    // The structured report is also written for the human.
+    expect(invokeMock).toHaveBeenCalledWith(
+      'write_project_file',
+      expect.objectContaining({ filePath: '.saple/swarm/escalation.json' }),
+    );
+  });
+
+  it('an acceptance failure at the wave budget escalates instead of looping', async () => {
+    seedAcceptanceWave();
+    useSwarmStore.setState({ wave: 3, maxWaves: 3, lastDigestWave: 2 });
+    mockAcceptance({ exitCode: 1, output: 'FAIL: a fresh failure', timedOut: false });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().status).toBe('failed'));
+    expect(useSwarmStore.getState().escalation?.reason).toBe('max_waves');
+    // The failure digest was never sent - no repair wave past the budget.
+    expect(useSwarmStore.getState().digestLog).toHaveLength(0);
+  });
+
+  it('a coordinator that finishes after a failed acceptance without repair tasks escalates', async () => {
+    seed([
+      agent('coordinator', [], 'done', { role: 'coordinator' }),
+      agent('worker', [], 'done', { taskId: 't1' }),
+    ]);
+    useSwarmStore.setState({
+      plan: PLAN,
+      wave: 1,
+      lastDigestWave: 1,
+      acceptanceStatus: 'failed',
+      lastAcceptanceOutput: 'FAIL',
+    });
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'read_project_file' ? Promise.reject(new Error('missing')) : Promise.resolve(undefined),
+    );
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().status).toBe('failed'));
+    expect(useSwarmStore.getState().escalation?.reason).toBe('no_new_tasks');
+  });
+
+  it('a timed-out acceptance run counts as a failure, not a pass', async () => {
+    seedAcceptanceWave();
+    mockAcceptance({ exitCode: 0, output: 'hung forever', timedOut: true });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('failed'));
+  });
+
+  it('a wave without an acceptance command keeps the plain wave digest', async () => {
+    seedAcceptanceWave();
+    useSwarmStore.setState({ plan: { version: 2, acceptance: null, tasks: [] } });
+    const runs = mockAcceptance({ exitCode: 0, output: '', timedOut: false });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    await vi.waitFor(() => expect(useSwarmStore.getState().digestLog).toHaveLength(1));
+    expect(useSwarmStore.getState().digestLog[0]).toContain('all worker tasks have finished');
+    expect(runs).toHaveLength(0);
   });
 });
 

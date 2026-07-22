@@ -104,6 +104,53 @@ fn write_handoff_file_inner(project_path: String, from_agent: String, to_agent: 
     crate::fs_lock::atomic_write(&path, content.as_bytes())
 }
 
+/// Phase 5 acceptance runner result. `exit_code` is `None` when the command timed out or was
+/// killed by a signal - the frontend treats anything but `Some(0)` as a failure.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptanceResult {
+    pub exit_code: Option<i32>,
+    pub output: String,
+    pub timed_out: bool,
+}
+
+/// Acceptance verifies the whole mission (full test suite / build), so it gets a longer leash
+/// than the 90s per-task review verification.
+const ACCEPTANCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// TRUST BOUNDARY: `command_str` comes from the agent-written `plan.json` acceptance contract and
+/// runs verbatim in the operator's shell inside `project_path` (same runner as review
+/// verification). This grants the swarm no capability it doesn't already have - its agents hold
+/// interactive shells in the same directory - and the mitigations mirror review verification:
+/// project cwd, hard timeout, truncated output. Bridge executes it precisely so `completed` is
+/// never an agent's self-reported claim.
+#[tauri::command]
+pub async fn run_acceptance_command(
+    project_path: String,
+    command_str: String,
+) -> Result<AcceptanceResult, String> {
+    tauri::async_runtime::spawn_blocking(move || run_acceptance_command_inner(project_path, command_str))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn run_acceptance_command_inner(project_path: String, command_str: String) -> Result<AcceptanceResult, String> {
+    let (output, timed_out) =
+        crate::review::run_shell_with_timeout(&project_path, &command_str, ACCEPTANCE_TIMEOUT)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let mut combined = crate::review::truncate_output(format!("{}\n{}", stdout, stderr));
+    if timed_out {
+        combined.push_str(&format!(
+            "\n[ Saple Bridge stopped acceptance after {} seconds ]\n",
+            ACCEPTANCE_TIMEOUT.as_secs()
+        ));
+    }
+    // A timed-out child was killed; its exit status is the kill, not the command's verdict.
+    let exit_code = if timed_out { None } else { output.status.code() };
+    Ok(AcceptanceResult { exit_code, output: combined, timed_out })
+}
+
 #[tauri::command]
 pub async fn validate_dependency_graph(agents: Vec<SwarmAgentRust>) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || validate_dependency_graph_inner(agents))
@@ -173,6 +220,25 @@ mod tests {
             task_id: None,
             terminal_id: None,
         }
+    }
+
+    #[test]
+    fn acceptance_reports_real_exit_codes() {
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        let pass = run_acceptance_command_inner(dir.clone(), "exit 0".into()).unwrap();
+        assert_eq!(pass.exit_code, Some(0));
+        assert!(!pass.timed_out);
+
+        let fail = run_acceptance_command_inner(dir, "exit 3".into()).unwrap();
+        assert_eq!(fail.exit_code, Some(3));
+        assert!(!fail.timed_out);
+    }
+
+    #[test]
+    fn acceptance_captures_command_output() {
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        let result = run_acceptance_command_inner(dir, "echo acceptance-ran".into()).unwrap();
+        assert!(result.output.contains("acceptance-ran"));
     }
 
     #[test]

@@ -6,7 +6,15 @@ import { enqueueWrite } from '../lib/writeQueue';
 import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
-import type { SwarmPlan, AutonomyMode, Verdict, VerdictDecision } from '../types/swarmPlan';
+import type {
+  SwarmPlan,
+  AutonomyMode,
+  Verdict,
+  VerdictDecision,
+  AcceptanceStatus,
+  EscalationReason,
+  SwarmEscalation,
+} from '../types/swarmPlan';
 import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
@@ -14,7 +22,7 @@ import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
 import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
 import { buildAgentPrompt } from '../lib/swarmPrompts';
-import { buildResultsDigest, type DigestEntry } from '../lib/swarmDigest';
+import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, type DigestEntry } from '../lib/swarmDigest';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
@@ -123,6 +131,18 @@ interface SwarmState {
   coordinatorCrashes: number;
   lastDigestWave: number;
   coordinatorState: 'planning' | 'idle' | 'digesting';
+  // Phase 5 (verified completion). `acceptanceStatus` is the run state of `plan.acceptance.command`
+  // executed by Bridge - `completed` requires `passed` whenever the plan carries a command.
+  // `lastAcceptanceFailureHash` + `identicalAcceptanceFailures` implement the identical-failure
+  // short-circuit (two consecutive failures with the same trimmed-output hash escalate).
+  // `escalation` is the structured report handed to a human when repair waves are exhausted; it is
+  // also written to `.saple/swarm/escalation.json`. All persisted in state.json (a stale `running`
+  // reconciles to `idle` on load - the process died with the app).
+  acceptanceStatus: AcceptanceStatus;
+  lastAcceptanceOutput: string | null;
+  lastAcceptanceFailureHash: string | null;
+  identicalAcceptanceFailures: number;
+  escalation: SwarmEscalation | null;
 
   setPendingWizardMission: (mission: string | null) => void;
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
@@ -152,6 +172,14 @@ interface SwarmState {
   // history embedded in its prompt (the fallback guarantee). `relaunch: false` restricts delivery
   // to injection so per-task failure digests can't trigger a relaunch storm.
   notifyCoordinator: (projectPath: string, digest: string, options?: { relaunch?: boolean }) => Promise<void>;
+  // Phase 5: run the plan's acceptance command through Bridge (never trusting an agent's claim)
+  // and route the result: pass -> synthesis digest (final report), fail -> guard rails
+  // (identical-failure / maxWaves escalation) or a repair digest asking for PLAN_UPDATED tasks.
+  runAcceptance: (projectPath: string) => Promise<void>;
+  // Phase 5: stop looping and hand the swarm to a human with a structured report (state +
+  // `.saple/swarm/escalation.json`). The swarm parks as 'failed'; relaunching the coordinator or
+  // editing the plan are the existing manual paths out until the Phase 7 escalation panel.
+  escalateSwarm: (projectPath: string, reason: EscalationReason) => Promise<void>;
   pauseSwarm: (projectPath: string) => Promise<void>;
   resumeSwarm: (projectPath: string) => Promise<void>;
   stopSwarm: (projectPath: string) => Promise<void>;
@@ -636,6 +664,11 @@ export const useSwarmStore = create<SwarmState>()(
       coordinatorCrashes: 0,
       lastDigestWave: 0,
       coordinatorState: 'idle',
+      acceptanceStatus: 'idle',
+      lastAcceptanceOutput: null,
+      lastAcceptanceFailureHash: null,
+      identicalAcceptanceFailures: 0,
+      escalation: null,
 
       setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
 
@@ -728,6 +761,13 @@ export const useSwarmStore = create<SwarmState>()(
             coordinatorCrashes: parsed.coordinatorCrashes || 0,
             lastDigestWave: parsed.lastDigestWave || 0,
             coordinatorState: 'idle',
+            // A persisted 'running' means the app died mid-acceptance; the process is gone, so
+            // reconcile to 'idle' - the allCompleted funnel re-runs it when the roster settles.
+            acceptanceStatus: parsed.acceptanceStatus === 'running' ? 'idle' : parsed.acceptanceStatus || 'idle',
+            lastAcceptanceOutput: parsed.lastAcceptanceOutput || null,
+            lastAcceptanceFailureHash: parsed.lastAcceptanceFailureHash || null,
+            identicalAcceptanceFailures: parsed.identicalAcceptanceFailures || 0,
+            escalation: parsed.escalation || null,
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
@@ -752,7 +792,7 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle' });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle', acceptanceStatus: 'idle', lastAcceptanceOutput: null, lastAcceptanceFailureHash: null, identicalAcceptanceFailures: 0, escalation: null });
         }
         // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
         // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
@@ -780,6 +820,11 @@ export const useSwarmStore = create<SwarmState>()(
             digestLog: get().digestLog,
             coordinatorCrashes: get().coordinatorCrashes,
             lastDigestWave: get().lastDigestWave,
+            acceptanceStatus: get().acceptanceStatus,
+            lastAcceptanceOutput: get().lastAcceptanceOutput,
+            lastAcceptanceFailureHash: get().lastAcceptanceFailureHash,
+            identicalAcceptanceFailures: get().identicalAcceptanceFailures,
+            escalation: get().escalation,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -930,6 +975,11 @@ export const useSwarmStore = create<SwarmState>()(
           coordinatorCrashes: 0,
           lastDigestWave: 0,
           coordinatorState: 'planning',
+          acceptanceStatus: 'idle',
+          lastAcceptanceOutput: null,
+          lastAcceptanceFailureHash: null,
+          identicalAcceptanceFailures: 0,
+          escalation: null,
         });
 
         await get().saveSwarmState(projectPath);
@@ -1136,6 +1186,114 @@ export const useSwarmStore = create<SwarmState>()(
           // Digest-relaunch fallback: a fresh coordinator whose prompt embeds the digest log.
           await get().relaunchAgent(projectPath, coordinator.id);
         }
+      },
+
+      runAcceptance: async (projectPath) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        const command = get().plan?.acceptance?.command;
+        if (!command || get().acceptanceStatus === 'running') return;
+        const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+        set({ acceptanceStatus: 'running' });
+        await get().saveSwarmState(projectPath);
+
+        let exitCode: number | null = null;
+        let output = '';
+        try {
+          const result = await invoke<{ exitCode: number | null; output: string; timedOut: boolean }>(
+            'run_acceptance_command',
+            { projectPath, commandStr: command },
+          );
+          exitCode = result.timedOut ? null : result.exitCode;
+          output = result.output;
+        } catch (error) {
+          // Bridge couldn't even run it (bad shell, dead project dir): a failure, not a pass.
+          output = `Bridge could not run the acceptance command: ${error}`;
+        }
+
+        const entries = await collectDigestEntries(projectPath);
+        const digestOpts = {
+          command,
+          wave: get().wave,
+          maxWaves: get().maxWaves,
+          output,
+          marker: coordinator?.marker,
+        };
+
+        if (exitCode === 0) {
+          set({
+            acceptanceStatus: 'passed',
+            lastAcceptanceOutput: output,
+            lastAcceptanceFailureHash: null,
+            identicalAcceptanceFailures: 0,
+          });
+          await get().saveSwarmState(projectPath);
+          const digest = buildAcceptanceDigest(entries, {
+            ...digestOpts,
+            passed: true,
+            outcomePath: coordinator ? `.saple/swarm/outcomes/${coordinator.id}.json` : undefined,
+          });
+          await get().notifyCoordinator(projectPath, digest);
+          return;
+        }
+
+        // Failed. Guard rails first: an identical repeat or an exhausted wave budget escalates
+        // instead of burning another repair wave on the same wall.
+        const hash = hashAcceptanceOutput(output);
+        const identical = hash === get().lastAcceptanceFailureHash ? get().identicalAcceptanceFailures + 1 : 1;
+        set({
+          acceptanceStatus: 'failed',
+          lastAcceptanceOutput: output,
+          lastAcceptanceFailureHash: hash,
+          identicalAcceptanceFailures: identical,
+        });
+        await get().saveSwarmState(projectPath);
+        if (identical >= 2) {
+          await get().escalateSwarm(projectPath, 'repeated_failure');
+          return;
+        }
+        if (get().wave >= get().maxWaves) {
+          await get().escalateSwarm(projectPath, 'max_waves');
+          return;
+        }
+        const digest = buildAcceptanceDigest(entries, { ...digestOpts, passed: false });
+        await get().notifyCoordinator(projectPath, digest);
+      },
+
+      escalateSwarm: async (projectPath, reason) => {
+        const { plan, appliedPlanTaskIds, wave, maxWaves, lastAcceptanceOutput } = get();
+        const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+        // Best-effort: the coordinator's own read on the situation, if it wrote an outcome.
+        let diagnosis: string | undefined;
+        if (coordinator) {
+          try {
+            const raw = await invoke<string>('read_project_file', {
+              projectPath,
+              filePath: `.saple/swarm/outcomes/${coordinator.id}.json`,
+            });
+            diagnosis = parseAgentOutcome(JSON.parse(raw))?.summary;
+          } catch {
+            // none written
+          }
+        }
+        const escalation: SwarmEscalation = {
+          reason,
+          wavesAttempted: wave,
+          maxWaves,
+          acceptanceCommand: plan?.acceptance?.command,
+          failureOutput: lastAcceptanceOutput ?? undefined,
+          diagnosis,
+          // Tasks the coordinator wrote but Bridge never materialized - its proposed next wave.
+          proposedTasks: plan
+            ? diffPlan(appliedPlanTaskIds, plan).map((t) => ({ id: t.id, mission: t.mission }))
+            : [],
+        };
+        set({ escalation, status: 'failed' });
+        await invoke('write_project_file', {
+          projectPath,
+          filePath: '.saple/swarm/escalation.json',
+          content: JSON.stringify(escalation, null, 2),
+        }).catch(() => {});
+        await get().saveSwarmState(projectPath);
       },
 
       pauseSwarm: async (projectPath) => {
@@ -1400,6 +1558,14 @@ export const useSwarmStore = create<SwarmState>()(
           set({ lastDigestWave: get().wave });
           await commit();
           await get().saveSwarmState(projectPath);
+          // Phase 5: a fully-approved wave is verified BEFORE the coordinator hears about it -
+          // Bridge runs the plan's acceptance command and the result decides synthesis vs repair.
+          // A wave with failures/blocks skips acceptance (it can't pass) and gets the plain wave
+          // digest so the coordinator can replan.
+          if (workerAgents.every((a) => a.status === 'done') && get().plan?.acceptance?.command) {
+            void get().runAcceptance(projectPath);
+            return;
+          }
           const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
             kind: 'wave',
             wave: get().wave,
@@ -1411,6 +1577,21 @@ export const useSwarmStore = create<SwarmState>()(
 
         if (allCompleted) {
           await commit();
+          // Phase 5: `completed` is a VERIFIED state. When the plan carries an acceptance
+          // command, the roster finishing only completes the swarm after that command passed.
+          if (get().plan?.acceptance?.command && get().acceptanceStatus !== 'passed') {
+            if (get().acceptanceStatus === 'failed') {
+              // The coordinator finished without appending repair tasks after a failure - the
+              // "wave produced zero new tasks" short-circuit.
+              await get().escalateSwarm(projectPath, 'no_new_tasks');
+            } else if (get().acceptanceStatus === 'idle') {
+              // Never ran (e.g. state restored mid-acceptance): run it now; its result drives
+              // the next transition.
+              void get().runAcceptance(projectPath);
+            }
+            // 'running': the in-flight acceptance decides what happens next.
+            return;
+          }
           set({ status: 'completed' });
           await get().saveSwarmState(projectPath);
           return;

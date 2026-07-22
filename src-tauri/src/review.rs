@@ -369,7 +369,7 @@ pub(crate) fn run_shell_with_timeout(
     }
 }
 
-fn truncate_output(mut output: String) -> String {
+pub(crate) fn truncate_output(mut output: String) -> String {
     if output.len() > MAX_VERIFICATION_OUTPUT_BYTES {
         output.truncate(MAX_VERIFICATION_OUTPUT_BYTES);
         output.push_str("\n\n[Saple Bridge truncated verification output]\n");

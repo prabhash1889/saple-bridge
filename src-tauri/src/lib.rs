@@ -152,6 +152,7 @@ pub fn run() {
             swarm::read_handoff_file,
             swarm::write_handoff_file,
             swarm::validate_dependency_graph,
+            swarm::run_acceptance_command,
             files::list_project_files,
             files::read_text_file,
             files::write_text_file,

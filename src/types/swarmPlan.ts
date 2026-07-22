@@ -44,6 +44,28 @@ export interface SwarmPlan {
   tasks: PlanTask[];
 }
 
+// Phase 5 acceptance runner state. `passed` is the only state that lets the swarm complete when
+// the plan carries an acceptance command; a load reconciles a stale `running` back to `idle`.
+export type AcceptanceStatus = 'idle' | 'running' | 'passed' | 'failed';
+
+// Why Bridge stopped looping repair waves and handed the swarm to a human.
+export type EscalationReason = 'max_waves' | 'repeated_failure' | 'no_new_tasks';
+
+// Phase 5 structured escalation report. Written to `.saple/swarm/escalation.json` and persisted in
+// state.json so the (Phase 7) escalation panel can offer: one more wave / redirect / stop.
+export interface SwarmEscalation {
+  reason: EscalationReason;
+  wavesAttempted: number;
+  maxWaves: number;
+  acceptanceCommand?: string;
+  // Truncated output of the last failing acceptance run.
+  failureOutput?: string;
+  // Best-effort: the coordinator's structured-outcome summary at escalation time.
+  diagnosis?: string;
+  // Valid plan tasks written but not yet materialized - the coordinator's proposed next wave.
+  proposedTasks: { id: string; mission: string }[];
+}
+
 export type VerdictDecision = 'approve' | 'reject';
 
 // A reviewer's machine-read judgement on a reviewed task. Only `approve`/`reject` are accepted;
