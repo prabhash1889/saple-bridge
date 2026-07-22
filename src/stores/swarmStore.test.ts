@@ -773,3 +773,142 @@ describe('live coordinator (Phase 3)', () => {
     expect(useSwarmStore.getState().appliedPlanTaskIds).toEqual(['t1', 't2']);
   });
 });
+
+describe('automated review gate (Phase 4)', () => {
+  const mockSwarmFiles = (files: Record<string, unknown>) =>
+    invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'read_project_file') {
+        const content = files[args.filePath as string];
+        if (content === undefined) return Promise.reject(new Error('missing'));
+        return Promise.resolve(JSON.stringify(content));
+      }
+      return Promise.resolve(undefined);
+    });
+
+  // A reviewed task sitting done at its gate, with its reviewer about to deliver a verdict and a
+  // dependent waiting behind both.
+  const seedGate = (targetStatus: AgentStatus = 'done', targetExtra: Partial<SwarmAgent> = {}) => {
+    seed([
+      agent('builder-1', [], targetStatus, { taskId: 't1', ...targetExtra }),
+      agent('reviewer-1', ['builder-1'], 'running', {
+        role: 'reviewer',
+        reviewTaskId: 't1',
+        reviewTargetAgentId: 'builder-1',
+        terminalId: 'rev-pane',
+      }),
+      agent('dep-1', ['builder-1', 'reviewer-1'], 'waiting'),
+    ]);
+    useSwarmStore.setState({ autonomy: 'gated', appliedPlanTaskIds: ['t1'] });
+  };
+
+  it('a review:true plan task materializes a reviewer whose gate holds dependents', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ appliedPlanTaskIds: [], plan: null });
+    mockSwarmFiles({
+      '.saple/swarm/plan.json': {
+        version: 2,
+        tasks: [
+          { id: 'build', mission: 'build it', role: 'builder', review: true },
+          { id: 'ship', mission: 'ship it', role: 'builder', dependsOn: ['build'] },
+        ],
+      },
+    });
+
+    await useSwarmStore.getState().ingestPlan(PROJECT);
+
+    const agents = useSwarmStore.getState().activeAgents;
+    const builder = agents.find((a) => a.taskId === 'build')!;
+    const reviewer = agents.find((a) => a.reviewTaskId === 'build')!;
+    const ship = agents.find((a) => a.taskId === 'ship')!;
+    expect(reviewer.role).toBe('reviewer');
+    expect(reviewer.reviewTargetAgentId).toBe(builder.id);
+    expect(reviewer.dependencies).toEqual([builder.id]);
+    expect(reviewer.status).toBe('waiting');
+    // "done" for a reviewed task means built AND reviewed: dependents wait on the whole gate.
+    expect([...ship.dependencies].sort()).toEqual([builder.id, reviewer.id].sort());
+  });
+
+  it('an approve verdict unblocks dependents with zero human clicks', async () => {
+    seedGate();
+    mockSwarmFiles({ '.saple/swarm/verdicts/t1.json': { taskId: 't1', verdict: 'approve' } });
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'reviewer-1', 'done');
+
+    expect(getAgent('builder-1').status).toBe('done');
+    expect(getAgent('builder-1').lastVerdict).toBe('approve');
+    // The dependent's gate (builder + reviewer) is fully done, so the scheduler launches it.
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled());
+  });
+
+  it('a reject verdict auto-reworks the builder with feedback and re-arms the reviewer', async () => {
+    seedGate();
+    mockSwarmFiles({
+      '.saple/swarm/verdicts/t1.json': { taskId: 't1', verdict: 'reject', feedback: 'wrong storage' },
+    });
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'reviewer-1', 'done');
+
+    const builder = getAgent('builder-1');
+    expect(builder.attempt).toBe(2);
+    expect(builder.lastReviewFeedback).toBe('wrong storage');
+    expect(builder.lastVerdict).toBe('reject');
+    expect(builder.taskId).toBe('t1'); // the plan-task link survives the relaunch
+    // The reviewer drops back behind the new attempt instead of staying stale-done.
+    expect(getAgent('reviewer-1').status).toBe('waiting');
+    expect(getAgent('dep-1').status).toBe('waiting');
+    await vi.waitFor(() => expect(addPaneMock).toHaveBeenCalled()); // builder relaunched
+  });
+
+  it('a reject past the rework budget parks the builder for a human instead of looping', async () => {
+    seedGate('done', { attempt: 2, maxAttempts: 1 });
+    mockSwarmFiles({
+      '.saple/swarm/verdicts/t1.json': { taskId: 't1', verdict: 'reject', feedback: 'still wrong' },
+    });
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'reviewer-1', 'done');
+
+    expect(getAgent('builder-1').status).toBe('review');
+    expect(getAgent('builder-1').statusReason).toMatch(/rework budget/i);
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('a garbage verdict parks the reviewed task for a human — never guesses', async () => {
+    seedGate();
+    mockSwarmFiles({ '.saple/swarm/verdicts/t1.json': { taskId: 't1', verdict: 'maybe' } });
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'reviewer-1', 'done');
+
+    expect(getAgent('builder-1').status).toBe('review');
+    expect(getAgent('builder-1').statusReason).toMatch(/no readable verdict/i);
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('manual autonomy records the reject but leaves the transition to a human', async () => {
+    seedGate();
+    useSwarmStore.setState({ autonomy: 'manual' });
+    mockSwarmFiles({
+      '.saple/swarm/verdicts/t1.json': { taskId: 't1', verdict: 'reject', feedback: 'nope' },
+    });
+
+    await useSwarmStore.getState().updateAgentStatus(PROJECT, 'reviewer-1', 'done');
+
+    expect(getAgent('builder-1').status).toBe('review');
+    expect(getAgent('builder-1').lastVerdict).toBe('reject');
+    expect(getAgent('builder-1').attempt).toBeUndefined(); // no auto-rework in manual
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('the lenient watcher path never acts while the reviewer is still running', async () => {
+    seedGate();
+    mockSwarmFiles({
+      '.saple/swarm/verdicts/t1.json': { taskId: 't1', verdict: 'reject', feedback: 'early write' },
+    });
+
+    // Watcher event fires before the reviewer's completion marker: no strict flag, reviewer live.
+    await useSwarmStore.getState().ingestVerdict(PROJECT, 't1');
+
+    expect(getAgent('builder-1').status).toBe('done');
+    expect(getAgent('builder-1').attempt).toBeUndefined();
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+});

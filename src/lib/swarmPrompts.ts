@@ -108,6 +108,51 @@ ${marker
 `;
 };
 
+// Phase 4: the auto-generated review-gate reviewer. Its `systemPrompt` carries the reviewed
+// task's mission; the verdict file is the machine-read deliverable (parseVerdict is the trust
+// boundary on the other side).
+const buildReviewGatePrompt = (agent: SwarmAgent, ctx: PromptContext): string => {
+  const marker = agent.marker;
+  const verdictPath = `.saple/swarm/verdicts/${agent.reviewTaskId}.json`;
+  const outcomePath = `.saple/swarm/outcomes/${agent.reviewTargetAgentId}.json`;
+  return `# Swarm Review Gate Instructions
+
+**Swarm Mission:** ${ctx.mission || 'Coordinated swarm run'}
+**Agent Name:** ${agent.name}
+**Role:** reviewer
+**Agent ID:** ${agent.id}
+
+## Task Under Review
+Task \`${agent.reviewTaskId}\` was assigned:
+
+${agent.systemPrompt}
+
+## Your Job
+Judge whether the work actually satisfies that assignment. Do not take claims at face value:
+- Read the builder's structured outcome at \`${outcomePath}\` (it may be missing or wrong).
+- Inspect the actual changes (git diff / the touched files) and run any quick checks that apply.
+
+## Verdict Contract (machine-read — write this exact shape)
+Write your judgement as JSON to \`${verdictPath}\`:
+\`\`\`json
+{ "taskId": "${agent.reviewTaskId}", "verdict": "approve", "feedback": "required when rejecting: what is wrong and how to fix it" }
+\`\`\`
+Rules:
+- \`verdict\` must be exactly \`"approve"\` or \`"reject"\` — anything else parks the task for a human.
+- On \`reject\`, your \`feedback\` is embedded verbatim in the builder's relaunch prompt; make it actionable.
+- Write the file BEFORE emitting your completion marker.
+${skillsSectionFor(ctx.skills)}${contextSectionFor(ctx.contextFiles)}
+${contextBriefSection({ role: 'reviewer', agentId: agent.id })}
+## Completion Signals
+Emit EXACTLY ONE marker on its own line after the verdict file is written.${marker ? ` The \`:${marker}\` suffix identifies you — a signal without it is ignored, so include it verbatim.` : ''}
+${marker
+      ? `- Verdict written: \`[AGENT_DONE:${marker}]\`
+- Fatal failure (you could not review): \`[AGENT_FAILED:${marker}]\``
+      : `- Verdict written: \`[AGENT_DONE]\`
+- Fatal failure: \`[AGENT_FAILED]\``}
+`;
+};
+
 const buildWorkerPrompt = (agent: SwarmAgent, ctx: PromptContext): string => {
   // P4: a rejected agent relaunches with the reviewer's feedback front-and-centre so its retry
   // addresses the rejection rather than repeating the same work.
@@ -160,8 +205,11 @@ ${contextBriefSection({ role: agent.role, agentId: agent.id })}
 ${signalsSection}`;
 };
 
-// Build the launch prompt for a swarm agent. Coordinators get the plan-contract brief; every other
-// role gets the worker brief whose assignment is its own `systemPrompt` (the plan task's mission).
+// Build the launch prompt for a swarm agent. Coordinators get the plan-contract brief,
+// auto-generated review-gate reviewers get the verdict brief, and every other role gets the
+// worker brief whose assignment is its own `systemPrompt` (the plan task's mission).
 export function buildAgentPrompt(agent: SwarmAgent, ctx: PromptContext): string {
-  return agent.role === 'coordinator' ? buildCoordinatorPrompt(agent, ctx) : buildWorkerPrompt(agent, ctx);
+  if (agent.role === 'coordinator') return buildCoordinatorPrompt(agent, ctx);
+  if (agent.reviewTaskId) return buildReviewGatePrompt(agent, ctx);
+  return buildWorkerPrompt(agent, ctx);
 }

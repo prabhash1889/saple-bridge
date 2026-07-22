@@ -76,6 +76,7 @@ export const SwarmWorkspace: React.FC = () => {
   const postToMailbox = useSwarmStore((state) => state.postToMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
   const ingestPlan = useSwarmStore((state) => state.ingestPlan);
+  const ingestVerdict = useSwarmStore((state) => state.ingestVerdict);
   const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'graph' | 'grid'>('graph');
@@ -117,16 +118,21 @@ export const SwarmWorkspace: React.FC = () => {
     }
   }, [pendingWizardMission, setPendingWizardMission]);
 
-  // Plan intake fallback (Phase 2): the coordinator's plan marker is the primary trigger; if the
-  // room is open, re-ingest whenever the Rust watcher reports plan.json changed (belt and braces).
+  // Plan/verdict intake fallback (Phases 2/4): the agents' markers are the primary triggers; if
+  // the room is open, re-ingest whenever the Rust watcher reports the file changed (belt and
+  // braces). Verdict intake is lenient here — only the reviewer-completion path may park a task.
   useEffect(() => {
     if (!currentProjectPath || !swarmActive) return;
     const unsubscribe = subscribeSwarmEvents((event) => {
       if (event.projectPath !== currentProjectPath) return; // drop away-project events
       if (event.category === 'plan') void ingestPlan(currentProjectPath);
+      if (event.category === 'verdict') {
+        const match = event.relPath.replace(/\\/g, '/').match(/^verdicts\/(.+)\.json$/);
+        if (match) void ingestVerdict(currentProjectPath, match[1]);
+      }
     });
     return () => unsubscribe();
-  }, [currentProjectPath, swarmActive, ingestPlan]);
+  }, [currentProjectPath, swarmActive, ingestPlan, ingestVerdict]);
 
   // Drop any in-progress mailbox draft when the inspected agent changes so a message
   // typed for one agent isn't accidentally sent to another.

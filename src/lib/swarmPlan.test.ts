@@ -144,6 +144,20 @@ describe('parsePlan', () => {
   it('ignores a non-array tasks field', () => {
     expect(parsePlan({ tasks: 'not-an-array' }).tasks).toEqual([]);
   });
+
+  it('drops tasks whose ids are not filename-safe slugs (Phase 4 writes verdicts/<id>.json)', () => {
+    const plan = parsePlan({
+      tasks: [
+        task({ id: '../../evil', mission: 'path traversal' }),
+        task({ id: 'a/b', mission: 'separator' }),
+        task({ id: 'a\\b', mission: 'backslash' }),
+        task({ id: '.hidden', mission: 'leading dot' }),
+        task({ id: 'x'.repeat(65), mission: 'too long' }),
+        task({ id: 'ok_task-1.v2', mission: 'fine' }),
+      ],
+    });
+    expect(plan.tasks.map((t) => t.id)).toEqual(['ok_task-1.v2']);
+  });
 });
 
 describe('parseVerdict', () => {

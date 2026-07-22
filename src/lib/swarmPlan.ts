@@ -15,6 +15,11 @@ import type {
 const VALID_ROLES: AgentRole[] = ['coordinator', 'builder', 'scout', 'reviewer'];
 const VALID_STRATEGIES: TaskStrategy[] = ['single', 'debate'];
 
+// Task ids become filenames (Phase 4 writes/reads `verdicts/<id>.json`), so they must be plain
+// slugs: no separators, no leading dot, bounded length. A task with any other id is dropped —
+// same trust posture as a missing id.
+const TASK_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+
 const parseAcceptance = (raw: unknown): PlanAcceptance | null => {
   if (!raw || typeof raw !== 'object') return null;
   const a = raw as Record<string, unknown>;
@@ -30,6 +35,7 @@ const sanitizeTask = (item: unknown): PlanTask | null => {
   const id = typeof r.id === 'string' ? r.id.trim() : '';
   const mission = typeof r.mission === 'string' ? r.mission.trim() : '';
   if (!id || !mission) return null; // missing id/mission drops the task
+  if (!TASK_ID_RE.test(id)) return null; // id is used as a filename — unsafe ids drop the task
 
   const role = VALID_ROLES.includes(r.role as AgentRole) ? (r.role as AgentRole) : 'builder';
   // `auto` is the default; an explicit provider string is kept verbatim for the Phase 6 assigner.

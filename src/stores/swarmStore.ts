@@ -6,13 +6,13 @@ import { enqueueWrite } from '../lib/writeQueue';
 import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
-import type { SwarmPlan, AutonomyMode } from '../types/swarmPlan';
+import type { SwarmPlan, AutonomyMode, Verdict, VerdictDecision } from '../types/swarmPlan';
 import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
-import { parsePlan, diffPlan } from '../lib/swarmPlan';
+import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
 import { buildAgentPrompt } from '../lib/swarmPrompts';
 import { buildResultsDigest, type DigestEntry } from '../lib/swarmDigest';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
@@ -49,6 +49,13 @@ export interface SwarmAgent {
   attempt?: number;
   maxAttempts?: number;
   lastReviewFeedback?: string;
+  // Phase 4 automated review gate. On an auto-generated reviewer: `reviewTaskId` is the plan task
+  // it judges (its verdict contract file is `verdicts/<reviewTaskId>.json`) and
+  // `reviewTargetAgentId` is the materialized agent that built that task. On the reviewed agent:
+  // `lastVerdict` is the last machine-read verdict Bridge processed for its task.
+  reviewTaskId?: string;
+  reviewTargetAgentId?: string;
+  lastVerdict?: VerdictDecision;
   // Ms epoch stamped when the agent last went `running`, for the elapsed-time badge (P9). Persisted
   // in state.json so the duration survives room/project switches and restart; re-stamped on relaunch.
   startedAt?: number;
@@ -132,6 +139,13 @@ interface SwarmState {
   // agents wired by dependency. Idempotent (dedup on `appliedPlanTaskIds`); safe to call from the
   // coordinator's plan marker, the plan.json watcher event, or coordinator completion.
   ingestPlan: (projectPath: string) => Promise<void>;
+  // Phase 4: machine-read `verdicts/<taskId>.json` and drive the review gate without a human
+  // click: approve records the verdict (the finished reviewer already unblocks dependents),
+  // reject auto-reworks the builder with the feedback (bounded by its attempt budget; `manual`
+  // autonomy parks instead), and a missing/garbage verdict parks the task for a human — but only
+  // on the strict (reviewer-completion) path. The verdict watcher event calls it lenient
+  // (`strict` unset) so a mid-review file touch can never park or rework anything early.
+  ingestVerdict: (projectPath: string, taskId: string, options?: { strict?: boolean }) => Promise<void>;
   // Phase 3: deliver a results digest to the coordinator. Records it in `digestLog`, then either
   // injects it into the live coordinator's PTY as a typed user turn (injection-capable provider,
   // pane alive — queued until the pane is idle), or relaunches the coordinator with the digest
@@ -492,6 +506,11 @@ const collectDigestEntries = async (projectPath: string): Promise<DigestEntry[]>
   );
 };
 
+// Phase 4: serializes ingestVerdict per task. The reviewer-completion (strict) trigger and the
+// verdicts/* watcher event can fire for the same file back to back; without this, both could read
+// the same reject and rework the builder twice.
+const verdictsInFlight = new Set<string>();
+
 // Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
 // updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
 // launch the same agent's PTY + prompt file twice. Concurrent triggers coalesce into one queued
@@ -538,6 +557,16 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
       content: '{}',
     }).catch(() => {});
 
+    // Phase 4: a review-gate reviewer must never have its verdict read from a previous review
+    // round, so clear it on every (re)launch. `{}` parses to "no verdict" (parseVerdict → null).
+    if (agent.reviewTaskId) {
+      await invoke('write_project_file', {
+        projectPath,
+        filePath: `.saple/swarm/verdicts/${agent.reviewTaskId}.json`,
+        content: '{}',
+      }).catch(() => {});
+    }
+
     // 1. Spawn terminal pane. spawn_pty launches the provider CLI with this prompt
     // file piped in, so no separate launch command is written to the PTY.
     const provider = agent.provider || 'codex';
@@ -559,8 +588,10 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
       name: `${agent.name} (${agent.role.toUpperCase()})`
     });
 
-    // 3. Link agent status to terminal ID and set session ID
-    const session = await useAgentSessionStore.getState().createSession({
+    // 3. Record the canonical run session. It is linked back to the agent by terminal pane
+    // (getSessionByTerminalId) — `taskId` stays the PLAN task id (verdict routing + cross-wave
+    // dependency mapping key), never the session id.
+    await useAgentSessionStore.getState().createSession({
       projectPath,
       name: agent.name,
       cwd: projectPath,
@@ -571,7 +602,7 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
       terminalId: paneId,
     });
 
-    await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, taskId: session.id, startedAt: Date.now() });
+    await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, startedAt: Date.now() });
   } catch (error) {
     console.error(`Failed to launch agent ${agent.id}:`, error);
     await updateAgentStatus(projectPath, agent.id, 'failed', { statusReason: `Launch failed: ${error}` });
@@ -927,35 +958,66 @@ export const useSwarmStore = create<SwarmState>()(
           return;
         }
 
-        // Map plan task ids -> agent ids. Seed with tasks already materialized in earlier waves,
-        // then pre-assign ids for this batch so a task depending on a sibling later in the same
-        // plan still resolves (parsePlan preserves input order, not topological order).
-        const taskToAgent = new Map<string, string>();
-        for (const a of get().activeAgents) if (a.taskId) taskToAgent.set(a.taskId, a.id);
-        const ids = newTasks.map(() => createId('agent'));
-        newTasks.forEach((task, i) => taskToAgent.set(task.id, ids[i]));
+        // Map plan task ids -> the agent ids a dependent must wait for. A `review: true` task's
+        // gate is [builder, reviewer] (Phase 4): "done" means built AND the review gate finished,
+        // so dependents hold until the verdict is processed. Seed with agents already materialized
+        // in earlier waves, then pre-assign ids for this batch so a task depending on a sibling
+        // later in the same plan still resolves (parsePlan preserves input order, not topological
+        // order).
+        const taskGate = new Map<string, string[]>();
+        for (const a of get().activeAgents) {
+          const key = a.taskId ?? a.reviewTaskId;
+          if (key) taskGate.set(key, [...(taskGate.get(key) ?? []), a.id]);
+        }
+        const builderIds = newTasks.map(() => createId('agent'));
+        const reviewerIds = newTasks.map((t) => (t.review ? createId('agent') : null));
+        newTasks.forEach((task, i) => {
+          const reviewerId = reviewerIds[i];
+          taskGate.set(task.id, reviewerId ? [builderIds[i], reviewerId] : [builderIds[i]]);
+        });
 
         // `provider: "auto"` resolves to the coordinator's provider for now (the Phase 6 subscription
         // assigner refines this); an explicit provider is kept verbatim.
         const coordinatorProvider = get().activeAgents.find((a) => a.role === 'coordinator')?.provider;
 
-        const materialized: SwarmAgent[] = newTasks.map((task, i) => {
-          const dependencies = task.dependsOn
-            .map((d) => taskToAgent.get(d))
-            .filter((x): x is string => !!x);
-          return {
-            id: ids[i],
+        const materialized: SwarmAgent[] = [];
+        newTasks.forEach((task, i) => {
+          const dependencies = task.dependsOn.flatMap((d) => taskGate.get(d) ?? []);
+          const provider =
+            task.provider === 'auto' ? coordinatorProvider : (task.provider as AgentProvider);
+          materialized.push({
+            id: builderIds[i],
             taskId: task.id,
             name: `${task.role.charAt(0).toUpperCase()}${task.role.slice(1)}: ${task.id}`,
             role: task.role,
-            provider: task.provider === 'auto' ? coordinatorProvider : (task.provider as AgentProvider),
+            provider,
             model: task.model,
             systemPrompt: task.mission,
             dependencies,
             marker: createMarker(),
             maxAttempts: 1,
             status: dependencies.length > 0 ? 'waiting' : 'idle',
-          };
+          });
+          // Phase 4: one review-gate reviewer per `review: true` task, depending on it. Its
+          // systemPrompt carries the mission under review; buildAgentPrompt frames the rest
+          // (outcome path, verdict contract, markers).
+          const reviewerId = reviewerIds[i];
+          if (reviewerId) {
+            materialized.push({
+              id: reviewerId,
+              reviewTaskId: task.id,
+              reviewTargetAgentId: builderIds[i],
+              name: `Reviewer: ${task.id}`,
+              role: 'reviewer',
+              provider,
+              model: task.model,
+              systemPrompt: task.mission,
+              dependencies: [builderIds[i]],
+              marker: createMarker(),
+              maxAttempts: 1,
+              status: 'waiting',
+            });
+          }
         });
 
         set((state) => ({
@@ -970,6 +1032,86 @@ export const useSwarmStore = create<SwarmState>()(
         }));
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
+      },
+
+      ingestVerdict: async (projectPath, taskId, options = {}) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        if (verdictsInFlight.has(taskId)) return;
+        verdictsInFlight.add(taskId);
+        try {
+          const target = get().activeAgents.find((a) => a.taskId === taskId);
+          const reviewer = get().activeAgents.find((a) => a.reviewTaskId === taskId);
+          if (!target) return;
+          // A verdict only becomes actionable once its reviewer has finished — a watcher event
+          // can fire while the reviewer is mid-run, and reworking under a live reviewer would
+          // orphan its pane and double-launch it.
+          if (reviewer && !FINISHED_AGENT_STATUSES.includes(reviewer.status)) return;
+
+          let verdict: Verdict | null = null;
+          try {
+            const raw = await invoke<string>('read_project_file', {
+              projectPath,
+              filePath: `.saple/swarm/verdicts/${taskId}.json`,
+            });
+            verdict = parseVerdict(JSON.parse(raw));
+          } catch {
+            verdict = null; // missing/unreadable — handled below
+          }
+
+          if (!verdict || verdict.taskId !== taskId) {
+            // Missing or garbage verdict: park for a human, never guess — but only on the strict
+            // (reviewer-completion) path and only while the build is done awaiting its gate. The
+            // lenient watcher path ignores it (the reviewer may simply not have written yet).
+            if (options.strict && target.status === 'done') {
+              await get().updateAgentStatus(projectPath, target.id, 'review', {
+                statusReason: 'Reviewer produced no readable verdict — approve or rework manually.',
+              });
+            }
+            return;
+          }
+
+          if (verdict.verdict === 'approve') {
+            // The reviewed task counts as approved; dependents unblock through the gate (they
+            // depend on both the builder and the now-done reviewer). No transition needed.
+            if (target.lastVerdict !== 'approve') {
+              set((state) => ({
+                activeAgents: state.activeAgents.map((a) =>
+                  a.id === target.id ? { ...a, lastVerdict: 'approve' as VerdictDecision } : a,
+                ),
+              }));
+              await get().saveSwarmState(projectPath);
+            }
+            return;
+          }
+
+          // Reject. Only actionable while the build sits done at its gate — after a rework it is
+          // starting/running and a re-delivered event must not rework it twice.
+          if (target.status !== 'done') return;
+          const feedback =
+            verdict.feedback?.trim() || 'Reviewer rejected the work (no feedback given).';
+          set((state) => ({
+            activeAgents: state.activeAgents.map((a) =>
+              a.id === target.id ? { ...a, lastVerdict: 'reject' as VerdictDecision } : a,
+            ),
+          }));
+          if (get().autonomy === 'manual') {
+            // Debug mode: record the verdict but leave every transition to a human click.
+            await get().updateAgentStatus(projectPath, target.id, 'review', {
+              statusReason: `Reviewer rejected: ${feedback}`,
+            });
+            return;
+          }
+          const result = await get().reworkAgent(projectPath, target.id, feedback);
+          if (!result.ok && result.limitReached) {
+            // Budget exhausted: the existing human escalation UI (approve / force-rework) takes
+            // over from the parked-in-review card.
+            await get().updateAgentStatus(projectPath, target.id, 'review', {
+              statusReason: `Reviewer rejected and the rework budget (${result.maxAttempts}) is spent: ${feedback}`,
+            });
+          }
+        } finally {
+          verdictsInFlight.delete(taskId);
+        }
       },
 
       notifyCoordinator: async (projectPath, digest, options = {}) => {
@@ -1158,6 +1300,16 @@ export const useSwarmStore = create<SwarmState>()(
             void get().notifyCoordinator(projectPath, digest, { relaunch: false });
           }
         }
+        // Phase 4: a review-gate reviewer finishing means its verdict is on disk — machine-read
+        // it now (strict: a missing/garbage verdict parks the reviewed task for a human).
+        if (
+          previousAgent?.reviewTaskId &&
+          previousAgent.status !== effectiveStatus &&
+          effectiveStatus === 'done' &&
+          get().swarmActive
+        ) {
+          await get().ingestVerdict(projectPath, previousAgent.reviewTaskId, { strict: true });
+        }
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
       },
@@ -1310,13 +1462,25 @@ export const useSwarmStore = create<SwarmState>()(
         const agent = get().activeAgents.find(a => a.id === agentId);
         if (!agent) return;
 
+        // Phase 4: relaunching a reviewed task re-arms its finished review gate. The reviewer must
+        // judge the NEW attempt, so it drops back to 'waiting' behind the relaunched builder (the
+        // scheduler re-runs it — with a cleared verdict file — once the builder is done again).
+        // This lives here, not in the auto-rework path, so a manual rework/relaunch re-arms too.
+        const gateReviewer = get().activeAgents.find(
+          (a) => a.reviewTargetAgentId === agentId && FINISHED_AGENT_STATUSES.includes(a.status),
+        );
+
         // Reset state BEFORE killing the old terminal: the kill fires a pty-exit event, and the
         // exit fallback in terminalStore must not find this agent still linked to the dying pane
         // (it would mark it failed mid-relaunch). Clearing terminalId first makes that lookup miss.
+        // `taskId` (the plan task link) survives the relaunch — verdict routing keys on it.
         set(state => {
           const resetAgents = state.activeAgents.map(a => {
             if (a.id === agentId) {
-              return { ...a, status: 'starting' as AgentStatus, terminalId: undefined, taskId: undefined, statusReason: undefined };
+              return { ...a, status: 'starting' as AgentStatus, terminalId: undefined, statusReason: undefined };
+            }
+            if (gateReviewer && a.id === gateReviewer.id) {
+              return { ...a, status: 'waiting' as AgentStatus, terminalId: undefined, statusReason: undefined };
             }
             // If another agent had a dependency on this one and was blocked, reset it to waiting/idle
             if (a.status === 'blocked' && a.dependencies.includes(agentId)) {
@@ -1327,9 +1491,10 @@ export const useSwarmStore = create<SwarmState>()(
           return { activeAgents: resetAgents };
         });
 
-        if (agent.terminalId) {
+        for (const paneId of [agent.terminalId, gateReviewer?.terminalId]) {
+          if (!paneId) continue;
           try {
-            await useTerminalStore.getState().removePane(agent.terminalId);
+            await useTerminalStore.getState().removePane(paneId);
           } catch (e) {
             console.error('Failed to kill terminal on relaunch:', e);
           }
