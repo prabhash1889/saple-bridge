@@ -111,8 +111,6 @@ export const WorkspaceTab: React.FC = () => {
             <label className="input-label">Memory Mode</label>
             <select value={memoryMode} onChange={e => setMemoryMode(e.target.value as 'saple' | 'bridge-compatible' | 'both')} className="settings-select">
               <option value="saple">Saple (.saple/memory)</option>
-              <option value="bridge-compatible">Bridge-compatible (.bridgememory)</option>
-              <option value="both">Both</option>
             </select>
           </div>
           <div className="input-group">
