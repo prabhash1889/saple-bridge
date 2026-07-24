@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saple Bridge - Swarm Redesign</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --bg-soft: #12151d;
+    --card: #161a24;
+    --card-2: #1b2030;
+    --border: #262c3d;
+    --text: #e8ebf2;
+    --text-2: #9aa3b5;
+    --muted: #6b7387;
+    --accent: #6c8cff;
+    --accent-soft: rgba(108,140,255,.12);
+    --green: #4ade80;
+    --green-soft: rgba(74,222,128,.12);
+    --amber: #fbbf24;
+    --amber-soft: rgba(251,191,36,.12);
+    --red: #f87171;
+    --red-soft: rgba(248,113,113,.12);
+    --cyan: #22d3ee;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px; }
+
+  /* ---------- hero ---------- */
+  header {
+    padding: 88px 0 64px;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% -10%, rgba(108,140,255,.18), transparent),
+      radial-gradient(ellipse 40% 40% at 85% 10%, rgba(34,211,238,.07), transparent);
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+  .eyebrow {
+    display: inline-block; font-size: 12px; letter-spacing: 2.5px; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft); border: 1px solid rgba(108,140,255,.3);
+    padding: 5px 14px; border-radius: 999px; margin-bottom: 22px; font-weight: 600;
+  }
+  h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 800; letter-spacing: -1px; }
+  h1 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { max-width: 640px; margin: 18px auto 0; color: var(--text-2); font-size: 17px; }
+  .hero-flow {
+    margin: 40px auto 0; display: flex; flex-wrap: wrap; justify-content: center;
+    gap: 8px; align-items: center; font-family: var(--mono); font-size: 13px;
+  }
+  .hero-flow .step {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 13px; color: var(--text);
+  }
+  .hero-flow .step.hot { border-color: rgba(108,140,255,.5); color: var(--accent); background: var(--accent-soft); }
+  .hero-flow .arr { color: var(--muted); }
+
+  /* ---------- sections ---------- */
+  section { padding: 64px 0; border-bottom: 1px solid var(--border); }
+  .sec-label {
+    font-size: 12px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--accent);
+    font-weight: 700; margin-bottom: 10px;
+  }
+  h2 { font-size: 28px; font-weight: 750; letter-spacing: -.5px; margin-bottom: 8px; }
+  .sec-desc { color: var(--text-2); max-width: 680px; margin-bottom: 34px; }
+
+  /* ---------- today vs after ---------- */
+  .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .vs { grid-template-columns: 1fr; } }
+  .vs-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 26px; }
+  .vs-card.after { border-color: rgba(108,140,255,.35); background: linear-gradient(180deg, rgba(108,140,255,.06), var(--card)); }
+  .vs-card h3 { font-size: 15px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .pill { font-size: 11px; padding: 2px 10px; border-radius: 999px; font-weight: 700; letter-spacing: 1px; }
+  .pill.now { background: var(--amber-soft); color: var(--amber); }
+  .pill.next { background: var(--green-soft); color: var(--green); }
+  .vs-card ul { list-style: none; }
+  .vs-card li { padding: 8px 0 8px 26px; position: relative; color: var(--text-2); font-size: 14.5px; border-bottom: 1px dashed rgba(38,44,61,.6); }
+  .vs-card li:last-child { border-bottom: none; }
+  .vs-card li::before { position: absolute; left: 0; top: 8px; font-weight: 700; }
+  .vs-card.today li::before { content: "×"; color: var(--amber); }
+  .vs-card.after li::before { content: "✓"; color: var(--green); }
+  .vs-card li strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- lifecycle diagram ---------- */
+  .life { display: flex; flex-direction: column; gap: 0; max-width: 720px; margin: 0 auto; }
+  .life-row { display: flex; gap: 14px; align-items: stretch; }
+  .life-node {
+    flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; position: relative;
+  }
+  .life-node .who {
+    font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 700; margin-bottom: 4px;
+  }
+  .who.you { color: var(--cyan); } .who.coord { color: var(--accent); }
+  .who.bridge { color: var(--text-2); } .who.workers { color: var(--green); }
+  .who.reviewer { color: var(--amber); }
+  .life-node .what { font-size: 14.5px; color: var(--text); }
+  .life-node .det { font-size: 12.5px; color: var(--muted); margin-top: 3px; font-family: var(--mono); }
+  .life-link { display: flex; justify-content: center; padding: 4px 0; color: var(--muted); font-size: 18px; line-height: 1; }
+  .life-node.loop { border-color: rgba(248,113,113,.4); background: linear-gradient(180deg, var(--red-soft), var(--card)); }
+  .life-node.done { border-color: rgba(74,222,128,.4); background: linear-gradient(180deg, var(--green-soft), var(--card)); }
+  .branch { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .branch { grid-template-columns: 1fr; } }
+  .branch-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-bottom: 6px; text-transform: uppercase; }
+
+  /* ---------- contracts ---------- */
+  .cards3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  .ct-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .ct-card h3 { font-size: 15px; margin-bottom: 4px; font-family: var(--mono); color: var(--accent); }
+  .ct-card .owner { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  pre {
+    background: #0d1017; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px; overflow-x: auto; font-family: var(--mono); font-size: 12px;
+    color: #c7d0e0; line-height: 1.55;
+  }
+  pre .k { color: var(--cyan); } pre .s { color: #a5d6a7; } pre .c { color: var(--muted); }
+  .ct-note { font-size: 13px; color: var(--text-2); margin-top: 12px; }
+  .ct-note code { font-family: var(--mono); font-size: 12px; background: var(--bg-soft); padding: 1px 6px; border-radius: 5px; color: var(--amber); }
+
+  /* ---------- what you do ---------- */
+  .you3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+  .you-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px;
+    position: relative;
+  }
+  .you-num {
+    width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft);
+    color: var(--accent); display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 16px; margin-bottom: 14px; border: 1px solid rgba(108,140,255,.3);
+  }
+  .you-card h3 { font-size: 16px; margin-bottom: 6px; }
+  .you-card p { font-size: 13.5px; color: var(--text-2); }
+  .derived { margin-top: 28px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 14px; padding: 22px 26px; }
+  .derived h4 { font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+  .derived-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 26px; }
+  .derived-item { font-size: 13.5px; color: var(--text-2); padding-left: 20px; position: relative; }
+  .derived-item::before { content: "⚙"; position: absolute; left: 0; color: var(--accent); }
+  .derived-item strong { color: var(--text); }
+
+  /* ---------- phases timeline ---------- */
+  .timeline { position: relative; padding-left: 34px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 11px; top: 8px; bottom: 8px; width: 2px;
+    background: linear-gradient(180deg, var(--accent), var(--cyan), var(--green));
+    opacity: .45;
+  }
+  .ph { position: relative; padding-bottom: 26px; }
+  .ph:last-child { padding-bottom: 0; }
+  .ph::before {
+    content: ""; position: absolute; left: -30px; top: 7px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--bg); border: 3px solid var(--accent);
+  }
+  .ph.pivot::before { background: var(--accent); }
+  .ph-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .ph-tag { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 700; }
+  .ph h3 { font-size: 17px; }
+  .ph .badge { font-size: 10.5px; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 700; letter-spacing: 1px; }
+  .ph p { color: var(--text-2); font-size: 14px; margin-top: 5px; max-width: 760px; }
+  .ph .win { margin-top: 7px; font-size: 12.5px; color: var(--green); }
+  .ph .win::before { content: "✓ done when: "; font-weight: 700; }
+
+  /* ---------- guardrails ---------- */
+  .guard { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+  .g-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .g-card h3 { font-size: 15px; margin-bottom: 8px; }
+  .g-card h3::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); margin-right: 9px; }
+  .g-card p { font-size: 13.5px; color: var(--text-2); }
+
+  footer { padding: 40px 0 56px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer code { font-family: var(--mono); color: var(--text-2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Saple Bridge · Swarm v2</div>
+    <h1>From launcher to <span class="grad">real orchestration</span></h1>
+    <p class="sub">
+      Today you hand-build the roster and hope the agents cooperate.
+      After the redesign, you state a mission - the coordinator plans, staffs,
+      reviews, verifies, and repairs until the result actually works.
+      All on your existing CLI subscriptions.
+    </p>
+    <div class="hero-flow">
+      <span class="step">mission</span><span class="arr">→</span>
+      <span class="step hot">plan</span><span class="arr">→</span>
+      <span class="step">build</span><span class="arr">→</span>
+      <span class="step">review</span><span class="arr">→</span>
+      <span class="step">integrate</span><span class="arr">→</span>
+      <span class="step hot">verify</span><span class="arr">→</span>
+      <span class="step">repair*</span><span class="arr">→</span>
+      <span class="step">done</span>
+    </div>
+  </div>
+</header>
+
+<section id="vs">
+  <div class="wrap">
+    <div class="sec-label">The change</div>
+    <h2>Today vs after</h2>
+    <p class="sec-desc">The execution substrate (PTY terminals, lifecycle markers, crash recovery) is solid and stays. The orchestration brain is what gets built.</p>
+    <div class="vs">
+      <div class="vs-card today">
+        <h3><span class="pill now">Today</span> Static launcher</h3>
+        <ul>
+          <li><strong>You</strong> design the team: count, roles, models, dependencies - in a 6-step wizard, before any AI reads the code.</li>
+          <li>The coordinator's "plan" (<strong>tasks.json</strong>) is prompt convention. Nothing parses it.</li>
+          <li>Reviewer runs after builders but <strong>cannot reject</strong> their work - only you can, by clicking Rework.</li>
+          <li>New workers mid-run need <strong>your manual approval</strong>, every time.</li>
+          <li>"Completed" = every agent printed its done-marker. <strong>Nobody checks it works.</strong></li>
+          <li>No final combined answer.</li>
+        </ul>
+      </div>
+      <div class="vs-card after">
+        <h3><span class="pill next">After</span> Plan-driven orchestrator</h3>
+        <ul>
+          <li><strong>You</strong> give a mission + limits. The coordinator explores the repo and writes the plan.</li>
+          <li><strong>plan.json drives the scheduler.</strong> Tasks, roles, and dependencies are machine-read and executed.</li>
+          <li>Reviewer verdicts <strong>automatically bounce bad work back</strong> to the builder with feedback (bounded).</li>
+          <li>The coordinator grows the plan mid-run; within your budget it's <strong>hands-free</strong>.</li>
+          <li>"Completed" = the <strong>acceptance check passed</strong> (tests green, build compiles) - verified, not narrated.</li>
+          <li>A synthesis turn produces the <strong>final report</strong>; failures trigger repair waves.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="lifecycle">
+  <div class="wrap">
+    <div class="sec-label">How it will work</div>
+    <h2>One mission, end to end</h2>
+    <p class="sec-desc">Every arrow below is code - events and validated file contracts - not prompt text and hope.</p>
+
+    <div class="life">
+      <div class="life-row"><div class="life-node">
+        <div class="who you">You</div>
+        <div class="what">Type the mission, set limits, pick autonomy</div>
+        <div class="det">parallel cap · wave budget · manual / gated / auto</div>
+      </div></div>
+      <div class="life-link">↓</div>
+      <div class="life-row"><div class="life-node">
+        <div class="who coord">Coordinator CLI</div>
+        <div class="what">Explores the repo, decomposes the mission, writes the plan</div>
+        <div class="det">plan.json + acceptance check → [PLAN_READY:token]</div>
+      </div></div>
+      <div class="life-link">↓</div>
+      <div class="life-row"><div class="life-node">
+        <div class="who bridge">Bridge</div>
+        <div class="what">Sanitizes the plan, shows you the proposed team, spawns workers</div>
+        <div class="det">one CLI per task · providers auto-picked from signed-in subscriptions</div>
+      </div></div>
+      <div class="life-link">↓</div>
+      <div class="life-row"><div class="life-node">
+        <div class="who workers">Worker CLIs (parallel)</div>
+        <div class="what">Each executes its assigned subtask, reports a structured outcome</div>
+        <div class="det">outcomes/&lt;id&gt;.json → [AGENT_DONE:token] · caught in seconds</div>
+      </div></div>
+      <div class="life-link">↓</div>
+      <div class="life-row"><div class="life-node">
+        <div class="who reviewer">Reviewer CLI</div>
+        <div class="what">Checks each result against the task + diff, records a verdict</div>
+        <div class="det">verdicts/&lt;task&gt;.json · reject → auto-rework with feedback (bounded)</div>
+      </div></div>
+      <div class="life-link">↓</div>
+      <div class="life-row"><div class="life-node">
+        <div class="who coord">Coordinator (resumed, full memory)</div>
+        <div class="what">Synthesis turn: merges all approved results, then runs the acceptance check for real</div>
+        <div class="det">claude --resume / codex resume · npm test / build / smoke script</div>
+      </div></div>
+      <div class="life-link">↓</div>
+      <div class="life-row"><div class="branch" style="flex:1">
+        <div>
+          <div class="branch-label" style="color:var(--green)">Check passes</div>
+          <div class="life-node done">
+            <div class="who workers">Done</div>
+            <div class="what">Final report written, swarm completed</div>
+            <div class="det">completed = verified, not narrated</div>
+          </div>
+        </div>
+        <div>
+          <div class="branch-label" style="color:var(--red)">Check fails</div>
+          <div class="life-node loop">
+            <div class="who coord">Repair wave</div>
+            <div class="what">Coordinator diagnoses, appends targeted fix-tasks to the plan</div>
+            <div class="det">[PLAN_UPDATED:token] → same build/review loop · max 3 waves → escalate to you</div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<section id="contracts">
+  <div class="wrap">
+    <div class="sec-label">The glue</div>
+    <h2>Three small contracts</h2>
+    <p class="sec-desc">Agents are subscription CLIs - Bridge can't force their output, so every contract is sanitized on read. Malformed data is dropped or escalated to you. Never trusted, never hung.</p>
+    <div class="cards3">
+      <div class="ct-card">
+        <h3>plan.json</h3>
+        <div class="owner">written by coordinator · parsed by Bridge</div>
+<pre>{
+  <span class="k">"acceptance"</span>: { <span class="k">"command"</span>: <span class="s">"npm test"</span> },
+  <span class="k">"tasks"</span>: [{
+    <span class="k">"id"</span>: <span class="s">"fe_auth"</span>,
+    <span class="k">"mission"</span>: <span class="s">"Login form + token storage"</span>,
+    <span class="k">"role"</span>: <span class="s">"builder"</span>,
+    <span class="k">"dependsOn"</span>: [<span class="s">"design"</span>],
+    <span class="k">"review"</span>: <span class="k">true</span>
+  }]
+}</pre>
+        <p class="ct-note">The living DAG. Appending tasks mid-run is one primitive covering both dynamic growth and repair waves.</p>
+      </div>
+      <div class="ct-card">
+        <h3>verdicts/&lt;task&gt;.json</h3>
+        <div class="owner">written by reviewer · acted on by Bridge</div>
+<pre>{
+  <span class="k">"taskId"</span>: <span class="s">"fe_auth"</span>,
+  <span class="k">"verdict"</span>: <span class="s">"reject"</span>,
+  <span class="k">"feedback"</span>: <span class="s">"token in localStorage,
+               move to keychain"</span>
+}</pre>
+        <p class="ct-note">Reject → Bridge relaunches that builder with the feedback, automatically, within the attempt budget you set.</p>
+      </div>
+      <div class="ct-card">
+        <h3>outcomes/&lt;agent&gt;.json</h3>
+        <div class="owner">written by each worker · already exists today</div>
+<pre>{
+  <span class="k">"summary"</span>: <span class="s">"login form done"</span>,
+  <span class="k">"changedFiles"</span>: [<span class="s">"src/Login.tsx"</span>],
+  <span class="k">"tests"</span>: { <span class="k">"command"</span>: <span class="s">"npm test"</span>,
+             <span class="k">"passed"</span>: <span class="k">true</span> }
+}</pre>
+        <p class="ct-note">Feeds the reviewer, the coordinator's synthesis turn, and the run records you already see in Review.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="you">
+  <div class="wrap">
+    <div class="sec-label">Your side of it</div>
+    <h2>You provide three things</h2>
+    <p class="sec-desc">The 6-step roster wizard becomes the advanced path. The default path:</p>
+    <div class="you3">
+      <div class="you-card">
+        <div class="you-num">1</div>
+        <h3>Mission</h3>
+        <p>What you want done, in your words. The coordinator reads the actual repo before deciding anything.</p>
+      </div>
+      <div class="you-card">
+        <div class="you-num">2</div>
+        <h3>Limits</h3>
+        <p>Max parallel agents, repair-wave budget, and the autonomy dial: approve everything, approve the plan only, or fully auto.</p>
+      </div>
+      <div class="you-card">
+        <div class="you-num">3</div>
+        <h3>Provider preferences <span style="color:var(--muted);font-weight:400">(optional)</span></h3>
+        <p>"Coordinator on Claude, builders on Codex" - or nothing, and Bridge uses whatever CLIs are signed in.</p>
+      </div>
+    </div>
+    <div class="derived">
+      <h4>Everything you configure by hand today gets derived</h4>
+      <div class="derived-grid">
+        <div class="derived-item"><strong>Agent count</strong> - from how many parallelizable tasks the plan really has</div>
+        <div class="derived-item"><strong>Roles + dependencies</strong> - from the plan's task graph</div>
+        <div class="derived-item"><strong>Provider per agent</strong> - from your signed-in subscriptions, spread to dodge rate limits</div>
+        <div class="derived-item"><strong>Model per agent</strong> - sensible default per role, one global override</div>
+        <div class="derived-item"><strong>System prompts</strong> - generated from each task assignment itself</div>
+        <div class="derived-item"><strong>Mid-run staffing</strong> - coordinator adds workers within your limits</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="phases">
+  <div class="wrap">
+    <div class="sec-label">Build order</div>
+    <h2>Seven phases, each shippable</h2>
+    <p class="sec-desc">Manual mode keeps working the whole way through - it is the permanent fallback and the advanced path. Full detail in <code style="font-family:var(--mono)">swarm-redesign.md</code>.</p>
+    <div class="timeline">
+      <div class="ph">
+        <div class="ph-head"><span class="ph-tag">Phase 0</span><h3>Contracts &amp; parsers</h3></div>
+        <p>Plan/verdict types, sanitizers, plan markers, full test coverage. Pure library code, zero behavior change.</p>
+        <div class="win">every malformed-input path has a test</div>
+      </div>
+      <div class="ph pivot">
+        <div class="ph-head"><span class="ph-tag">Phase 1</span><h3>Plan-driven scheduler</h3><span class="badge">THE PIVOT</span></div>
+        <p>Swarm starts with the coordinator alone. Its plan.json materializes workers through the existing scheduler. The plan becomes the assignment; tasks.json convention dies.</p>
+        <div class="win">mission in → coordinator plans → workers spawn from the plan → cascade completes</div>
+      </div>
+      <div class="ph">
+        <div class="ph-head"><span class="ph-tag">Phase 2</span><h3>Automated review gate</h3></div>
+        <p>Review tasks auto-generated per plan task. Verdict files drive approve/reject; rejection auto-reworks the builder with feedback. Autonomy dial added.</p>
+        <div class="win">a rejection relaunches the builder with no human click</div>
+      </div>
+      <div class="ph">
+        <div class="ph-head"><span class="ph-tag">Phase 3</span><h3>Coordinator wake &amp; synthesis</h3></div>
+        <p>Session resume (claude --resume / codex resume, digest fallback for all providers). Coordinator reacts to results with full memory; synthesis turn writes the final report.</p>
+        <div class="win">coordinator demonstrably reacts to worker results with prior context</div>
+      </div>
+      <div class="ph">
+        <div class="ph-head"><span class="ph-tag">Phase 4</span><h3>Acceptance &amp; repair waves</h3></div>
+        <p>The acceptance command must actually pass. Failure → targeted fix-tasks → new wave. Wave budget, no-progress short-circuit, structured escalation report.</p>
+        <div class="win">a broken build triggers a wave that fixes it; an unfixable one escalates readably</div>
+      </div>
+      <div class="ph">
+        <div class="ph-head"><span class="ph-tag">Phase 5</span><h3>Mission-first UI</h3></div>
+        <p>Mission + limits + prefs → plan approval screen → launch. Provider auto-assignment from subscriptions. Wave timeline and verdict badges in the workspace.</p>
+        <div class="win">mission → glance at proposed team → launch, under a minute</div>
+      </div>
+      <div class="ph">
+        <div class="ph-head"><span class="ph-tag">Phase 6</span><h3>Patterns &amp; hardening</h3></div>
+        <p>Debate strategy (N attempts + auto-judge), per-provider concurrency caps for subscription rate limits, wave/rework telemetry.</p>
+        <div class="win">a debate task produces N candidates and a judged winner</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="guardrails">
+  <div class="wrap">
+    <div class="sec-label">Why it won't run away</div>
+    <h2>Guard rails</h2>
+    <p class="sec-desc">Autonomy is budgeted, never open-ended.</p>
+    <div class="guard">
+      <div class="g-card">
+        <h3>Bounded everything</h3>
+        <p>Rework attempts per task, repair waves per swarm (default 3), parallel-agent caps globally and per provider. Budgets exhausted → a human decides, with a full report.</p>
+      </div>
+      <div class="g-card">
+        <h3>Untrusted agent output</h3>
+        <p>Every file an agent writes is sanitized on read - bad plans, garbage verdicts, and missing outcomes degrade to "park it for a human", never to a hang or a bad launch.</p>
+      </div>
+      <div class="g-card">
+        <h3>No stuck loops</h3>
+        <p>A repair wave that adds zero new tasks, or the same failure twice in a row, short-circuits straight to escalation instead of burning subscription quota.</p>
+      </div>
+      <div class="g-card">
+        <h3>Verified done</h3>
+        <p>The coordinator cannot declare success by narrating it. The acceptance check is a real command that must pass - the same E2E-first standard you hold for bug fixes.</p>
+      </div>
+      <div class="g-card">
+        <h3>Subscription-native</h3>
+        <p>Agents stay CLIs in PTYs, so Claude Max / ChatGPT plans power the whole swarm at flat cost. Coordination is turn-based (seconds), the price of not burning API credits.</p>
+      </div>
+      <div class="g-card">
+        <h3>Contained writes</h3>
+        <p>All new state lives under .saple/swarm/* through the existing path-contained commands. No new filesystem surface, no secrets outside the OS keychain.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Saple Bridge · Swarm redesign overview · full phase plan in <code>swarm-redesign.md</code>
+  </div>
+</footer>
+
+</body>
+</html>

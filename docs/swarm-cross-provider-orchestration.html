@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm v2 - Cross-Provider Agent Orchestration</title>
+<style>
+  :root {
+    --bg: #0c0e14; --surface: #12141d; --surface2: #181b27; --border: #262a3a;
+    --text: #e6e8f2; --muted: #8b92a8; --accent: #6e70f2; --accent-dim: rgba(110,112,242,.14);
+    --ok: #34d399; --warn: #f5b944; --bad: #f87171;
+    --code-bg: #0a0c11; --mono: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  [data-theme="light"] {
+    --bg: #f5f6fa; --surface: #ffffff; --surface2: #eef0f7; --border: #e0e3ee;
+    --text: #1a1d29; --muted: #5a6175; --accent: #5d5fef; --accent-dim: rgba(93,95,239,.10);
+    --ok: #0c8f5f; --warn: #a06a00; --bad: #c23b3b; --code-bg: #f0f1f7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    font-size: 15px; line-height: 1.65; display: flex; min-height: 100vh;
+  }
+
+  /* ---------- Sidebar: process-tree TOC ---------- */
+  nav {
+    width: 292px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+    overflow-y: auto; border-right: 1px solid var(--border); background: var(--surface);
+    padding: 26px 18px 40px;
+  }
+  .nav-brand { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .nav-title { font-family: var(--mono); font-size: 16px; font-weight: 700; margin: 6px 0 4px; color: var(--text); }
+  .nav-title .v { color: var(--accent); }
+  .nav-meta { font-size: 11.5px; color: var(--muted); margin-bottom: 18px; }
+  .tree { font-family: var(--mono); font-size: 12.5px; list-style: none; }
+  .tree li { white-space: nowrap; }
+  .tree a {
+    display: block; color: var(--muted); text-decoration: none; padding: 4px 6px;
+    border-radius: 5px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tree a:hover { color: var(--text); background: var(--surface2); }
+  .tree a.active { color: var(--accent); background: var(--accent-dim); }
+  .tree .glyph { color: var(--border); user-select: none; }
+  [data-theme="light"] .tree .glyph { color: #c3c8da; }
+  .tree .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .d-ok { background: var(--ok); } .d-warn { background: var(--warn); }
+  .d-bad { background: var(--bad); } .d-acc { background: var(--accent); } .d-mut { background: var(--muted); }
+  .theme-btn {
+    margin-top: 22px; width: 100%; font-family: var(--mono); font-size: 12px;
+    background: var(--surface2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; cursor: pointer;
+  }
+  .theme-btn:hover { color: var(--text); border-color: var(--accent); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- Main ---------- */
+  main { flex: 1; min-width: 0; padding: 44px 48px 100px; }
+  .content { max-width: 880px; margin: 0 auto; }
+  .eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-family: var(--mono); font-size: clamp(24px, 3.4vw, 34px); font-weight: 700; letter-spacing: -.02em; margin: 8px 0 10px; line-height: 1.25; }
+  .lede { color: var(--muted); font-size: 16px; max-width: 62ch; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 0; }
+  .meta-chip { font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; }
+  .meta-chip b { color: var(--text); font-weight: 600; }
+
+  section { margin-top: 62px; scroll-margin-top: 28px; }
+  h2 { font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 4px; }
+  h2 .idx { color: var(--muted); font-weight: 400; margin-right: 10px; font-size: .85em; }
+  .h2-sub { color: var(--muted); font-size: 13.5px; margin-bottom: 18px; }
+  h3 { font-family: var(--mono); font-size: 14.5px; font-weight: 600; margin: 26px 0 8px; }
+  p { margin: 10px 0; max-width: 74ch; }
+  p.tight { margin-top: 4px; }
+  ul.plain { margin: 8px 0 8px 20px; max-width: 74ch; }
+  ul.plain li { margin: 5px 0; }
+  strong { font-weight: 650; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
+  pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.6; }
+  a.link { color: var(--accent); text-decoration: none; }
+  a.link:hover { text-decoration: underline; }
+
+  /* badges */
+  .b { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .06em; border-radius: 4px; padding: 2px 6px; vertical-align: 1px; white-space: nowrap; }
+  .b-ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
+  .b-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+  .b-bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); }
+
+  /* hero terminal */
+  .term { background: #0a0c11; border: 1px solid var(--border); border-radius: 10px; margin-top: 30px; overflow: hidden; }
+  [data-theme="light"] .term { background: #14161f; }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-bottom: 1px solid #21243244; background: #ffffff08; }
+  .term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a3f55; }
+  .term-bar span { font-family: var(--mono); font-size: 11px; color: #7c839a; margin-left: 6px; }
+  .term-body { padding: 14px 18px 18px; font-family: var(--mono); font-size: 12.5px; line-height: 1.75; color: #c9cede; overflow-x: auto; white-space: pre; }
+  .t-dim { color: #6a7188; } .t-acc { color: #8b8dff; } .t-ok { color: #4ade80; }
+  .t-warn { color: #fbbf24; } .t-role { color: #67d8f0; }
+
+  /* tables */
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; margin: 16px 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 13px; }
+  th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); text-align: left; padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--accent-dim); }
+  td .cli { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+  table.compact { min-width: 640px; }
+
+  /* callouts & cards */
+  .callout { border: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 4%, var(--surface)); border-radius: 8px; padding: 14px 18px; margin: 18px 0; max-width: 78ch; }
+  .callout.warn { background: color-mix(in srgb, var(--warn) 5%, var(--surface)); }
+  .callout.bad { background: color-mix(in srgb, var(--bad) 5%, var(--surface)); }
+  .callout .co-title { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+  .callout.warn .co-title { color: var(--warn); }
+  .callout.bad .co-title { color: var(--bad); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card { border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 16px; }
+  .card h4 { font-family: var(--mono); font-size: 13px; margin-bottom: 6px; }
+  .card p { font-size: 13px; color: var(--muted); margin: 0; }
+
+  /* phase cards */
+  .phase { display: flex; gap: 18px; border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: 20px 22px; margin: 14px 0; }
+  .phase-letter { font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--accent); line-height: 1; flex-shrink: 0; width: 34px; }
+  .phase h3 { margin: 0 0 2px; font-size: 15px; }
+  .phase .obj { color: var(--muted); font-size: 13px; margin: 2px 0 10px; }
+  .phase ul { margin: 6px 0 6px 18px; font-size: 13.5px; }
+  .phase ul li { margin: 5px 0; }
+  .phase .exit { font-size: 12.5px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); color: var(--muted); }
+  .phase .exit b { color: var(--ok); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; }
+  .file { font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-dim); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+
+  footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+
+  @media (max-width: 980px) {
+    body { flex-direction: column; }
+    nav { position: static; width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 30px 20px 80px; }
+    .term-body { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+
+<nav aria-label="Contents">
+  <div class="nav-brand">saple-bridge / docs</div>
+  <div class="nav-title">swarm<span class="v">@v2</span> dossier</div>
+  <div class="nav-meta">cross-provider orchestration<br>2026-07-14 · v2 A–F not started · v1 usability shipped</div>
+  <ul class="tree">
+    <li><a href="#shipped"><span class="glyph">┌─</span> <span class="dot d-ok"></span>already shipped (v1)</a></li>
+    <li><a href="#summary"><span class="glyph">├─</span> <span class="dot d-acc"></span>executive summary</a></li>
+    <li><a href="#current"><span class="glyph">├─</span> <span class="dot d-bad"></span>current swarm (as-is)</a></li>
+    <li><a href="#pattern"><span class="glyph">├─</span> <span class="dot d-acc"></span>the pattern to replicate</a></li>
+    <li><a href="#matrix"><span class="glyph">├─</span> <span class="dot d-ok"></span>CLI capability matrix</a></li>
+    <li><a href="#routing"><span class="glyph">├─</span> <span class="dot d-ok"></span>result routing patterns</a></li>
+    <li><a href="#priorart"><span class="glyph">├─</span> <span class="dot d-mut"></span>prior art</a></li>
+    <li><a href="#pitfalls"><span class="glyph">├─</span> <span class="dot d-warn"></span>pitfalls</a></li>
+    <li><a href="#plan"><span class="glyph">├─</span> <span class="dot d-acc"></span>implementation plan</a>
+      <ul class="tree" style="margin-left:14px">
+        <li><a href="#phase-a"><span class="glyph">├─</span> A · provider adapters</a></li>
+        <li><a href="#phase-b"><span class="glyph">├─</span> B · persistent sessions</a></li>
+        <li><a href="#phase-c"><span class="glyph">├─</span> C · coordinator loop</a></li>
+        <li><a href="#phase-d"><span class="glyph">├─</span> D · MCP message bus</a></li>
+        <li><a href="#phase-e"><span class="glyph">├─</span> E · worktree isolation</a></li>
+        <li><a href="#phase-f"><span class="glyph">└─</span> F · mission control</a></li>
+      </ul>
+    </li>
+    <li><a href="#corrections"><span class="glyph">├─</span> <span class="dot d-bad"></span>corrections log</a></li>
+    <li><a href="#sources"><span class="glyph">└─</span> <span class="dot d-mut"></span>sources</a></li>
+  </ul>
+  <button class="theme-btn" id="themeBtn" type="button">theme: auto ▸ toggle</button>
+</nav>
+
+<main>
+<div class="content">
+
+  <span class="eyebrow">research dossier · verified findings + build plan</span>
+  <h1>Swarm v2: Cross-Provider<br>Agent Orchestration</h1>
+  <p class="lede">A coordinator agent from one vendor divides the work; worker agents from other vendors build it; findings return; the loop repeats. Claude Code's Task-tool pattern - made heterogeneous. This dossier covers why the current swarm can't do it, proof that every needed capability now exists, and the six phases to build it.</p>
+  <div class="meta-row">
+    <span class="meta-chip">status <b>v2 A–F not started · v1 usability on main</b></span>
+    <span class="meta-chip">scope <b>saple-bridge + saple-mcp</b></span>
+    <span class="meta-chip">sources <b>20 fetched · load-bearing claims re-verified</b></span>
+    <span class="meta-chip">engine plan <b>docs/agent-orchestration-plan.md</b></span>
+    <span class="meta-chip">v1 archive <b>all-other-files/swarm-update-1.md</b></span>
+  </div>
+
+  <!-- ============================ 0 ============================ -->
+  <section id="shipped">
+    <h2><span class="idx">§0</span>Already shipped (do not re-build)</h2>
+    <p class="h2-sub">v1 usability hardening under the current one-shot pipeline. Makes a swarm finish and stay operable - not a multi-turn swarm. Phase A+ still starts from this baseline.</p>
+    <div class="tbl-wrap"><table class="compact">
+      <thead><tr><th>area</th><th>what exists now</th></tr></thead>
+      <tbody>
+        <tr><td>Completion safety net</td><td><code>pty-exit</code> + <code>exitFallbackTransition</code> (exit 0/null → review, non-zero → failed); headless panes omit PowerShell <code>-NoExit</code></td></tr>
+        <tr><td>Scoped markers</td><td>Per-agent <code>[AGENT_DONE:&lt;token&gt;]</code> (etc.); bare markers ignored for scoped agents</td></tr>
+        <tr><td>Review controls</td><td>Approve / Reject with bounded rework; auto-approve option; review gates dependents by design</td></tr>
+        <tr><td>Observability</td><td>In-room terminal tail (~4k chars), <code>statusReason</code>, optional outcome JSON on the agent card</td></tr>
+        <tr><td>Restart recovery</td><td>Orphan PTY reconciliation; P13 pending-exit + marker-tail replay when the project was not loaded</td></tr>
+        <tr><td>Dynamic workers</td><td>P6 <code>requests.json</code> + human approve/reject inserts a worker into the existing scheduler</td></tr>
+        <tr><td>Workspace isolation (weak)</td><td>P11 second workspace <strong>instance</strong> of the same folder - not a git worktree</td></tr>
+        <tr><td>Control plane</td><td>Session launch registers agents/runs/artifacts via <code>controlPlane.ts</code> (partial dual-store bridge)</td></tr>
+        <tr><td>Tests</td><td><code>swarmStore.test.ts</code>, <code>agentSignals.test.ts</code>, related status tests</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <div class="co-title">related docs</div>
+      <strong>Engine plan:</strong> <code>docs/agent-orchestration-plan.md</code> - durability, single writer, Rust engine. This dossier feeds it; does not replace it.<br>
+      <strong>v1 usability archive:</strong> <code>all-other-files/swarm-update-1.md</code> - mostly shipped; not the v2 backlog.
+    </div>
+  </section>
+
+  <div class="term" role="img" aria-label="Terminal transcript showing the target coordinator loop">
+    <div class="term-bar"><i></i><i></i><i></i><span>saple-bridge - swarm session (target model)</span></div>
+    <div class="term-body"><span class="t-dim">$</span> swarm start "add offline sync" <span class="t-dim">--coordinator claude --workers codex,droid</span>
+<span class="t-acc">coord/claude</span>  <span class="t-dim">»</span> decomposed mission → 3 tasks, 2 assignable now
+<span class="t-role">work/codex</span>   <span class="t-dim">»</span> codex exec --json · worktree ../repo-swarm-01 · <span class="t-ok">result: sync engine ✓ 14 files</span>
+<span class="t-role">work/droid</span>   <span class="t-dim">»</span> droid exec -o json -w · <span class="t-warn">result: schema migration - 2 tests failing</span>
+<span class="t-acc">coord/claude</span>  <span class="t-dim">»</span> actions: [ message→droid "fix FK constraint", assign→codex "wire UI" ]
+<span class="t-role">work/droid</span>   <span class="t-dim">»</span> droid exec -s SESSION_01 "fix FK…" · <span class="t-ok">result: tests green ✓</span>
+<span class="t-acc">coord/claude</span>  <span class="t-dim">»</span> actions: [ review "merge-back ready - diff vs main: +812 −64" ]
+<span class="t-dim">swarm » awaiting operator approval · cost $1.87 · 3 rounds · 0 markers scraped</span></div>
+  </div>
+
+  <!-- ============================ 1 ============================ -->
+  <section id="summary">
+    <h2><span class="idx">§1</span>Executive summary</h2>
+    <p class="h2-sub">Three findings that reframe the feature.</p>
+    <div class="cards">
+      <div class="card"><h4>Separate processes are correct, not a compromise</h4><p>Claude's in-session subagents return every result into the parent's single finite context, with size caps on returns. Separate CLI processes give each agent an independent budget. Vendor diversity and context isolation come from the same decision.</p></div>
+      <div class="card"><h4>Today's swarm can't do this by construction</h4><p>Agents launch as one-shot pipes into <strong>bare</strong> binaries (<code>Get-Content | codex</code> - not <code>codex exec</code>, not <code>claude -p</code>, no permissions, no JSON). No channel into a running agent. Coordinator is only <em>prompted</em> to write tasks.json, then dies. Dead-drop files are not injected by Bridge.</p></div>
+      <div class="card"><h4>Every capability needed now ships in the CLIs</h4><p>Resumable multi-turn headless sessions with structured JSON output are documented for claude, codex, and droid. A working open-source reference for the full loop exists (claw-orchestrator).</p></div>
+    </div>
+    <p><strong>Why heterogeneous matters:</strong> if coordinator and workers were the same vendor, one Claude session could already spawn its own subagents - the feature would be pointless. The value is Claude coordinating while Codex, Grok, Gemini, and Droid build - each role on the model best (or cheapest) for it, each in its own context budget.</p>
+    <div class="callout warn">
+      <div class="co-title">phase C non-goal</div>
+      Do <strong>not</strong> grow a large TypeScript Autoloop that <code>agent-orchestration-plan.md</code> Phase 3 will delete. Keep the renderer loop minimal; port it as the first engine consumer.
+    </div>
+    <div class="callout">
+      <div class="co-title">verification methodology</div>
+      The automated verification phase of the research run failed on a rate limit; every load-bearing claim was then manually re-verified against primary sources. Tags used throughout: <span class="b b-ok">VERIFIED</span> read from a primary source · <span class="b b-warn">SINGLE-SOURCE</span> one source, directional · <span class="b b-bad">CORRECTED</span> initial research overstated it, fixed here.
+    </div>
+  </section>
+
+  <!-- ============================ 2 ============================ -->
+  <section id="current">
+    <h2><span class="idx">§2</span>How the current swarm works</h2>
+    <p class="h2-sub">Codebase findings - the full stack was read: swarmStore, agentSignals, terminalStore, pty.rs, swarm.rs, wizard, SwarmWorkspace, projectStore.</p>
+    <h3>Launch pipeline</h3>
+    <ul class="plain">
+      <li>The 6-step wizard collects a DAG of agents; <code>startSwarmFromWizard</code> creates a <strong>second workspace instance of the same folder</strong> ("&lt;project&gt; (swarm)") and pins agent panes to it. Same physical directory - no isolation.</li>
+      <li>A React-side dependency scan (<span class="file">swarmStore.ts:823</span>) launches ready agents up to <code>maxParallelAgents</code>. The scheduler lives entirely in the renderer.</li>
+      <li>Each agent's prompt file (mission + role + skills + mailbox/handoff <strong>path conventions</strong> + markers) is <strong>piped into the provider CLI via stdin</strong> (<span class="file">pty.rs:424</span>): <code>Get-Content prompt.md -Raw | codex --model …</code>. Stdin is consumed; the shell exits when the CLI finishes.</li>
+      <li><strong>Important:</strong> the invocation is the <strong>bare binary</strong> (<code>codex</code>, <code>claude</code>, <code>gemini</code>, …) - not provider-native headless/exec modes (<code>codex exec</code>, <code>claude -p</code>, <code>droid exec</code>), not structured JSON flags, and no explicit permission posture. Phase A is load-bearing, not polish.</li>
+      <li>Completion = regex-scraping scoped markers on a 512-char rolling tail; <strong>already shipped:</strong> <code>pty-exit</code> → <code>exitFallbackTransition</code> (clean/unknown → review, non-zero → failed).</li>
+    </ul>
+    <h3>Communication is dead-drop files</h3>
+    <p class="tight">Bridge does <strong>not</strong> inject handoff or <code>tasks.json</code> content into dependent prompts. Agents are only <em>instructed</em> (via template text) to open those paths. If the model never opens the file, the edge is empty.</p>
+    <div class="tbl-wrap"><table class="compact">
+      <thead><tr><th>file</th><th>written by</th><th>read by</th><th>when actually read</th></tr></thead>
+      <tbody>
+        <tr><td><code>mailbox/&lt;id&gt;.md</code></td><td>agent + operator</td><td>agent, in theory; Bridge UI polls</td><td>never re-read by a running one-shot agent; operator post is theater until rework relaunches</td></tr>
+        <tr><td><code>handoffs/&lt;a&gt;-to-&lt;b&gt;.json</code></td><td>upstream, before exit (if it bothers)</td><td>dependent (if it opens the path)</td><td><strong>not</strong> injected by Bridge at launch; path convention only</td></tr>
+        <tr><td><code>tasks.json</code></td><td>coordinator, before exit (if it bothers)</td><td>builders (if they open the path)</td><td><strong>not</strong> injected by Bridge; template convention only</td></tr>
+        <tr><td><code>requests.json</code></td><td>coordinator</td><td>Bridge (human-gated)</td><td>polled every 5s - only primitive Bridge actually drives</td></tr>
+        <tr><td><code>outcomes/&lt;id&gt;.json</code></td><td>agent, before exit (optional)</td><td>Bridge</td><td>at completion; optional - completion works without it</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Root causes of "doesn't feel good"</h3>
+    <ul class="plain">
+      <li><strong>A batch pipeline wearing a swarm costume.</strong> Plan → exit → build → exit → review. No supervision, no conversation, no mid-course correction.</li>
+      <li><strong>No inbound channel to a live agent.</strong> The stdin pipe makes live steering and agent-to-agent talk impossible; the mailbox is write-only theater.</li>
+      <li><strong>Parallel builders share one working tree.</strong> Merge-conflict generator; no isolation, no merge-back step.</li>
+      <li><strong>Renderer-owned scheduler</strong> with elaborate crash-recovery patchwork because the brain dies with the UI.</li>
+      <li><strong>Keyhole observability:</strong> a 4,000-char text tail of one agent, mailboxes polled every 5s.</li>
+    </ul>
+  </section>
+
+  <!-- ============================ 3 ============================ -->
+  <section id="pattern">
+    <h2><span class="idx">§3</span>The pattern to replicate</h2>
+    <p class="h2-sub">Claude Code's Agent (Task) tool - mechanism verified against official docs.</p>
+    <ul class="plain">
+      <li>The coordinator calls the <strong>Agent tool</strong>. Each subagent runs in <strong>its own context window</strong>; the parent passes only a delegation prompt. <span class="b b-ok">VERIFIED</span></li>
+      <li>Intermediate tool calls stay inside the subagent. <strong>Only the final message returns to the parent</strong> as the tool result.</li>
+      <li>Parallelism = multiple Agent calls issued in one turn. The coordinator folds results in and decides the next round. That is the loop.</li>
+    </ul>
+    <div class="callout bad">
+      <div class="co-title">corrected claim - subagent context</div>
+      An earlier draft repeated a user claim (claude-code issue #10212) that subagents "share the parent's 200K budget." Official docs contradict it: each subagent has its own window. What <em>is</em> true from both sources: every result flows back into the parent's finite context (wide fan-out still bloats the coordinator), and returned results are size-capped (reported 8,192 output tokens; failed large returns still cost 10–15K parent tokens). Design rule: <strong>workers write large output to files and return short structured summaries.</strong> The conclusion - separate processes give independent budgets - stands, for the corrected reason.
+    </div>
+    <p><strong>Why not the Claude Agent SDK:</strong> it spawns the <code>claude</code> CLI as a subprocess and is locked to Claude models <span class="b b-warn">SINGLE-SOURCE</span> - it cannot drive Codex or Grok workers. Cross-vendor orchestration must live outside the SDK, which is exactly the layer Saple Bridge occupies.</p>
+    <p><strong>Competitive note</strong> <span class="b b-ok">VERIFIED</span>: Claude Code now documents <em>background agents</em> (parallel sessions, one monitor) and <em>agent teams</em> (sessions that message each other). Anthropic is building the single-vendor version of this feature. The cross-vendor coordinator stays defensible - but the bar is "better than Claude's own teams at the one thing they can't do."</p>
+  </section>
+
+  <!-- ============================ 4 ============================ -->
+  <section id="matrix">
+    <h2><span class="idx">§4</span>Per-CLI capability matrix</h2>
+    <p class="h2-sub">Ranked by orchestration-friendliness. Multi-turn = resumable session for iterative back-and-forth.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>CLI</th><th>headless</th><th>structured output</th><th>multi-turn / resume</th><th>MCP client</th><th>status</th></tr></thead>
+      <tbody>
+        <tr><td class="cli">claude</td><td><code>-p</code> / <code>--print</code></td><td><code>--output-format json|stream-json</code> · <code>--json-schema</code> → <code>structured_output</code> · envelope: <code>result</code>, <code>session_id</code>, <code>total_cost_usd</code>, <code>is_error</code></td><td><code>--continue</code>, <code>--resume &lt;id&gt;</code> · <code>--input-format stream-json</code> · session lookup scoped to project dir + its worktrees</td><td>yes (<code>--mcp-config</code>); also MCP server</td><td><span class="b b-ok">VERIFIED</span></td></tr>
+        <tr><td class="cli">droid</td><td><code>droid exec</code> (arg, <code>-f</code>, stdin)</td><td><code>-o text|json|stream-json|stream-jsonrpc</code></td><td><code>-s &lt;id&gt;</code>, <code>--fork &lt;id&gt;</code> · <code>--input-format stream-jsonrpc</code></td><td>yes (<code>droid mcp add</code>, http/sse/stdio)</td><td><span class="b b-ok">VERIFIED</span></td></tr>
+        <tr><td class="cli">codex</td><td><code>codex exec</code></td><td><code>--json</code> (JSONL) · <code>--output-last-message</code></td><td><code>codex exec resume &lt;id&gt; "msg"</code> · <code>resume --last</code> · <code>--all</code></td><td>yes (<code>codex mcp</code>, config.toml); also MCP server</td><td><span class="b b-ok">VERIFIED</span></td></tr>
+        <tr><td class="cli">grok</td><td><code>grok -p</code></td><td><code>--output-format json|streaming-json</code></td><td>not confirmed (has subagents, plan mode)</td><td>not confirmed</td><td><span class="b b-warn">SINGLE-SOURCE</span></td></tr>
+        <tr><td class="cli">gemini</td><td><code>-p</code> / non-TTY</td><td><code>--output-format json</code> (<code>response</code>/<code>stats</code>/<code>error</code>) · JSONL · exit 0/1/42/53</td><td>resume not confirmed</td><td>yes (<code>settings.json</code>)</td><td><span class="b b-ok">VERIFIED</span></td></tr>
+        <tr><td class="cli">opencode</td><td><code>opencode run</code> · <code>opencode serve</code></td><td>via run/serve</td><td>HTTP server holds sessions</td><td>yes</td><td><span class="b b-warn">SINGLE-SOURCE</span></td></tr>
+        <tr><td class="cli">cursor-agent</td><td><code>-p</code> (needs <code>--trust</code>)</td><td><code>--output-format json</code> (final object only)</td><td>limited</td><td>partial</td><td><span class="b b-warn">HANG REPORTS 2026.07</span></td></tr>
+        <tr><td class="cli">gh copilot</td><td>weak, interactive-first</td><td>limited</td><td>no</td><td>no</td><td>keep interactive-only</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Flags that matter beyond the table</h3>
+    <ul class="plain">
+      <li><strong>claude</strong> <code>--bare</code> <span class="b b-ok">VERIFIED</span>: skips hook/skill/plugin/MCP/CLAUDE.md auto-discovery for reproducible runs; inject context via <code>--mcp-config</code>, <code>--agents &lt;json&gt;</code>, <code>--settings</code>, <code>--append-system-prompt</code>. Will become default for <code>-p</code>. Piped stdin capped at 10MB. Loop guards: <code>--max-turns</code>, <code>--max-budget-usd</code>.</li>
+      <li><strong>codex</strong> <code>--full-auto</code> deprecated (v0.128) <span class="b b-ok">VERIFIED</span> → use <code>codex exec --sandbox workspace-write</code> or profiles <code>:read-only</code> / <code>:workspace</code> / <code>:danger-full-access</code>.</li>
+      <li><strong>droid</strong> autonomy <code>--auto low|medium|high</code> (default read-only) · exit codes 0/1/2 · native worktrees <code>-w</code> → <code>../&lt;repo&gt;-wt-&lt;branch&gt;/</code>.</li>
+      <li><strong>grok</strong> CI: <code>--always-approve</code>, <code>--no-auto-update</code>, <code>--mode plan</code>.</li>
+    </ul>
+    <div class="callout">
+      <div class="co-title">role fit for saple-bridge</div>
+      <strong>Coordinator:</strong> claude (schema-validated output, cleanest resume, cost telemetry). <strong>Strongest workers:</strong> droid and codex. <strong>Interactive-only, no worker loops:</strong> cursor-agent (headless hangs) and gh copilot.
+    </div>
+  </section>
+
+  <!-- ============================ 5 ============================ -->
+  <section id="routing">
+    <h2><span class="idx">§5</span>How findings return to the coordinator</h2>
+    <p class="h2-sub">Three cross-process patterns. Use 1 as the spine, 2 as the live channel.</p>
+    <div class="phase"><div class="phase-letter">1</div><div>
+      <h3>Orchestrator-mediated routing - the spine</h3>
+      <p class="obj">Bridge launches a worker headless, parses its JSON result, injects it into the coordinator's next turn via resume. Workers never talk directly; Bridge is the router - deterministic, auditable, human-gateable. This is claw-orchestrator's verified "Autoloop": Planner / Coder / Reviewer, each on an independently selectable engine and model.</p>
+    </div></div>
+    <div class="phase"><div class="phase-letter">2</div><div>
+      <h3>MCP message bus - the live channel</h3>
+      <p class="obj">A bus exposed as an MCP server; any MCP-capable worker joins with zero custom integration (references: MCP Agent Mail, clawo-mcp). Maps directly onto the existing saple-mcp sidecar - which today has <strong>zero messaging tools</strong>. <code>send_message</code> / <code>fetch_inbox</code> is the missing piece the orchestration plan's Phase 4 already names.</p>
+    </div></div>
+    <div class="phase"><div class="phase-letter">3</div><div>
+      <h3>File mailboxes - what exists now</h3>
+      <p class="obj">Dead-drop files. Only become useful once workers are persistent sessions that can be prompted to check the bus between turns.</p>
+    </div></div>
+    <p><strong>The keystone for 1 and 2 is identical:</strong> replace the one-shot stdin pipe with resumable sessions.</p>
+  </section>
+
+  <!-- ============================ 6 ============================ -->
+  <section id="priorart">
+    <h2><span class="idx">§6</span>Prior art</h2>
+    <p class="h2-sub">The common architecture everywhere: worktree isolation per agent + headless/PTY process management + results routed to a coordinator/review layer.</p>
+    <div class="tbl-wrap"><table class="compact">
+      <thead><tr><th>project</th><th>what it proves</th><th>status</th></tr></thead>
+      <tbody>
+        <tr><td class="cli">claw-orchestrator</td><td>The full target pattern: persistent programmable sessions over claude/codex/cursor/opencode; cross-vendor Autoloop; worktree "council" voting; itself an MCP server; <strong>pins tested engine versions</strong> (Claude 2.1.207, Codex 0.144.1). Study closely.</td><td><span class="b b-ok">VERIFIED</span></td></tr>
+        <tr><td class="cli">vibe-kanban</td><td>Rust+TS, 10+ vendor CLIs, per-task worktree/branch/terminal, diff comments fed back to the agent. Company (Bloop) shut down 2026-04-10; <strong>project continues community-maintained</strong>, going fully local. Market signal: standalone free orchestrators struggle to monetize - favors swarm-inside-a-product.</td><td><span class="b b-bad">CORRECTED</span></td></tr>
+        <tr><td class="cli">mcp_agent_mail</td><td>MCP mailbox bus: identities, inboxes, threads; messages as git-committed artifacts; advisory file leases with TTL; <code>fetch_inbox --unread-only</code> to cut polling cost.</td><td><span class="b b-ok">VERIFIED</span></td></tr>
+        <tr><td class="cli">conductor</td><td>macOS desktop, parallel Claude+Codex in per-agent worktrees; practical sweet spot 3–8 features.</td><td><span class="b b-warn">SINGLE-SOURCE</span></td></tr>
+        <tr><td class="cli">gnap</td><td>Shared git repo as the coordination task board - a git-native alternative to an MCP bus.</td><td><span class="b b-warn">SINGLE-SOURCE</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ============================ 7 ============================ -->
+  <section id="pitfalls">
+    <h2><span class="idx">§7</span>Pitfalls</h2>
+    <p class="h2-sub">These will bite. Design for them up front.</p>
+    <ul class="plain">
+      <li><strong>Context degrades before the limit.</strong> Reported quality drop ~50K tokens on 200K windows <span class="b b-warn">SINGLE-SOURCE</span>. Coordinator loops need compaction/handoff around 64–80% usage.</li>
+      <li><strong>Result-size caps + coordinator accumulation.</strong> Workers write large output to files; return short structured summaries.</li>
+      <li><strong>Human review is the real ceiling.</strong> ~5–7 concurrent agents cited optimum; tasks under ~15 min of work have negative ROI after orchestration overhead <span class="b b-warn">SINGLE-SOURCE</span>.</li>
+      <li><strong>Rate limits throttle loops.</strong> Gemini free tier ~1,000 req/day <span class="b b-warn">SINGLE-SOURCE</span>. Per-provider concurrency caps needed.</li>
+      <li><strong>CLI flag drift is constant.</strong> <code>--full-auto</code> deprecation, cursor-agent hangs, version-gated behavior. Contain it in a per-provider adapter + version detection + pinned tested versions.</li>
+      <li><strong>Multi-agent pays only on decomposable work</strong> <span class="b b-warn">SINGLE-SOURCE</span>. The coordinator's first duty is honest decomposition; sometimes the answer is one agent.</li>
+      <li><strong>Headless runs stall on approval prompts.</strong> Every worker launch pins an explicit permission posture (<code>--sandbox workspace-write</code>, <code>--auto medium</code>, <code>--always-approve</code>, <code>--permission-mode acceptEdits</code>) or the swarm hangs invisibly.</li>
+    </ul>
+  </section>
+
+  <!-- ============================ 8 ============================ -->
+  <section id="plan">
+    <h2><span class="idx">§8</span>Implementation plan</h2>
+    <p class="h2-sub">Six phases; each ships independently and leaves the product working. A→B→C is the value spine; D and E parallel after A; F last. Feeds - doesn't fork - the engine plan in <code>docs/agent-orchestration-plan.md</code>.</p>
+
+    <div class="phase" id="phase-a"><div class="phase-letter">A</div><div>
+      <h3>Provider adapters + structured results</h3>
+      <p class="obj">Replace marker-scraping with parsed JSON results; contain flag drift in one module. Required because today launches bare CLIs without exec/print mode, JSON, or permission posture.</p>
+      <ul>
+        <li>New <span class="file">src-tauri/src/providers.rs</span>: per-provider adapter - <code>headless_cmd()</code>, <code>resume_cmd()</code>, <code>result_format</code>, <code>parse_result() → AgentResult {text, session_id, cost_usd, is_error, structured}</code>. Replaces the ad-hoc branches at <span class="file">pty.rs:421-441</span>.</li>
+        <li>Verified launch forms: <code>claude -p --output-format stream-json</code> · <code>codex exec --json --sandbox workspace-write --output-last-message &lt;tmp&gt;</code> · <code>droid exec -f prompt.md -o json --auto medium</code> · <code>gemini -p … --output-format json</code> · <code>grok -p … --output-format json --always-approve</code>.</li>
+        <li>PTY keeps streaming to the pane (UX unchanged); a per-attempt extractor parses the final envelope and emits <code>agent-result {paneId, attemptId, result}</code>.</li>
+        <li><span class="file">swarmStore.ts</span> consumes <code>agent-result</code> as the primary signal; markers + pty-exit stay as fallbacks. Persist <code>providerSessionId</code> on <code>SwarmAgent</code>.</li>
+        <li><strong>Attempt-scoped identity (plan invariant 5):</strong> mint a fresh <code>attemptId</code> (and preferably a fresh marker token) per launch/relaunch. Output for attempt N must never complete attempt N+1 - today's seed-time marker reuse is a latent race.</li>
+        <li><strong>Optional cheap win (A or early B):</strong> when launching a dependent, Bridge reads upstream <code>outcomes/</code> and handoffs and <strong>injects</strong> a short summary into the prompt. Does not replace Phase C; makes the current DAG less hollow.</li>
+        <li>Tests: adapter command-construction + envelope-parsing units with checked-in JSON fixtures; attempt-id isolation (stale attempt output ignored).</li>
+      </ul>
+      <div class="exit"><b>EXIT</b> - a template swarm completes with zero marker matches on JSON-emitting providers; markers still complete a custom-provider agent; relaunch cannot be completed by the previous attempt's output.</div>
+    </div></div>
+
+    <div class="phase" id="phase-b"><div class="phase-letter">B</div><div>
+      <h3>Persistent multi-turn worker sessions</h3>
+      <p class="obj">An agent is a session, not a process; anything can be delivered into it mid-run.</p>
+      <ul>
+        <li>Rust command <code>agent_send_turn(project, agent_id, message)</code>: runs the adapter's resume command as a new attempt; output appends to the same pane; result parsed as in A. Attempt-scoped ids so stale output can never complete a newer attempt.</li>
+        <li><code>swarmStore.sendTurnToAgent()</code>: <strong>rework becomes a turn</strong> (feedback lands in the live session with full context) instead of a cold relaunch; <strong>operator mailbox messages become delivered turns</strong>.</li>
+        <li>Resume failure → fall back to relaunch-with-summary (today's behavior, demoted to fallback). Providers without confirmed resume (grok/gemini/opencode) degrade automatically via <code>resume_cmd → None</code>.</li>
+      </ul>
+      <div class="exit"><b>EXIT</b> - reject-with-feedback on a claude/codex/droid worker continues the same session with prior context retained.</div>
+    </div></div>
+
+    <div class="phase" id="phase-c"><div class="phase-letter">C</div><div>
+      <h3>The coordinator loop</h3>
+      <p class="obj">The coordinator stays alive, receives findings, divides work, iterates - the Task-tool loop across vendors.</p>
+      <div class="callout warn" style="margin:8px 0 12px">
+        <div class="co-title">non-goal (hard)</div>
+        Do <strong>not</strong> build a large TypeScript Autoloop that plan Phase 3 will delete. Implement a <strong>minimal</strong> loop in <code>swarmStore</code> (action parse + route + caps), shaped like the engine's future <code>Command</code>. Port wholesale once Phase 3 lands.
+      </div>
+      <ul>
+        <li>Coordinator = persistent claude session with a <code>--json-schema</code> action contract: <code>assign</code>, <code>message</code>, <code>request_worker</code>, <code>review</code>, <code>complete</code>.</li>
+        <li>Bridge drives: worker <code>agent-result</code> → compact summary sent as a coordinator turn (full output stays in files/artifacts) → parse <code>structured_output.actions</code> → execute via the existing scheduler. <code>request_worker</code> keeps its human-approval gate (existing P6 flow); <code>assign</code>/<code>message</code> ride Phase B turns.</li>
+        <li>Guard rails: max coordinator rounds, per-swarm budget cap (<code>--max-budget-usd</code> + summed envelope costs), context watermark ~70% → handoff summary → fresh seeded session.</li>
+        <li>Lives in <span class="file">swarmStore.ts</span> as a thin driver only; ports wholesale into the Rust engine at plan Phase 3.</li>
+      </ul>
+      <div class="exit"><b>EXIT</b> - coordinator(claude) → parallel workers(codex+droid) → results return → second round of fixes → complete, with no human input except configured gates. TS loop small enough that plan Phase 3 is a port, not a rewrite.</div>
+    </div></div>
+
+    <div class="phase" id="phase-d"><div class="phase-letter">D</div><div>
+      <h3>MCP message bus in saple-mcp <span class="b b-ok" style="vertical-align:2px">PARALLEL AFTER A</span></h3>
+      <p class="obj">Agents get a live, provider-agnostic channel; the mailbox becomes an inbox agents actually check.</p>
+      <ul>
+        <li>New tools (sidecar currently has zero messaging): <code>send_message {from,to,subject,body}</code>, <code>fetch_inbox {agentId, unreadOnly, waitSeconds}</code> (long-poll - Agent Mail's cost pattern), <code>list_thread</code>. Storage <code>.saple/swarm/messages/</code>.</li>
+        <li>Multi-writer caveat until engine plan Phase 2 lands: append-mostly bus through existing atomic writes; documented gap, fixed for free by Phase 2.</li>
+        <li>Prompts updated: workers check inbox between subtasks; with Phase B, Bridge can push "you have mail" turns.</li>
+      </ul>
+      <div class="exit"><b>EXIT</b> - a worker mid-run acts on a message sent after its launch.</div>
+    </div></div>
+
+    <div class="phase" id="phase-e"><div class="phase-letter">E</div><div>
+      <h3>Worktree isolation + merge-back <span class="b b-ok" style="vertical-align:2px">PARALLEL AFTER A</span></h3>
+      <p class="obj">Parallel builders stop colliding; the swarm runs on an isolated copy and merges back deliberately.</p>
+      <ul>
+        <li>Rust: <code>create_swarm_worktree</code> / <code>remove</code> / <code>list</code> via <code>git worktree add</code>, sibling dir <code>../&lt;repo&gt;-swarm-&lt;id&gt;/</code> (avoids .saple self-nesting and watcher noise).</li>
+        <li>Wizard toggle "Run in isolated worktree" (default on when &gt;1 editing agent). The swarm's workspace instance points at the worktree - the existing P11 instance mechanism handles the rest.</li>
+        <li>Post-create setup hook runs the configured install command; wizard states the cost honestly (node_modules not shared).</li>
+        <li>Completion: Review room shows worktree diff vs base → merge / PR / discard. Per-agent worktrees after per-swarm proves out; droid workers can use native <code>-w</code>.</li>
+        <li>Pulls forward the item the engine plan deferred - cross-provider parallel builders make its re-entry trigger ("real merge conflicts") a certainty.</li>
+      </ul>
+      <div class="exit"><b>EXIT</b> - two builders editing the same file yield two reviewable outcomes, user's own tree untouched.</div>
+    </div></div>
+
+    <div class="phase" id="phase-f"><div class="phase-letter">F</div><div>
+      <h3>Mission control <span class="b b-warn" style="vertical-align:2px">LAST</span></h3>
+      <p class="obj">Starting a swarm lands you in one screen that shows everything live - inside the existing Swarm room, no new nav entries.</p>
+      <ul>
+        <li>On launch: auto-switch to the swarm's workspace instance and the redesigned Swarm room: dependency DAG (existing <code>SwarmGraph</code>) + <strong>live terminal grid</strong> (reuse <code>TerminalPane</code>; the terminals room's grid and embedded browser panel prove the composition) + right-rail event feed (results, bus messages, coordinator actions, approvals) replacing the 4,000-char tail.</li>
+        <li>Inline approvals wherever the loop needs a human: worker requests, rework, merge-back.</li>
+      </ul>
+      <div class="exit"><b>EXIT</b> - a running swarm is fully observable and steerable without leaving the Swarm room.</div>
+    </div></div>
+
+    <h3>Cross-phase engineering rules</h3>
+    <ul class="plain">
+      <li><strong>Version pinning + detection:</strong> provider store records CLI versions at preflight; adapters declare tested ranges; untested versions warn, never block.</li>
+      <li><strong>Timeouts + leases:</strong> every headless attempt gets a deadline; silent-but-alive workers past lease → probe → retry policy.</li>
+      <li><strong>Attempt identity:</strong> every launch/relaunch mints a new <code>attemptId</code>; completion events (JSON result, marker, pty-exit) are tagged with it; stale attempt output is ignored (plan Phase 3 invariant 5, enforced early in A/B).</li>
+      <li><strong>Windows-first E2E:</strong> every phase exits through a real template swarm on Windows against a scratch repo; macOS smoke on release branches.</li>
+      <li><strong>Engine alignment:</strong> A/B/D/E are renderer-safe and engine-agnostic; C is deliberately minimal in TS and becomes the first consumer of the engine's <code>submit/command/observe</code> at plan Phase 3.</li>
+      <li><strong>Do not re-litigate v1 usability:</strong> exit fallback, approve/reject, recovery, and in-room tail already exist. New work preserves them as fallbacks while adapters and the coordinator loop take over as the primary path.</li>
+    </ul>
+  </section>
+
+  <!-- ============================ 9 ============================ -->
+  <section id="corrections">
+    <h2><span class="idx">§9</span>Corrections log</h2>
+    <p class="h2-sub">Where the initial research overstated, and what verification found.</p>
+    <div class="tbl-wrap"><table class="compact">
+      <thead><tr><th>#</th><th>as first reported</th><th>verified reality</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>"Vibe Kanban is being discontinued - don't depend on it"</td><td>Bloop the <em>company</em> shut down 2026-04-10; the project continues community-maintained (Apache 2.0), moving fully local. Prior art <em>and</em> live competitor.</td></tr>
+        <tr><td>2</td><td>"In-model subagents share the parent's 200K budget" (issue #10212)</td><td>Official docs: each subagent has its own context window. Real constraints: results accumulate in the parent's context; returns size-capped. Conclusion unchanged, reasoning corrected.</td></tr>
+        <tr><td>3</td><td>Codex profile <code>:danger-no-sandbox</code></td><td>Correct name <code>:danger-full-access</code> (with <code>:read-only</code>, <code>:workspace</code>).</td></tr>
+        <tr><td>4</td><td>Handoffs / <code>tasks.json</code> are "read by dependent at launch"</td><td>Dependents are only <em>instructed</em> to open those paths. Bridge does <strong>not</strong> inject handoff or tasks content into the next prompt. Path-convention dead-drop, not a protocol.</td></tr>
+        <tr><td>5</td><td>"Implementation not started" for the whole swarm stack</td><td><strong>v2 Phases A–F</strong> are not started. <strong>v1 usability</strong> (exit fallback, review approve/reject, recovery, tails, tests) is already on <code>main</code>.</td></tr>
+        <tr><td>6</td><td>Headless launch is "print mode with structured results"</td><td>Today: bare <code>codex</code> / <code>claude</code> / … with stdin pipe only - <strong>not</strong> <code>codex exec</code> / <code>claude -p</code> / JSON envelopes / permission profiles. Phase A closes that gap.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ============================ 10 ============================ -->
+  <section id="sources">
+    <h2><span class="idx">§10</span>Sources</h2>
+    <p class="h2-sub">Primary sources were fetched and read during manual verification.</p>
+    <h3>Primary</h3>
+    <ul class="plain">
+      <li><a class="link" href="https://code.claude.com/docs/en/headless">code.claude.com/docs/en/headless</a> · <a class="link" href="https://code.claude.com/docs/en/sub-agents">…/sub-agents</a> · <a class="link" href="https://code.claude.com/docs/en/agent-sdk/subagents">…/agent-sdk/subagents</a></li>
+      <li><a class="link" href="https://github.com/anthropics/claude-code/issues/10212">anthropics/claude-code #10212</a> (subagent context)</li>
+      <li><a class="link" href="https://docs.factory.ai/reference/cli-reference">docs.factory.ai/reference/cli-reference</a> (droid)</li>
+      <li><a class="link" href="https://developers.openai.com/codex/noninteractive">developers.openai.com/codex</a> (cli · noninteractive · permissions)</li>
+      <li><a class="link" href="https://geminicli.com/docs/cli/headless/">geminicli.com/docs/cli/headless</a></li>
+      <li><a class="link" href="https://github.com/Enderfga/claw-orchestrator">github.com/Enderfga/claw-orchestrator</a> · <a class="link" href="https://github.com/Dicklesworthstone/mcp_agent_mail">Dicklesworthstone/mcp_agent_mail</a></li>
+      <li><a class="link" href="https://github.com/BloopAI/vibe-kanban">BloopAI/vibe-kanban</a> · <a class="link" href="https://www.vibekanban.com/blog/shutdown">vibekanban.com/blog/shutdown</a></li>
+      <li><a class="link" href="https://docs.x.ai/build/cli/headless-scripting">docs.x.ai/build</a> (grok) · <a class="link" href="https://cursor.com/docs/cli/headless">cursor.com/docs/cli</a> + forum hang reports</li>
+    </ul>
+    <h3>Secondary / single-source (directional)</h3>
+    <p class="tight" style="color:var(--muted); font-size:13.5px">CLI comparison blogs (dev.to, hidekazu-konishi.com), addyosmani.com/blog/code-agent-orchestra, zylos.ai context-window research, codex.danielvaughan.com deprecation writeups, awesome-agent-orchestrators, Linux Foundation A2A 1.0 press release.</p>
+  </section>
+
+  <footer>
+    saple-bridge · docs/swarm-cross-provider-orchestration.html · accuracy pass 2026-07-14 · markdown twin: docs/swarm-cross-provider-orchestration.md
+  </footer>
+</div>
+</main>
+
+<script>
+  // Theme toggle: auto → dark → light → auto
+  const btn = document.getElementById('themeBtn');
+  const states = ['auto', 'dark', 'light'];
+  let i = 0;
+  const saved = localStorage.getItem('swarm-dossier-theme');
+  if (saved && states.includes(saved)) { i = states.indexOf(saved); apply(); }
+  btn.addEventListener('click', () => { i = (i + 1) % 3; localStorage.setItem('swarm-dossier-theme', states[i]); apply(); });
+  function apply() {
+    const s = states[i];
+    if (s === 'auto') {
+      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    } else {
+      document.documentElement.setAttribute('data-theme', s);
+    }
+    btn.textContent = 'theme: ' + s + ' ▸ toggle';
+  }
+  if (!saved) apply();
+
+  // Active TOC highlighting
+  const links = [...document.querySelectorAll('.tree a')];
+  const map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(a => a.classList.remove('active'));
+        const a = map.get(e.target.id);
+        if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-10% 0px -70% 0px' });
+  document.querySelectorAll('section[id], .phase[id]').forEach(s => { if (map.has(s.id)) obs.observe(s); });
+</script>
+</body>
+</html>

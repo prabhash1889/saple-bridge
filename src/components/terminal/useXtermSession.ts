@@ -5,7 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openLink } from '../../stores/browserStore';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -334,6 +334,15 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
         brightWhite: '#E5E5E5',
       },
       allowProposedApi: true,
+      // OSC 8 hyperlinks (emitted by Claude Code and other TUIs) bypass WebLinksAddon;
+      // without this handler xterm falls back to confirm() + window.open(), which escapes
+      // the Tauri webview into the OS default browser.
+      linkHandler: {
+        activate: (event, uri) => {
+          event.preventDefault();
+          openLink(uri);
+        },
+      },
       // Make xterm grow rows into the scrollback the way ConPTY expects, so maximizing the
       // window keeps the existing output instead of replacing it with empty rows.
       ...(IS_WINDOWS_PTY ? { windowsPty: { backend: 'conpty' as const } } : {}),
@@ -346,12 +355,12 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
     term.loadAddon(searchAddon);
     searchAddonRef.current = searchAddon;
 
-    // Make URLs in the buffer clickable; open them through the OS default browser via the
-    // opener plugin (never inside the WebView). Underlines the link on hover only.
+    // Make URLs in the buffer clickable; open them in the built-in browser panel
+    // (OS browser for non-web schemes). Underlines the link on hover only.
     term.loadAddon(
       new WebLinksAddon((event, uri) => {
         event.preventDefault();
-        void openUrl(uri).catch((err) => console.error('Failed to open URL:', err));
+        openLink(uri);
       }),
     );
 

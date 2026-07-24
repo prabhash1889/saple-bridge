@@ -2,7 +2,7 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openLink } from '../../stores/browserStore';
 
 /**
  * Rendered Markdown preview (GitHub-flavored) for the Files viewer.
@@ -18,12 +18,12 @@ interface Props {
 const ABSOLUTE_URL = /^(https?:|mailto:)/i;
 
 // In a Tauri webview a normal anchor click would navigate the whole app away.
-// Intercept it and hand absolute links to the OS via the opener plugin instead.
+// Intercept it and open absolute links in the built-in browser panel instead.
 function openExternally(href: string | undefined) {
   return (e: React.MouseEvent) => {
     e.preventDefault();
     if (href && ABSOLUTE_URL.test(href)) {
-      openUrl(href).catch(() => { /* ignore — better to no-op than crash the view */ });
+      openLink(href);
     }
   };
 }

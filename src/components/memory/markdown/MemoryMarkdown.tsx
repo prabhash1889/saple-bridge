@@ -2,8 +2,8 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import remarkWikilinks, { MEM_LINK_PREFIX } from './remarkWikilinks';
+import { openLink } from '../../../stores/browserStore';
 import { useMemoryStore, MemoryNode } from '../../../stores/memoryStore';
 import { useProjectStore } from '../../../stores/projectStore';
 
@@ -89,7 +89,7 @@ export const MemoryMarkdown: React.FC<Props> = ({ content }) => {
           onClick={(e) => {
             e.preventDefault();
             if (href && ABSOLUTE_URL.test(href)) {
-              openUrl(href).catch(() => { /* no-op */ });
+              openLink(href);
             }
           }}
         >

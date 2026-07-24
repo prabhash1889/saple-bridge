@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Saple Bridge - How It Works</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --bg-elev: #ffffff;
+    --bg-sunk: #eef0f4;
+    --ink: #1a1c22;
+    --ink-soft: #565b66;
+    --ink-faint: #878d99;
+    --line: #e2e5ea;
+    --line-strong: #cdd2da;
+    --accent: #4f46e5;
+    --accent-soft: #eceafd;
+    --rust: #c4622d;
+    --react: #2b8fb3;
+    --disk: #2f9e6f;
+    --shadow: 0 1px 2px rgba(20,22,30,.04), 0 8px 24px rgba(20,22,30,.06);
+    --radius: 14px;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d0f14;
+    --bg-elev: #161922;
+    --bg-sunk: #1d212c;
+    --ink: #eceef3;
+    --ink-soft: #a7adba;
+    --ink-faint: #6b7280;
+    --line: #262b36;
+    --line-strong: #333a48;
+    --accent: #8b83ff;
+    --accent-soft: #211f3d;
+    --rust: #e08a53;
+    --react: #56c1e6;
+    --disk: #4ecb95;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px rgba(0,0,0,.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d0f14; --bg-elev: #161922; --bg-sunk: #1d212c;
+      --ink: #eceef3; --ink-soft: #a7adba; --ink-faint: #6b7280;
+      --line: #262b36; --line-strong: #333a48; --accent: #8b83ff;
+      --accent-soft: #211f3d; --rust: #e08a53; --react: #56c1e6; --disk: #4ecb95;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased; letter-spacing: -0.011em;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); text-decoration: none; }
+
+  /* top bar */
+  header.top {
+    position: sticky; top: 0; z-index: 20;
+    backdrop-filter: saturate(1.6) blur(12px);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .top .wrap { display: flex; align-items: center; gap: 16px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; }
+  .brand .dot { width: 20px; height: 20px; border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent), var(--react)); box-shadow: var(--shadow); }
+  .top nav { margin-left: auto; display: flex; gap: 4px; }
+  .top nav a { color: var(--ink-soft); font-size: 14px; padding: 7px 12px; border-radius: 8px; font-weight: 500; }
+  .top nav a:hover { background: var(--bg-sunk); color: var(--ink); }
+  .theme-btn { background: var(--bg-elev); border: 1px solid var(--line); color: var(--ink-soft);
+    width: 36px; height: 36px; border-radius: 9px; cursor: pointer; font-size: 15px; }
+  .theme-btn:hover { border-color: var(--line-strong); color: var(--ink); }
+  @media (max-width: 720px) { .top nav { display: none; } }
+
+  /* hero */
+  .hero { padding: 72px 0 40px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600;
+    color: var(--accent); background: var(--accent-soft); padding: 5px 12px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); letter-spacing: .01em; }
+  .pill .live { width: 7px; height: 7px; border-radius: 50%; background: var(--disk);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--disk) 70%, transparent); animation: pulse 2.2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--disk) 60%, transparent); }
+    70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  h1 { font-size: clamp(34px, 5vw, 52px); line-height: 1.08; margin: 20px 0 0; letter-spacing: -0.03em; font-weight: 720; }
+  h1 .grad { background: linear-gradient(115deg, var(--accent), var(--react) 70%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--ink-soft); max-width: 680px; margin: 22px 0 0; }
+  .facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+  .fact { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 11px;
+    padding: 12px 16px; box-shadow: var(--shadow); }
+  .fact b { display: block; font-size: 20px; letter-spacing: -0.02em; }
+  .fact span { font-size: 12.5px; color: var(--ink-faint); }
+
+  section { padding: 46px 0; border-top: 1px solid var(--line); }
+  .eyebrow { font-size: 12.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--accent); }
+  h2 { font-size: clamp(24px, 3.4vw, 32px); margin: 10px 0 8px; letter-spacing: -0.02em; font-weight: 680; }
+  .section-lede { color: var(--ink-soft); max-width: 660px; margin: 0 0 28px; font-size: 16px; }
+
+  /* stack chips */
+  .stack { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .chip { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .chip .k { font-weight: 640; font-size: 15px; }
+  .chip .k .tag { font-size: 11px; color: var(--ink-faint); font-weight: 500; }
+  .chip .v { font-size: 13px; color: var(--ink-soft); margin-top: 6px; }
+
+  /* architecture diagram */
+  .arch { display: grid; gap: 14px; }
+  .layer { border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+  .layer h3 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 9px; }
+  .layer .swatch { width: 11px; height: 11px; border-radius: 3px; }
+  .layer p { margin: 0; font-size: 13.5px; color: var(--ink-soft); }
+  .layer.react { background: color-mix(in srgb, var(--react) 8%, var(--bg-elev)); border: 1px solid color-mix(in srgb, var(--react) 30%, var(--line)); }
+  .layer.react .swatch { background: var(--react); }
+  .layer.rust { background: color-mix(in srgb, var(--rust) 8%, var(--bg-elev)); border: 1px solid color-mix(in srgb, var(--rust) 30%, var(--line)); }
+  .layer.rust .swatch { background: var(--rust); }
+  .layer.disk { background: color-mix(in srgb, var(--disk) 8%, var(--bg-elev)); border: 1px solid color-mix(in srgb, var(--disk) 30%, var(--line)); }
+  .layer.disk .swatch { background: var(--disk); }
+  .modrow { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+  .mod { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line);
+    padding: 4px 9px; border-radius: 7px; color: var(--ink-soft); }
+  .bridge { text-align: center; font-size: 12.5px; color: var(--ink-faint); font-family: var(--mono);
+    position: relative; padding: 2px 0; }
+  .bridge span { background: var(--bg); padding: 0 12px; position: relative; z-index: 1; }
+  .bridge::before { content: ""; position: absolute; left: 12%; right: 12%; top: 50%; height: 1px;
+    background: repeating-linear-gradient(90deg, var(--line-strong) 0 6px, transparent 6px 12px); }
+
+  /* rooms */
+  .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .room { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 18px;
+    box-shadow: var(--shadow); transition: transform .15s, border-color .15s; }
+  .room:hover { transform: translateY(-2px); border-color: var(--line-strong); }
+  .room .ic { font-size: 22px; }
+  .room h4 { margin: 10px 0 5px; font-size: 15.5px; }
+  .room p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .room .file { margin-top: 11px; font-family: var(--mono); font-size: 11.5px; color: var(--disk);
+    background: color-mix(in srgb, var(--disk) 9%, transparent); padding: 3px 8px; border-radius: 6px; display: inline-block; }
+
+  /* capabilities */
+  .caps { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .cap { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 20px; box-shadow: var(--shadow); }
+  .cap-h { font-weight: 640; font-size: 15px; letter-spacing: -0.01em; padding-bottom: 12px;
+    margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .cap ul { margin: 0; padding: 0; list-style: none; }
+  .cap li { font-size: 13.5px; color: var(--ink-soft); padding: 5px 0 5px 18px; position: relative; line-height: 1.5; }
+  .cap li::before { content: ""; position: absolute; left: 2px; top: 12px; width: 5px; height: 5px;
+    border-radius: 50%; background: var(--accent); opacity: .55; }
+  .cap kbd { font-family: var(--mono); font-size: 11px; background: var(--bg-sunk); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+
+  /* highlight cards */
+  .highs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .high { background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow); }
+  .high .n { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+  .high h4 { margin: 8px 0 8px; font-size: 16.5px; letter-spacing: -0.01em; }
+  .high p { margin: 0; font-size: 14px; color: var(--ink-soft); }
+  .high code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-sunk);
+    padding: 1px 6px; border-radius: 5px; color: var(--ink); }
+
+  /* flow steps */
+  .flow { display: grid; gap: 2px; }
+  .step { display: grid; grid-template-columns: 40px 1fr; gap: 16px; align-items: start; padding: 14px 0; }
+  .step:not(:last-child) { border-bottom: 1px dashed var(--line); }
+  .step .num { width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center; font-weight: 700; font-size: 15px; border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+  .step h4 { margin: 3px 0 4px; font-size: 15px; }
+  .step p { margin: 0; font-size: 13.5px; color: var(--ink-soft); }
+  .step code { font-family: var(--mono); font-size: 12px; color: var(--rust); }
+
+  /* ecosystem */
+  .eco { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .app { border: 1px solid var(--line); border-radius: 12px; padding: 18px; background: var(--bg-elev); box-shadow: var(--shadow); }
+  .app.me { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--bg-elev)); }
+  .app .badge { font-size: 11px; font-weight: 650; padding: 3px 9px; border-radius: 999px; letter-spacing: .02em; }
+  .b-live { background: color-mix(in srgb, var(--disk) 16%, transparent); color: var(--disk); }
+  .b-review { background: color-mix(in srgb, var(--rust) 16%, transparent); color: var(--rust); }
+  .b-dev { background: var(--bg-sunk); color: var(--ink-faint); }
+  .app h4 { margin: 12px 0 6px; font-size: 17px; }
+  .app p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+
+  /* faq */
+  details { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 11px;
+    padding: 4px 18px; margin-bottom: 10px; box-shadow: var(--shadow); }
+  details[open] { border-color: var(--line-strong); }
+  summary { cursor: pointer; padding: 14px 0; font-weight: 580; font-size: 15px; list-style: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; color: var(--ink-faint); font-size: 20px; font-weight: 400; transition: transform .2s; }
+  details[open] summary::after { transform: rotate(45deg); }
+  details p { margin: 0 0 16px; font-size: 14px; color: var(--ink-soft); }
+
+  footer { padding: 40px 0 60px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> Saple Bridge</div>
+    <nav>
+      <a href="#stack">Stack</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#rooms">Rooms</a>
+      <a href="#capabilities">Capabilities</a>
+      <a href="#internals">How it works</a>
+      <a href="#ecosystem">Ecosystem</a>
+      <a href="#faq">Q&amp;A</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <span class="pill"><span class="live"></span> Published on the Microsoft Store</span>
+    <h1>A local-first workspace for <span class="grad">AI-assisted development</span>.</h1>
+    <p class="lede">Saple Bridge unifies terminals, tasks, a markdown knowledge base, multi-agent coordination, and code review into one native desktop app - where every piece of state is just plain files inside your project.</p>
+    <div class="facts">
+      <div class="fact"><b>Tauri 2</b><span>Rust + native webview</span></div>
+      <div class="fact"><b>React 19</b><span>TypeScript UI</span></div>
+      <div class="fact"><b>~90</b><span>Rust IPC commands</span></div>
+      <div class="fact"><b>0</b><span>servers / databases</span></div>
+      <div class="fact"><b>Win + macOS</b><span>11+ desktop</span></div>
+    </div>
+  </div>
+
+  <!-- STACK -->
+  <section id="stack">
+    <div class="eyebrow">The Stack</div>
+    <h2>What it's built with, and why</h2>
+    <p class="section-lede">Each choice is deliberate: a systems language for the trust-sensitive work, a fast component UI for the rooms, and plain files for storage.</p>
+    <div class="stack">
+      <div class="chip"><div class="k">Tauri 2 <span class="tag">shell</span></div><div class="v">Native app on the OS webview - smaller & lighter than Electron. Rust backend for OS work.</div></div>
+      <div class="chip"><div class="k">React 19 + TS <span class="tag">ui</span></div><div class="v">Component model for rooms; TypeScript across a large surface.</div></div>
+      <div class="chip"><div class="k">Zustand <span class="tag">state</span></div><div class="v">One small store per domain. No Redux boilerplate.</div></div>
+      <div class="chip"><div class="k">xterm.js <span class="tag">terminal</span></div><div class="v">Browser terminal emulator with webgl + fit + search addons.</div></div>
+      <div class="chip"><div class="k">CodeMirror 6 <span class="tag">editor</span></div><div class="v">Code editing with Shiki syntax highlighting.</div></div>
+      <div class="chip"><div class="k">Rust <span class="tag">backend</span></div><div class="v">Owns filesystem, PTYs, keychain, git, process lifecycle.</div></div>
+      <div class="chip"><div class="k">OS Keychain <span class="tag">secrets</span></div><div class="v">API keys in Credential Manager / macOS Keychain - never in files.</div></div>
+      <div class="chip"><div class="k">Vite <span class="tag">build</span></div><div class="v">Fast dev server and production bundling.</div></div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section id="architecture">
+    <div class="eyebrow">Architecture</div>
+    <h2>The webview never touches the OS</h2>
+    <p class="section-lede">The single most important idea: the UI does no filesystem, process, or secret access directly. Everything crosses the Tauri boundary into Rust. That boundary is the security and correctness line.</p>
+    <div class="arch">
+      <div class="layer react">
+        <h3><span class="swatch"></span> React 19 + TypeScript &nbsp;·&nbsp; the front of house</h3>
+        <p>Rooms, routing, rendering, and UI state. Talks to Rust; never to the disk.</p>
+        <div class="modrow">
+          <span class="mod">projectStore</span><span class="mod">terminalStore</span><span class="mod">kanbanStore</span>
+          <span class="mod">memoryStore</span><span class="mod">swarmStore</span><span class="mod">reviewStore</span>
+        </div>
+      </div>
+      <div class="bridge"><span>▲ &nbsp; Tauri IPC &nbsp;·&nbsp; invoke (request/response) &nbsp;+&nbsp; events (push) &nbsp; ▼</span></div>
+      <div class="layer rust">
+        <h3><span class="swatch"></span> Rust backend &nbsp;·&nbsp; owns the OS</h3>
+        <p>Filesystem, PTY sessions, keychain, git, process lifecycle, markdown parsing, snapshots, and the control endpoint.</p>
+        <div class="modrow">
+          <span class="mod">pty.rs</span><span class="mod">project.rs</span><span class="mod">memory.rs</span>
+          <span class="mod">keychain.rs</span><span class="mod">git.rs</span><span class="mod">swarm.rs</span>
+          <span class="mod">watcher.rs</span><span class="mod">june_control.rs</span>
+        </div>
+      </div>
+      <div class="bridge"><span>▲ &nbsp; atomic writes (temp + rename, per-path mutex) &nbsp; ▼</span></div>
+      <div class="layer disk">
+        <h3><span class="swatch"></span> Your project on disk &nbsp;·&nbsp; <code style="font-family:var(--mono);font-size:12px">.saple/</code></h3>
+        <p>Plain JSON + markdown. The same files the MCP sidecar and coding agents read and write - the UI live-reloads when they change.</p>
+        <div class="modrow">
+          <span class="mod">tasks.json</span><span class="mod">swarm/state.json</span><span class="mod">memory/*.md</span>
+          <span class="mod">agents/sessions.json</span><span class="mod">snapshots/</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ROOMS -->
+  <section id="rooms">
+    <div class="eyebrow">The Rooms</div>
+    <h2>One window, eight rooms</h2>
+    <p class="section-lede">Heavy rooms stay mounted after first visit and toggle with CSS visibility, so switching back is instant. All are code-split with React.lazy, so startup only loads what you open.</p>
+    <div class="rooms">
+      <div class="room"><div class="ic">▚</div><h4>Terminals</h4><p>Native PTY sessions owned by Rust, streamed to xterm.js. Orphan-free on close.</p><span class="file">pty.rs · PtyRegistry</span></div>
+      <div class="room"><div class="ic">▤</div><h4>Kanban</h4><p>A task board that is one JSON file. Live-reloads when an agent edits it.</p><span class="file">.saple/tasks.json</span></div>
+      <div class="room"><div class="ic">◈</div><h4>Memory</h4><p>Markdown notes + frontmatter, parsed into a link graph. Snapshots included.</p><span class="file">.saple/memory/*.md</span></div>
+      <div class="room"><div class="ic">⧉</div><h4>Swarm</h4><p>Multi-agent coordination via mailbox/handoff files, with dependency-graph validation.</p><span class="file">.saple/swarm/state.json</span></div>
+      <div class="room"><div class="ic">◪</div><h4>Review</h4><p>A git review queue: diff, stage, run a verify command, submit a decision.</p><span class="file">git.rs · review.rs</span></div>
+      <div class="room"><div class="ic">✎</div><h4>Editor / Files</h4><p>CodeMirror + Shiki, a file tree, and project-wide search - all through Rust.</p><span class="file">files.rs</span></div>
+      <div class="room"><div class="ic">⚙</div><h4>Settings</h4><p>Provider keys (keychain), MCP install/status, diagnostics, SSH presets.</p><span class="file">keychain.rs</span></div>
+      <div class="room"><div class="ic">◐</div><h4>Dashboard</h4><p>The project overview - the landing room when a project opens.</p><span class="file">projectStore</span></div>
+    </div>
+  </section>
+
+  <!-- CAPABILITIES -->
+  <section id="capabilities">
+    <div class="eyebrow">Everything It Can Do</div>
+    <h2>The full capability list</h2>
+    <p class="section-lede">Every item here maps to real UI or a real Rust command in the shipped app - not a roadmap. Grouped by area.</p>
+    <div class="caps">
+      <div class="cap">
+        <div class="cap-h">◐ Projects &amp; workspaces</div>
+        <ul>
+          <li>Open any folder as a workspace (<kbd>Ctrl+O</kbd>)</li>
+          <li>Open the same folder as independent instances</li>
+          <li>Recent workspaces + project summary on the dashboard</li>
+          <li>Per-workspace default provider &amp; model, persisted</li>
+          <li>Restores window state; single-instance (no duplicate windows)</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">▚ Terminals (Command Room)</div>
+        <ul>
+          <li>Multiple native PTY panes in a split grid</li>
+          <li>Run any CLI / TUI / agent in a real shell</li>
+          <li>Launch an AI agent into a pane with a seeded prompt</li>
+          <li>Rename sessions, context menu, in-terminal search</li>
+          <li>Native copy/paste; focus cycling; pane-limit enforced</li>
+          <li>All child processes killed on close - no orphans</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">▤ Tasks (Kanban)</div>
+        <ul>
+          <li>Create / edit / delete tasks across columns</li>
+          <li>Per-task agent config (provider + model)</li>
+          <li>Launch an AI agent straight from a task</li>
+          <li>Task detail drawer; attach a preview URL</li>
+          <li>Live-reloads when an agent edits the board</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">◈ Memory (knowledge graph)</div>
+        <ul>
+          <li>Markdown notes: title, category, tags, links, body</li>
+          <li>Auto-built link graph with a visual view</li>
+          <li>Full-text search; unlinked-mention suggestions</li>
+          <li>Snapshots: save, list, and restore memory state</li>
+          <li>Markdown editor with live preview; quick-note from palette</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">⧉ Swarm (multi-agent)</div>
+        <ul>
+          <li>Wizard: name → mission → roster → directory → context → launch</li>
+          <li>Live agent status, roles, and elapsed time</li>
+          <li>Message any agent's mailbox, or broadcast to all</li>
+          <li>Mailbox + handoff file coordination</li>
+          <li>Dependency-graph validation blocks broken plans</li>
+          <li>Swarm graph, agent cards, editable templates</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">◪ Review (code review)</div>
+        <ul>
+          <li>Git status + per-file split diffs (virtualized)</li>
+          <li>Stage / unstage / commit from the app</li>
+          <li>Track viewed files; run a verify command</li>
+          <li>Approve or reject agent changes</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">✎ Files &amp; Editor</div>
+        <ul>
+          <li>File tree + multi-tab CodeMirror editor</li>
+          <li>Shiki highlighting across many languages</li>
+          <li>Create / rename / delete files &amp; folders</li>
+          <li>Project-wide full-text search in files</li>
+          <li>Open in external editor / reveal in OS explorer</li>
+          <li>Layout (folders + tabs) persists per workspace</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">◱ Browser &amp; Local Preview</div>
+        <ul>
+          <li>Native in-app browser tabs (navigate / back / forward / reload)</li>
+          <li>Preview a loopback dev URL (<kbd>Ctrl+Shift+B</kbd>)</li>
+          <li>Attach that URL to a task, agent, or memory note</li>
+          <li>Optional agent-browser with a CDP debugging port</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">⚿ Providers, keys &amp; models</div>
+        <ul>
+          <li>API keys per provider in the OS keychain</li>
+          <li>Browse available models per provider</li>
+          <li>Test a provider connection</li>
+          <li>Set default provider &amp; default model</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">⚙ MCP, diagnostics &amp; system</div>
+        <ul>
+          <li>One-click install of the Saple MCP config</li>
+          <li>Check MCP status &amp; test the tools</li>
+          <li>Diagnostics: OS, shell, git, keychain, provider CLIs, MCP</li>
+          <li>Check provider CLI install &amp; sign-in state</li>
+          <li>Claude context-usage view; toast notifications</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">⌘ Command palette &amp; composer</div>
+        <ul>
+          <li><kbd>Ctrl+P</kbd> - run commands, switch rooms, jump to tasks/notes</li>
+          <li><kbd>Ctrl+Shift+K</kbd> composer - one message, many targets:</li>
+          <li>a running agent · all agents · a new terminal agent</li>
+          <li>a Kanban task · a new swarm · a memory note</li>
+          <li>Shortcut reference; <kbd>Alt+1..9</kbd> room switching</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="cap-h">◇ Appearance &amp; automation</div>
+        <ul>
+          <li>Light / dark / follow-system theme</li>
+          <li>Windows (primary) + macOS 11+ native builds</li>
+          <li>Store auto-updates (MSIX) or in-app updater (direct)</li>
+          <li>External orchestrators can spawn agents, assign tasks, drive terminals/browser, read swarm status</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- INTERNALS -->
+  <section id="internals">
+    <div class="eyebrow">Under the Hood</div>
+    <h2>The parts worth bragging about</h2>
+    <p class="section-lede">These are real, in-code answers to "tell me about a hard problem you solved."</p>
+    <div class="highs">
+      <div class="high">
+        <div class="n">writeQueue.ts + Rust</div>
+        <h4>Two-layer write safety</h4>
+        <p>Rust writes <b>atomically</b> (temp file + rename under a per-path mutex) so a reader never sees a torn file. A TS <code>enqueueWrite</code> chains writes per file so <b>ordering</b> is preserved and the last save wins. Atomicity and ordering, cleanly separated.</p>
+      </div>
+      <div class="high">
+        <div class="n">watcher.rs</div>
+        <h4>Live external-edit reconciliation</h4>
+        <p>Agents and the MCP sidecar edit <code>.saple/</code> behind the app's back. Rust watches the project and emits <code>saple-file-changed</code>; the UI force-reloads the affected store before its next save can clobber the change - reading the live project path so it never reloads into the wrong project.</p>
+      </div>
+      <div class="high">
+        <div class="n">keychain.rs</div>
+        <h4>Secrets in the OS keychain</h4>
+        <p>API keys never touch JSON, localStorage, markdown, or component state. They live under the OS keychain account <code>saple_bridge_user</code>. A real security boundary, enforced as an architectural rule.</p>
+      </div>
+      <div class="high">
+        <div class="n">App.tsx</div>
+        <h4>Instant room switching</h4>
+        <p>Heavy, stateful rooms are kept mounted after first visit and toggled with CSS visibility - no xterm dispose/replay, no remount. Light rooms render on demand. Everything is <code>React.lazy</code> + Suspense.</p>
+      </div>
+      <div class="high">
+        <div class="n">saple-mcp sidecar</div>
+        <h4>Bundled MCP server</h4>
+        <p>A sibling project shipped as a Tauri sidecar. On release it's staged to a stable per-user path so <code>.mcp.json</code> never points at the versioned, ACL-restricted MSIX install directory.</p>
+      </div>
+      <div class="high">
+        <div class="n">--features ms-store</div>
+        <h4>Store-aware builds</h4>
+        <p>Store builds compile the in-app updater out entirely - the Microsoft Store owns updates for MSIX, and a dormant updater is a policy liability. Non-store builds keep the Tauri updater. One codebase, two channels.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONNECTION FLOW -->
+  <section id="flow">
+    <div class="eyebrow">How Everything Connects</div>
+    <h2>One save, traced end to end</h2>
+    <p class="section-lede">Follow a single Kanban edit from a click to the disk and back - it touches every layer.</p>
+    <div class="flow">
+      <div class="step"><div class="num">1</div><div><h4>User drags a card</h4><p>React updates <code>kanbanStore</code> optimistically so the UI feels instant.</p></div></div>
+      <div class="step"><div class="num">2</div><div><h4>The store enqueues a write</h4><p><code>enqueueWrite('tasks', ...)</code> serializes it behind any in-flight save for the same file.</p></div></div>
+      <div class="step"><div class="num">3</div><div><h4>invoke crosses into Rust</h4><p><code>write_project_file</code> writes to a temp file and renames it, under a per-path mutex - atomic, never torn.</p></div></div>
+      <div class="step"><div class="num">4</div><div><h4>An agent edits the same file</h4><p>Meanwhile the MCP sidecar writes <code>tasks.json</code> too. <code>watcher.rs</code> notices and emits <code>saple-file-changed</code>.</p></div></div>
+      <div class="step"><div class="num">5</div><div><h4>The UI reconciles</h4><p>React force-reloads <code>kanbanStore</code> from disk so its in-memory copy matches - before the next save. Human and agent stay in sync.</p></div></div>
+    </div>
+  </section>
+
+  <!-- ECOSYSTEM -->
+  <section id="ecosystem">
+    <div class="eyebrow">The Ecosystem</div>
+    <h2>Bridge is one app of four</h2>
+    <p class="section-lede">The apps connect through a localhost-only, token-authed control endpoint - three operations, a monotonic event log, resumable observation, and idempotent commands. Opt-in and default-off. Not a shared database, not a cloud.</p>
+    <div class="eco">
+      <div class="app me">
+        <span class="badge b-live">● Published</span>
+        <h4>Saple Bridge</h4>
+        <p>The workspace. Live on the Microsoft Store.</p>
+      </div>
+      <div class="app">
+        <span class="badge b-live">● Published</span>
+        <h4>ClearShot</h4>
+        <p>Part of the suite.</p>
+      </div>
+      <div class="app">
+        <span class="badge b-review">◐ In review</span>
+        <h4>Eve</h4>
+        <p>In Microsoft Store review.</p>
+      </div>
+      <div class="app">
+        <span class="badge b-dev">○ In development</span>
+        <h4>June</h4>
+        <p>The orchestrator - drives Bridge through the control endpoint (<code style="font-family:var(--mono);font-size:12px">june_control.rs</code>).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq">
+    <div class="eyebrow">Quick Answers</div>
+    <h2>The questions you'll get asked</h2>
+    <p class="section-lede">Crisp, defensible answers - each backed by the real code.</p>
+    <details open>
+      <summary>Why Tauri and not Electron?</summary>
+      <p>Smaller binary and memory footprint - it uses the OS webview instead of bundling Chromium - and Rust for the OS-facing work. It also packages cleanly to MSIX for the Microsoft Store.</p>
+    </details>
+    <details>
+      <summary>Where does data live? Is there a database?</summary>
+      <p>No server or DB. Everything is plain files inside the project's <code>.saple/</code> folder - JSON for tasks/swarm/sessions, markdown + frontmatter for memory. Secrets are the one exception: they live in the OS keychain.</p>
+    </details>
+    <details>
+      <summary>How do you prevent two writers from corrupting a file?</summary>
+      <p>Two layers. Rust writes atomically (temp file + rename under a per-path mutex) so reads are never torn. A TypeScript write-queue serializes writes per file so ordering is preserved and the last save wins.</p>
+    </details>
+    <details>
+      <summary>How does the UI stay in sync when an agent edits files directly?</summary>
+      <p>A Rust file watcher emits a <code>saple-file-changed</code> event; the frontend force-reloads the affected store before its next save, using the live project path so it can't reload into the wrong project.</p>
+    </details>
+    <details>
+      <summary>How do your different apps talk to each other?</summary>
+      <p>Through a localhost-only, token-authed control endpoint with three operations (capabilities / command / observe), a monotonic event log, resumable observation, and idempotent commands. It's opt-in and default-off.</p>
+    </details>
+    <details>
+      <summary>What was the hardest part?</summary>
+      <p>Getting write-safety and external-edit reconciliation right. The app and autonomous agents write the same files concurrently, so I separated atomicity (Rust) from ordering (TS) and reconcile external edits without clobbering in-flight saves.</p>
+    </details>
+    <details>
+      <summary>What are the limits, and what's next?</summary>
+      <p>Local-first means no built-in multi-device sync - that's the deliberate tradeoff for privacy and simplicity. Cross-machine sync is the natural next feature, and it'd have to preserve the "your data is just files" guarantee.</p>
+    </details>
+  </section>
+
+  <footer>
+    Saple Bridge · a local-first AI development workspace · Tauri 2 · React 19 · Rust<br/>
+    Built and shipped as part of the Saple ecosystem - Bridge, ClearShot, Eve, June.
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var btn = document.getElementById('themeBtn');
+    var root = document.documentElement;
+    function current() {
+      if (root.getAttribute('data-theme')) return root.getAttribute('data-theme');
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    btn.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+    });
+  })();
+</script>
+</body>
+</html>

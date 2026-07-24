@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { useProjectStore } from './projectStore';
 
 // Embedded browser state, per workspace instance (mirrors terminalStore's workspace maps):
 // each workspace has its own tabs/active tab/panel width, persisted so a restart restores
@@ -260,6 +262,21 @@ export const useBrowserStore = create<BrowserState>()(
     }
   )
 );
+
+/**
+ * Open a link in the built-in browser panel (new tab in the current workspace) instead of
+ * the OS browser. Falls back to the OS for non-web schemes (mailto:) or when no workspace
+ * is active. Switches to the terminals view - the browser panel only renders there.
+ */
+export function openLink(url: string) {
+  const workspaceId = useProjectStore.getState().currentWorkspaceId;
+  if (!workspaceId || !/^https?:\/\//i.test(url)) {
+    void openUrl(url).catch((err) => console.error('Failed to open URL:', err));
+    return;
+  }
+  useProjectStore.getState().setActiveView('terminals');
+  useBrowserStore.getState().newTab(workspaceId, url);
+}
 
 // Rust pushes every navigation (link clicks, redirects, back/forward) here so the URL bar
 // and tab labels track the page without polling. Initialized once from BrowserPanel.
