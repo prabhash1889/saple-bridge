@@ -119,7 +119,11 @@ pub async fn canonical_record_write(
     id: String,
     patch: Value,
     create: bool,
+    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
 ) -> Result<Value, String> {
+    // The inner writer is shared with trusted Rust callers (review.rs), so the renderer-side
+    // trust gate lives here at the command boundary rather than inside the shared body.
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         canonical_write_inner(project_path, file_path, id, patch, create)
     })

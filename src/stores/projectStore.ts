@@ -128,6 +128,9 @@ export const useProjectStore = create<ProjectState>()(
       const loadWorkspaceData = async (path: string) => {
         set({ workspaceLoading: true, workspaceError: null });
         try {
+          // Register this workspace's root with the Rust-side approved-roots registry
+          // (validated restoration: Rust rejects stale or inaccessible directories).
+          await invoke('register_project_root', { path });
           await invoke('ensure_workspace_dirs', { projectPath: path });
           const config = await invoke<WorkspaceConfig>('ensure_project_config', { projectPath: path });
           const summary = await invoke<WorkspaceSummary>('get_workspace_summary', { projectPath: path });
@@ -269,6 +272,9 @@ export const useProjectStore = create<ProjectState>()(
           // openWorkspace) still falls through and fetches because summary is not persisted.
           if (get().workspaceSummary?.path === path && get().workspaceConfig) return;
           try {
+            // Cold-start restoration of the persisted active workspace: re-approve its
+            // root through Rust validation before any project command runs against it.
+            await invoke('register_project_root', { path });
             const config = await invoke<WorkspaceConfig>('read_project_config', { projectPath: path });
             const summary = await invoke<WorkspaceSummary>('get_workspace_summary', { projectPath: path });
             set({ workspaceConfig: config, workspaceSummary: summary });

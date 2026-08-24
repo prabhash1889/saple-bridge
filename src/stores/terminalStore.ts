@@ -7,7 +7,7 @@ import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
-import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
+import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, getPlanSignalFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
 
@@ -97,8 +97,10 @@ interface TerminalState {
   getLatestSequence: (paneId: string) => number;
   // `workspaceId` pins the pane to a specific workspace instance instead of the active one. Used
   // by the swarm launch path (P11) so late dependent agents still land in the swarm's own instance
-  // even after the user has flipped back to their interactive instance.
-  addPane: (cwd: string, aiProvider?: AiProvider, model?: string, promptFile?: string, customCommand?: string, workspaceId?: string) => Promise<string>;
+  // even after the user has flipped back to their interactive instance. `interactivePrompt` (Phase
+  // 3 live coordinator) launches the CLI as an interactive TUI and types the prompt file into it
+  // after startup instead of piping it on stdin.
+  addPane: (cwd: string, aiProvider?: AiProvider, model?: string, promptFile?: string, customCommand?: string, workspaceId?: string, interactivePrompt?: boolean) => Promise<string>;
   splitPane: (paneId: string, cwd: string) => Promise<string>;
   removePane: (paneId: string) => Promise<void>;
   confirmRemovePane: (paneId: string) => void;
@@ -442,6 +444,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
               if (useSwarmStore.getState().loadedProjectPath !== projectPath) return;
               const linkedAgent = useSwarmStore.getState().activeAgents.find((agent) => agent.terminalId === id);
               if (!linkedAgent) return;
+              // Swarm v2: a coordinator's plan marker drives plan intake (materialize workers). The
+              // watcher event is the fallback; the marker is the primary, ms-latency trigger.
+              if (getPlanSignalFromOutput(signalTail, linkedAgent.marker)) {
+                void useSwarmStore.getState().ingestPlan(projectPath);
+              }
               const scopedReview = hasReviewSignal(signalTail, linkedAgent.marker);
               const nextSwarmStatus = getSwarmStatusFromOutput(signalTail, scopedReview, linkedAgent.marker);
               if (!nextSwarmStatus || linkedAgent.status === nextSwarmStatus) return;
@@ -549,7 +556,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
 
     getLatestSequence: (paneId) => paneLatestSequence.get(paneId) ?? 0,
 
-    addPane: async (cwd, aiProvider, model, promptFile, customCommand, workspaceId) => {
+    addPane: async (cwd, aiProvider, model, promptFile, customCommand, workspaceId, interactivePrompt) => {
       const id = createId('term');
       const workspacePath = cwd || getActiveWorkspacePath() || '';
       // Panes go to the active workspace instance unless a specific one is pinned (P11 swarm launch);
@@ -585,7 +592,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         focusedPaneId: getActiveWorkspaceKey() === workspaceKey ? id : state.focusedPaneId,
       }));
 
-      invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand, sessionUuid: claudeSessionId }).catch((err) => {
+      invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand, sessionUuid: claudeSessionId, interactivePrompt }).catch((err) => {
         failPaneSpawn(id, err);
       });
 

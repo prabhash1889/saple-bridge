@@ -14,15 +14,26 @@ mod files;
 mod diagnostics;
 mod process_ext;
 mod fs_lock;
+mod project_roots;
 mod watcher;
 
+use project_roots::ProjectRootRegistry;
+
 #[tauri::command]
-fn select_directory() -> Option<String> {
+fn select_directory(registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>) -> Option<String> {
     let folder = rfd::FileDialog::new()
         .set_title("Select Project Directory")
         .pick_folder();
-        
-    folder.map(|path| path.to_string_lossy().to_string())
+
+    // The native dialog is one of only two ways a root becomes trusted. Register
+    // canonically before handing the path back to the renderer; on any registration
+    // failure the selection is treated as cancelled rather than returned untrusted.
+    folder.and_then(|path| {
+        registry
+            .register_root(&path)
+            .ok()
+            .map(|_| path.to_string_lossy().to_string())
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,11 +80,20 @@ pub fn run() {
             // June control endpoint: a per-process token, then start the loopback server only if the
             // user opted in (default off, no open port). See june_control.rs.
             app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
+            // Panes June spawned and may drive with terminal actions; everything else is refused.
+            app.manage(june_control::JuneTerminalScopes::default());
+            // Registry of approved project roots (canonical absolute paths). Lives only in
+            // Rust memory: roots are added by native directory selection or validated
+            // restoration, and every privileged command verifies against it before touching
+            // the filesystem or spawning a process (sub-phase 1B). Arc-shared so commands can
+            // move a handle into their blocking workers.
+            app.manage(std::sync::Arc::new(project_roots::ProjectRootRegistry::new()));
             june_control::start(app.handle().clone());
             Ok(())
         })
         .manage(pty::PtyRegistry::new())
         .manage(watcher::WatcherState::new())
+        .manage(watcher::SwarmWatcherState::new())
         // Restore the window's last size/position/maximized state on launch and save it on exit.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -96,6 +116,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             select_directory,
+            project_roots::register_project_root,
+            project_roots::release_project_root,
             pty::spawn_pty,
             claude_context::get_claude_context_usage,
             pty::write_pty,
@@ -144,6 +166,9 @@ pub fn run() {
             june_control::june_control_set_enabled,
             june_control::june_command_result,
             june_control::june_emit_event,
+            june_control::june_permit_terminals,
+            june_control::june_ensure_terminal_permitted,
+            june_control::june_revoke_terminal,
             swarm::read_swarm_state,
             swarm::write_swarm_state,
             swarm::read_mailbox_file,
@@ -151,6 +176,7 @@ pub fn run() {
             swarm::read_handoff_file,
             swarm::write_handoff_file,
             swarm::validate_dependency_graph,
+            swarm::run_acceptance_command,
             files::list_project_files,
             files::read_text_file,
             files::write_text_file,
@@ -166,6 +192,8 @@ pub fn run() {
             diagnostics::check_provider_signin,
             watcher::watch_project_files,
             watcher::unwatch_project_files,
+            watcher::watch_swarm_dir,
+            watcher::unwatch_swarm_dir,
             browser::browser_open_tab,
             browser::browser_close_tab,
             browser::browser_set_bounds,
@@ -175,6 +203,7 @@ pub fn run() {
             browser::browser_forward,
             browser::browser_reload,
             browser::agent_browser_get_enabled,
+            browser::agent_browser_active_port,
             browser::agent_browser_set_enabled
         ])
         .run(tauri::generate_context!())

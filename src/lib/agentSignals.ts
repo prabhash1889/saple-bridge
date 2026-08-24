@@ -22,8 +22,12 @@ export const SIGNAL_REVIEW_RE =
 const MARKER_TOKEN_RE = /^[A-Za-z0-9_-]+$/;
 
 // Compiled scoped regexes are cached per token — the same handful of agent tokens are matched
-// against every PTY burst, so recompiling on each call would be wasteful.
-const scopedCache = new Map<string, { done: RegExp; failed: RegExp; review: RegExp }>();
+// against every PTY burst, so recompiling on each call would be wasteful. `planReady`/`planUpdated`
+// are the coordinator's plan-lifecycle markers (Swarm v2): always scoped, never bare.
+const scopedCache = new Map<
+  string,
+  { done: RegExp; failed: RegExp; review: RegExp; planReady: RegExp; planUpdated: RegExp }
+>();
 
 const scopedFor = (marker: string) => {
   const cached = scopedCache.get(marker);
@@ -34,6 +38,8 @@ const scopedFor = (marker: string) => {
     done: new RegExp(`^\\s*\\[(?:AGENT_DONE|TASK_COMPLETE|TASK_DONE):${marker}\\]\\s*$`, 'm'),
     failed: new RegExp(`^\\s*\\[(?:AGENT_FAILED|TASK_FAILED):${marker}\\]\\s*$`, 'm'),
     review: new RegExp(`^\\s*\\[(?:AGENT_REVIEW|REVIEW_REQUESTED):${marker}\\]\\s*$`, 'm'),
+    planReady: new RegExp(`^\\s*\\[PLAN_READY:${marker}\\]\\s*$`, 'm'),
+    planUpdated: new RegExp(`^\\s*\\[PLAN_UPDATED:${marker}\\]\\s*$`, 'm'),
   };
   scopedCache.set(marker, built);
   return built;
@@ -57,7 +63,24 @@ export const mightContainSignal = (tail: string) =>
 // agents when the tail actually contains a marker keyword. A user typing `arr[0]` passes the
 // coarse `mightContainSignal` filter but not this one, so it never reaches for swarm state.
 export const mightContainAgentMarker = (tail: string) =>
-  tail.includes('AGENT_') || tail.includes('TASK_') || tail.includes('REVIEW');
+  tail.includes('AGENT_') ||
+  tail.includes('TASK_') ||
+  tail.includes('REVIEW') ||
+  tail.includes('PLAN_');
+
+// Coordinator plan-lifecycle detection (Swarm v2). Plan markers are always scoped to the
+// coordinator's token, so a missing/malformed marker yields no signal (unlike the bare-fallback
+// status markers). `PLAN_UPDATED` wins when both are present — it's the later, more specific event.
+export const getPlanSignalFromOutput = (
+  tail: string,
+  marker?: string,
+): 'plan_ready' | 'plan_updated' | null => {
+  if (!hasMarker(marker)) return null;
+  const scoped = scopedFor(marker);
+  if (scoped.planUpdated.test(tail)) return 'plan_updated';
+  if (scoped.planReady.test(tail)) return 'plan_ready';
+  return null;
+};
 
 // `reviewMatched` is the already-computed `hasReviewSignal` result (with the same `marker`),
 // threaded in so the review regex isn't run a second time here.

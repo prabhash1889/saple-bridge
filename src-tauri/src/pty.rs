@@ -258,6 +258,18 @@ fn provider_accepts_prompt_pipe(provider: &str) -> bool {
     !matches!(provider, "cursor" | "copilot")
 }
 
+// Interactive prompt delivery (Phase 3 live coordinator): how long to wait after spawn before
+// typing the prompt into the provider TUI, and the gap between the paste and the Enter keypress.
+// ponytail: fixed delay; promote to a per-provider readiness probe if a CLI proves slower to boot.
+const INTERACTIVE_PROMPT_DELAY: Duration = Duration::from_millis(2500);
+const INTERACTIVE_ENTER_DELAY: Duration = Duration::from_millis(250);
+
+/// Wrap an injected prompt in a bracketed-paste sequence so TUIs treat embedded newlines as
+/// pasted text rather than individual Enter presses. CRLF is normalized to LF first.
+fn bracketed_paste(prompt: &str) -> String {
+    format!("\x1b[200~{}\x1b[201~", prompt.replace("\r\n", "\n"))
+}
+
 // `spawn_pty`'s provider/model/prompt-file inputs cross the renderer→Rust trust boundary and are
 // interpolated into a `powershell -Command` / `bash -lc` string, so everything that reaches that
 // string must pass through the validators below. (`custom_command` is exempt by design: like the
@@ -310,6 +322,61 @@ fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
 
 // The renderer passes each spawn input as a named field; a params struct would just be unpacked
 // again on both sides for no gain.
+/// Environment variables the renderer may never set on a spawned pane. Each one changes
+/// which code a shell or interpreter executes at startup (`PATH` alone decides which
+/// binaries run), so a compromised renderer could otherwise hijack every agent session by
+/// spawning a pane with a crafted value. Compared case-insensitively: Windows env keys
+/// are case-insensitive and adversarial casing must not slip past the table.
+fn is_forbidden_env_key(key: &str) -> bool {
+    const FORBIDDEN: &[&str] = &[
+        // Search paths that decide which executables/modules load.
+        "path",
+        "node_path",
+        "pythonpath",
+        "pythonhome",
+        "ld_library_path",
+        "dyld_library_path",
+        "dyld_framework_path",
+        // Code executed automatically at startup.
+        "node_options",
+        "pythonstartup",
+        "psmodulepath",
+        "ld_preload",
+        "dyld_insert_libraries",
+        "bash_env",
+        "env",
+        "rubyopt",
+        "perl5opt",
+        "perl5lib",
+        // Windows shell resolution.
+        "comspec",
+    ];
+    let k = key.to_ascii_lowercase();
+    FORBIDDEN.contains(&k.as_str())
+}
+
+/// Provider credential variables are constructed by Rust from the OS keychain; renderer-
+/// supplied values for these names are refused so a pane can never run with attacker-chosen
+/// credentials (or shadow the keychain-injected ones).
+fn is_provider_env_key(key: &str) -> bool {
+    const PROVIDER_KEYS: &[&str] = &[
+        "openai_api_key",
+        "anthropic_api_key",
+        "gemini_api_key",
+        "google_api_key",
+        "opencode_api_key",
+        "openrouter_api_key",
+        "cursor_api_key",
+        "factory_api_key",
+        "github_token",
+        "pi_api_key",
+        "grok_api_key",
+        "custom_api_key",
+    ];
+    let k = key.to_ascii_lowercase();
+    PROVIDER_KEYS.contains(&k.as_str())
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn spawn_pty(
@@ -321,9 +388,17 @@ pub async fn spawn_pty(
     prompt_file: Option<String>,
     custom_command: Option<String>,
     session_uuid: Option<String>,
+    interactive_prompt: Option<bool>,
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
+    roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    // Trust boundary (Phase 1): a pane may only run inside an approved project root or,
+    // as the one deliberate exception, the user's home directory (plain home shells).
+    if !cwd.is_empty() {
+        roots.ensure_inside_approved_root_or_home(&cwd)?;
+    }
+
     // A duplicate id would overwrite the existing registry entry, leaking its child process and
     // reader/emitter/writer threads (kill_pty would only ever reap the survivor). Check up front
     // (cheap, before spawning anything); the insert below re-checks to close the race window.
@@ -345,8 +420,9 @@ pub async fn spawn_pty(
         Box<dyn Child + Send + Sync>,
         Box<dyn Read + Send>,
         Option<proc_tree::JobObject>,
+        Option<String>,
     );
-    let (writer, pair, child, mut reader, job) =
+    let (writer, pair, child, mut reader, job, injected_prompt) =
         tauri::async_runtime::spawn_blocking(move || -> Result<PtyParts, String> {
     // 1. Setup PTY system
     let pty_system = NativePtySystem::default();
@@ -376,6 +452,9 @@ pub async fn spawn_pty(
     // Tracks whether we launch the shell with a command (provider/custom). If
     // not, it's a plain terminal and we start a login shell below.
     let mut launched_command = false;
+    // Phase 3: prompt content to type into an interactively-launched CLI after startup, instead
+    // of piping it on stdin. Read here (inside the validators) and injected after spawn.
+    let mut injected_prompt: Option<String> = None;
 
     if let Some(provider) = ai_provider.as_deref() {
         if provider != "custom" {
@@ -387,12 +466,23 @@ pub async fn spawn_pty(
             if use_model_flag && !is_safe_model(model_str) {
                 return Err(format!("Invalid model name: {}", model_str));
             }
-            // Only redirect the prompt file into providers that accept a piped prompt.
+            let interactive_delivery = interactive_prompt.unwrap_or(false);
+            // Only redirect the prompt file into providers that accept a piped prompt, and never
+            // when the caller asked for interactive delivery (live coordinator: the CLI runs as a
+            // TUI and the prompt is typed into it once it is ready).
             let pipe_file = prompt_file
                 .as_ref()
-                .filter(|_| provider_accepts_prompt_pipe(provider));
+                .filter(|_| provider_accepts_prompt_pipe(provider) && !interactive_delivery);
             if let Some(p_file) = pipe_file {
                 validate_prompt_file(&cwd, p_file)?;
+            }
+            if interactive_delivery {
+                if let Some(p_file) = prompt_file.as_ref() {
+                    validate_prompt_file(&cwd, p_file)?;
+                    let resolved = crate::project::get_project_file_path(&cwd, p_file)?;
+                    injected_prompt =
+                        Some(std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?);
+                }
             }
 
             // Claude panes are tagged with a bridge-generated session id so the context
@@ -440,11 +530,11 @@ pub async fn spawn_pty(
                 }
             };
 
-            // Headless agent panes (prompt piped in) must let the shell EXIT when the CLI
-            // finishes, so `pty-exit` fires and the swarm scheduler gets a real completion
-            // signal even when the agent never printed a lifecycle marker. Interactive
-            // provider panes keep the shell alive after the CLI ends, as before.
-            let headless = pipe_file.is_some();
+            // Agent panes (prompt piped in OR delivered interactively) must let the shell EXIT
+            // when the CLI finishes, so `pty-exit` fires and the swarm gets a real completion /
+            // crash signal even when the agent never printed a lifecycle marker. Plain
+            // interactive provider panes keep the shell alive after the CLI ends, as before.
+            let headless = pipe_file.is_some() || injected_prompt.is_some();
             if cfg!(target_os = "windows") {
                 if !headless {
                     cmd.arg("-NoExit");
@@ -507,7 +597,16 @@ pub async fn spawn_pty(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
+    // Renderer env overrides are refused for execution-affecting and provider-credential
+    // keys (see `is_forbidden_env_key` / `is_provider_env_key`). Everything else the
+    // renderer sends still applies, on top of the defaults above.
     for (k, v) in env {
+        if is_forbidden_env_key(&k) || is_provider_env_key(&k) {
+            return Err(format!(
+                "Environment variable '{}' may not be set by the renderer",
+                k
+            ));
+        }
         cmd.env(k, v);
     }
     
@@ -561,7 +660,7 @@ pub async fn spawn_pty(
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
-    Ok((writer, pair, child, reader, job))
+    Ok((writer, pair, child, reader, job, injected_prompt))
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -570,6 +669,9 @@ pub async fn spawn_pty(
     // task). A bounded channel gives backpressure instead of unbounded growth if a child stalls;
     // 256 queued input events is far more than interactive use ever needs.
     let (writer_tx, writer_rx) = mpsc::sync_channel::<Vec<u8>>(256);
+    // Cloned for the (optional) interactive prompt injection thread below, before the original
+    // moves into the session struct. An unused clone just drops at end of scope.
+    let injection_tx = writer_tx.clone();
     let session = Arc::new(Mutex::new(PtySession {
         writer_tx: Some(writer_tx),
         pair,
@@ -609,6 +711,22 @@ pub async fn spawn_pty(
             // buffered, so a per-write flush is just a wasted syscall.
         }
     });
+
+    // Interactive prompt delivery (Phase 3): once the TUI has had time to start, type the prompt
+    // into it through the writer thread — bracketed paste, then Enter as its own keypress so TUIs
+    // that debounce pasted input still submit. If the session is killed first, the sends fail and
+    // the thread exits quietly.
+    if let Some(prompt) = injected_prompt {
+        let tx = injection_tx;
+        thread::spawn(move || {
+            thread::sleep(INTERACTIVE_PROMPT_DELAY);
+            if tx.send(bracketed_paste(&prompt).into_bytes()).is_err() {
+                return;
+            }
+            thread::sleep(INTERACTIVE_ENTER_DELAY);
+            let _ = tx.send(b"\r".to_vec());
+        });
+    }
 
     // 8. Spawn background threads for reading output.
     //
@@ -905,6 +1023,12 @@ mod tests {
     }
 
     #[test]
+    fn bracketed_paste_wraps_and_normalizes_newlines() {
+        assert_eq!(bracketed_paste("a\r\nb\nc"), "\x1b[200~a\nb\nc\x1b[201~");
+        assert_eq!(bracketed_paste(""), "\x1b[200~\x1b[201~");
+    }
+
+    #[test]
     fn prompt_file_accepts_contained_relative_path() {
         let dir = temp_project();
         assert!(validate_prompt_file(dir.to_str().unwrap(), ".saple/agents/prompts/p.md").is_ok());
@@ -922,5 +1046,82 @@ mod tests {
         assert!(validate_prompt_file(cwd, ".saple/missing.md").is_err());
         assert!(validate_prompt_file("", ".saple/agents/prompts/p.md").is_err());
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn forbidden_env_keys_table() {
+        struct Case {
+            key: &'static str,
+            forbidden: bool,
+        }
+        let cases = [
+            // Execution-affecting keys are denied in any casing.
+            Case { key: "PATH", forbidden: true },
+            Case { key: "path", forbidden: true },
+            Case { key: "Path", forbidden: true },
+            Case { key: "NODE_OPTIONS", forbidden: true },
+            Case { key: "node_options", forbidden: true },
+            Case { key: "PYTHONSTARTUP", forbidden: true },
+            Case { key: "PSModulePath", forbidden: true },
+            Case { key: "LD_PRELOAD", forbidden: true },
+            Case { key: "DYLD_INSERT_LIBRARIES", forbidden: true },
+            Case { key: "BASH_ENV", forbidden: true },
+            Case { key: "COMSPEC", forbidden: true },
+            Case { key: "RUBYOPT", forbidden: true },
+            Case { key: "PERL5OPT", forbidden: true },
+            // Benign keys still pass.
+            Case { key: "TERM", forbidden: false },
+            Case { key: "LANG", forbidden: false },
+            Case { key: "EDITOR", forbidden: false },
+            Case { key: "MY_APP_FLAG", forbidden: false },
+            // Prefix lookalikes must not be over-blocked.
+            Case { key: "PATHOLOGY", forbidden: false },
+            Case { key: "PATIENT_ID", forbidden: false },
+        ];
+        for case in &cases {
+            assert_eq!(
+                is_forbidden_env_key(case.key),
+                case.forbidden,
+                "case '{}'",
+                case.key
+            );
+        }
+    }
+
+    #[test]
+    fn provider_env_keys_are_renderer_forbidden() {
+        for key in [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "openai_api_key",
+            "GITHUB_TOKEN",
+            "GEMINI_API_KEY",
+            "CUSTOM_API_KEY",
+        ] {
+            assert!(is_provider_env_key(key), "{key} must be refused");
+        }
+        assert!(!is_provider_env_key("MY_API_KEY"));
+    }
+
+    #[test]
+    fn spawn_cwd_requires_approved_root_or_home() {
+        let registry = crate::project_roots::ProjectRootRegistry::new();
+        let home_ok = match std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+            Some(home) => PathBuf::from(home).canonicalize().unwrap(),
+            None => return,
+        };
+
+        // The intentional home-shell mode passes with zero approved roots.
+        assert!(registry.verify_inside_approved_root_or_home(&home_ok));
+
+        // An unregistered project directory fails closed.
+        let stranger = temp_project().parent().unwrap().to_path_buf();
+        let outside = if stranger.starts_with(&home_ok) {
+            // temp dirs live under the user profile; use a path that provably escapes it.
+            home_ok.parent().map(|p| p.to_path_buf()).unwrap_or(stranger)
+        } else {
+            stranger
+        };
+        assert!(!registry.verify_inside_approved_root_or_home(&outside));
     }
 }

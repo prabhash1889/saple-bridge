@@ -6,17 +6,33 @@ import { enqueueWrite } from '../lib/writeQueue';
 import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
-import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
+import type {
+  SwarmPlan,
+  AutonomyMode,
+  Verdict,
+  VerdictDecision,
+  AcceptanceStatus,
+  EscalationReason,
+  SwarmEscalation,
+} from '../types/swarmPlan';
 import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
+import { useConfirmStore } from './confirmStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
-import { contextBriefSection } from '../lib/contextBrief';
+import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
+import { buildAgentPrompt } from '../lib/swarmPrompts';
+import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, type DigestEntry } from '../lib/swarmDigest';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
+import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
+
+// T2 approval gate: extends the Phase 5 acceptance run state with a parked state where Bridge
+// holds the command until a human approves it in the confirmation dialog.
+export type SwarmAcceptanceStatus = AcceptanceStatus | 'awaiting_approval';
 
 export interface SwarmAgent {
   id: string;
@@ -46,6 +62,13 @@ export interface SwarmAgent {
   attempt?: number;
   maxAttempts?: number;
   lastReviewFeedback?: string;
+  // Phase 4 automated review gate. On an auto-generated reviewer: `reviewTaskId` is the plan task
+  // it judges (its verdict contract file is `verdicts/<reviewTaskId>.json`) and
+  // `reviewTargetAgentId` is the materialized agent that built that task. On the reviewed agent:
+  // `lastVerdict` is the last machine-read verdict Bridge processed for its task.
+  reviewTaskId?: string;
+  reviewTargetAgentId?: string;
+  lastVerdict?: VerdictDecision;
   // Ms epoch stamped when the agent last went `running`, for the elapsed-time badge (P9). Persisted
   // in state.json so the duration survives room/project switches and restart; re-stamped on relaunch.
   startedAt?: number;
@@ -79,6 +102,16 @@ interface SwarmState {
   contextFiles: ContextFileRef[];
   status: 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
   activeAgents: SwarmAgent[];
+  // Swarm v2 (Phase 2). The coordinator's parsed plan (last-read snapshot), the append-only set of
+  // plan task ids already materialized into the roster (dedup key for `diffPlan`), and the run's
+  // autonomy/wave/limit knobs. All persisted in state.json and round-tripped through reconciliation.
+  plan: SwarmPlan | null;
+  appliedPlanTaskIds: string[];
+  autonomy: AutonomyMode;
+  wave: number;
+  maxWaves: number;
+  // 0 = fall back to the global pane limit; a positive value caps concurrent agents below it.
+  maxParallel: number;
   templates: SwarmTemplate[];
   swarmActive: boolean;
   activeTemplateId: string | null;
@@ -93,11 +126,75 @@ interface SwarmState {
   // owns exclusively) so it never has to write back the agent-owned requests.json, and so an
   // approved/rejected request can't reappear or relaunch a duplicate worker across reloads.
   resolvedWorkerRequests: string[];
+  // Phase 3 (live coordinator). `digestLog` is the durable record of every results digest Bridge
+  // produced — relaunch prompts (fallback providers, crash recovery, restart) embed it so no
+  // digest is ever lost. `coordinatorCrashes` counts mid-swarm coordinator crashes (one free
+  // auto-relaunch; the second escalates to a human). `lastDigestWave` makes the wave digest fire
+  // once per wave. All three persist in state.json. `coordinatorState` is transient
+  // observability: what the live coordinator is doing right now.
+  digestLog: string[];
+  coordinatorCrashes: number;
+  lastDigestWave: number;
+  coordinatorState: 'planning' | 'idle' | 'digesting';
+  // Phase 5 (verified completion). `acceptanceStatus` is the run state of `plan.acceptance.command`
+  // executed by Bridge - `completed` requires `passed` whenever the plan carries a command.
+  // T2 adds `awaiting_approval`: the command has not been human-approved yet, so Bridge holds it
+  // (never invoking the backend runner) until the confirmation dialog is answered.
+  // `lastAcceptanceFailureHash` + `identicalAcceptanceFailures` implement the identical-failure
+  // short-circuit (two consecutive failures with the same trimmed-output hash escalate).
+  // `escalation` is the structured report handed to a human when repair waves are exhausted; it is
+  // also written to `.saple/swarm/escalation.json`. All persisted in state.json (a stale `running`
+  // reconciles to `idle` on load - the process died with the app).
+  acceptanceStatus: SwarmAcceptanceStatus;
+  lastAcceptanceOutput: string | null;
+  lastAcceptanceFailureHash: string | null;
+  identicalAcceptanceFailures: number;
+  escalation: SwarmEscalation | null;
+  // T2: hashes of acceptance commands a human approved, bound to the swarm run that earned them.
+  // Cleared on every new swarm and never honored across runs or projects.
+  acceptanceApprovals: AcceptanceApprovals | null;
 
   setPendingWizardMission: (mission: string | null) => void;
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
   saveSwarmState: (projectPath: string) => Promise<void>;
   startSwarmFromWizard: (input: WizardLaunchInput) => Promise<void>;
+  // Swarm v2 (Phase 2): mission-first launch. Seeds ONE coordinator; its plan.json materializes the
+  // workers. Replaces the wizard DAG as the real launch path.
+  startSwarm: (
+    projectPath: string,
+    mission: string,
+    options?: { autonomy?: AutonomyMode; maxParallel?: number; maxWaves?: number; provider?: AgentProvider; model?: string },
+  ) => Promise<void>;
+  // Read `.saple/swarm/plan.json`, sanitize it, and materialize any not-yet-applied tasks as worker
+  // agents wired by dependency. Idempotent (dedup on `appliedPlanTaskIds`); safe to call from the
+  // coordinator's plan marker, the plan.json watcher event, or coordinator completion.
+  ingestPlan: (projectPath: string) => Promise<void>;
+  // Phase 4: machine-read `verdicts/<taskId>.json` and drive the review gate without a human
+  // click: approve records the verdict (the finished reviewer already unblocks dependents),
+  // reject auto-reworks the builder with the feedback (bounded by its attempt budget; `manual`
+  // autonomy parks instead), and a missing/garbage verdict parks the task for a human — but only
+  // on the strict (reviewer-completion) path. The verdict watcher event calls it lenient
+  // (`strict` unset) so a mid-review file touch can never park or rework anything early.
+  ingestVerdict: (projectPath: string, taskId: string, options?: { strict?: boolean }) => Promise<void>;
+  // Phase 3: deliver a results digest to the coordinator. Records it in `digestLog`, then either
+  // injects it into the live coordinator's PTY as a typed user turn (injection-capable provider,
+  // pane alive — queued until the pane is idle), or relaunches the coordinator with the digest
+  // history embedded in its prompt (the fallback guarantee). `relaunch: false` restricts delivery
+  // to injection so per-task failure digests can't trigger a relaunch storm.
+  notifyCoordinator: (projectPath: string, digest: string, options?: { relaunch?: boolean }) => Promise<void>;
+  // Phase 5: run the plan's acceptance command through Bridge (never trusting an agent's claim)
+  // and route the result: pass -> synthesis digest (final report), fail -> guard rails
+  // (identical-failure / maxWaves escalation) or a repair digest asking for PLAN_UPDATED tasks.
+  // T2: an unapproved command is never sent to the backend - it parks in `awaiting_approval`
+  // and opens the human-approval dialog instead.
+  runAcceptance: (projectPath: string) => Promise<void>;
+  // T2: record a human approval for the plan's current acceptance command (scoped to this swarm
+  // run) and run it. Invoked by the approval dialog's Confirm.
+  approveAcceptanceCommand: (projectPath: string) => Promise<void>;
+  // Phase 5: stop looping and hand the swarm to a human with a structured report (state +
+  // `.saple/swarm/escalation.json`). The swarm parks as 'failed'; relaunching the coordinator or
+  // editing the plan are the existing manual paths out until the Phase 7 escalation panel.
+  escalateSwarm: (projectPath: string, reason: EscalationReason) => Promise<void>;
   pauseSwarm: (projectPath: string) => Promise<void>;
   resumeSwarm: (projectPath: string) => Promise<void>;
   stopSwarm: (projectPath: string) => Promise<void>;
@@ -334,6 +431,34 @@ const createMarker = (): string => {
   return Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
 };
 
+// ---- T2: acceptance-command approval gate ----------------------------------------------------
+// Agent-authored acceptance commands run verbatim in the operator's shell, so every distinct
+// command needs explicit human approval before its first execution. Approvals are recorded
+// against a hash of the exact command text (SHA-256 hex, mirrored by `acceptance_command_hash`
+// in src-tauri/src/swarm.rs so the backend re-verifies it) and are scoped hard to the swarm
+// run (`swarmId`) that earned them: a new swarm, a different project, or a restored old state
+// never honors them. The digest must be collision-resistant - agent-authored plans are
+// adversarial input, and a forgeable hash would let an agent swap the approved command for a
+// colliding malicious one after approval.
+
+export interface AcceptanceApprovals {
+  // The swarm run these approvals belong to. null never matches a live run.
+  swarmId: string | null;
+  hashes: string[];
+}
+
+export const hashAcceptanceCommand = async (command: string): Promise<string> => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(command));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+export const isAcceptanceCommandApproved = (
+  swarmId: string | null,
+  approvals: AcceptanceApprovals | null,
+  commandHash: string,
+): boolean =>
+  !!swarmId && approvals?.swarmId === swarmId && approvals.hashes.includes(commandHash);
+
 // P13: pty-exits for panes whose project isn't the loaded one, recorded by terminalStore and
 // replayed by loadSwarmState (after the marker-tail check, which wins when both exist). In-memory
 // on purpose: the switch-and-return scenario lives within one app session; across a restart the
@@ -356,6 +481,133 @@ const consumePendingAgentExits = (projectPath: string) => {
   return forProject;
 };
 
+// Statuses after which an agent will not run again without human/coordinator action. Mirrors the
+// scheduler's `allFinished` set.
+const FINISHED_AGENT_STATUSES: AgentStatus[] = ['done', 'failed', 'blocked', 'stopped'];
+
+// ---- Phase 3: live coordinator ---------------------------------------------------------------
+// The coordinator stays alive in an interactive TUI for the whole swarm; Bridge injects results
+// digests into its PTY as typed user turns. Module-level like the scan guard: one live swarm per
+// app session. Injection only happens when the pane has been quiet for IDLE_QUIET_MS (the "at its
+// input prompt" heuristic); digests queue while it is busy.
+const IDLE_QUIET_MS = 3000;
+const DIGEST_ENTER_DELAY_MS = 150;
+let coordinatorWatch: { paneId: string; unsubscribe: () => void } | null = null;
+let coordinatorLastOutputAt = 0;
+const digestQueue: string[] = [];
+let digestTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopCoordinatorWatch = () => {
+  coordinatorWatch?.unsubscribe();
+  coordinatorWatch = null;
+  digestQueue.length = 0;
+  if (digestTimer) {
+    clearTimeout(digestTimer);
+    digestTimer = null;
+  }
+};
+
+const watchCoordinatorPane = (paneId: string) => {
+  if (coordinatorWatch?.paneId === paneId) return;
+  coordinatorWatch?.unsubscribe();
+  coordinatorLastOutputAt = Date.now();
+  const unsubscribe = useTerminalStore.getState().subscribeOutput(paneId, () => {
+    coordinatorLastOutputAt = Date.now();
+  });
+  coordinatorWatch = { paneId, unsubscribe };
+};
+
+// Drain queued digests into the coordinator's PTY, one per idle window, then flip 'digesting'
+// back to 'idle' once its response settles. This is a settle-timer on live PTY output that only
+// runs while there is something to deliver — not a file poll.
+const pumpDigests = () => {
+  if (digestTimer) return;
+  const tick = async () => {
+    digestTimer = null;
+    const state = useSwarmStore.getState();
+    const paneId = coordinatorWatch?.paneId;
+    const coordinator = state.activeAgents.find((a) => a.role === 'coordinator');
+    if (!paneId || !coordinator || coordinator.terminalId !== paneId || state.status !== 'running') {
+      digestQueue.length = 0; // digests live on in digestLog; a relaunch prompt replays them
+      return;
+    }
+    const quietFor = Date.now() - coordinatorLastOutputAt;
+    if (quietFor < IDLE_QUIET_MS) {
+      digestTimer = setTimeout(tick, IDLE_QUIET_MS - quietFor + 50);
+      return;
+    }
+    if (digestQueue.length === 0) {
+      if (state.coordinatorState === 'digesting') useSwarmStore.setState({ coordinatorState: 'idle' });
+      return;
+    }
+    const digest = digestQueue.shift()!;
+    useSwarmStore.setState({ coordinatorState: 'digesting' });
+    try {
+      // Bracketed paste so the TUI treats embedded newlines as pasted text; Enter follows as its
+      // own keypress (mirrors the Rust-side interactive prompt delivery).
+      await invoke('write_pty', { id: paneId, data: `\u001b[200~${digest}\u001b[201~` });
+      await new Promise((resolve) => setTimeout(resolve, DIGEST_ENTER_DELAY_MS));
+      await invoke('write_pty', { id: paneId, data: '\r' });
+    } catch (error) {
+      console.error('Failed to inject digest into coordinator PTY:', error);
+    }
+    coordinatorLastOutputAt = Date.now(); // injection counts as activity: wait for quiet again
+    digestTimer = setTimeout(tick, IDLE_QUIET_MS);
+  };
+  digestTimer = setTimeout(tick, 0);
+};
+
+// Snapshot the workers (with best-effort outcome summaries) for a coordinator digest.
+const collectDigestEntries = async (projectPath: string): Promise<DigestEntry[]> => {
+  const workers = useSwarmStore.getState().activeAgents.filter((a) => a.role !== 'coordinator');
+  return Promise.all(
+    workers.map(async (a) => {
+      let summary: string | undefined;
+      try {
+        const raw = await invoke<string>('read_project_file', {
+          projectPath,
+          filePath: `.saple/swarm/outcomes/${a.id}.json`,
+        });
+        summary = parseAgentOutcome(JSON.parse(raw))?.summary;
+      } catch {
+        // no outcome written — statusReason (if any) carries the detail
+      }
+      return { taskId: a.taskId, name: a.name, role: a.role, status: a.status, statusReason: a.statusReason, summary };
+    }),
+  );
+};
+
+// Phase 4: serializes ingestVerdict per task. The reviewer-completion (strict) trigger and the
+// verdicts/* watcher event can fire for the same file back to back; without this, both could read
+// the same reject and rework the builder twice.
+const verdictsInFlight = new Set<string>();
+
+// T2: the human-approval dialog for an acceptance command. Shows exactly what will run, where,
+// where it came from, and its leash - then records a run-scoped approval on Confirm. Deny leaves
+// the swarm parked in `awaiting_approval`; the Swarm room banner re-opens this dialog.
+const ACCEPTANCE_TIMEOUT_SECS = 600;
+const requestAcceptanceApproval = (projectPath: string, command: string) => {
+  useConfirmStore.getState().confirm({
+    title: 'Run swarm acceptance command?',
+    message: [
+      'The agent-written plan asks Bridge to run this command to verify completion:',
+      '',
+      command,
+      '',
+      `Directory: ${projectPath}`,
+      'Source: .saple/swarm/plan.json acceptance contract',
+      `Timeout: ${ACCEPTANCE_TIMEOUT_SECS} seconds`,
+      '',
+      'Approval covers this exact command for this swarm run only.',
+    ].join('\n'),
+    confirmLabel: 'Approve & run',
+    cancelLabel: 'Deny',
+    onConfirm: () => {
+      void useSwarmStore.getState().approveAcceptanceCommand(projectPath);
+    },
+  });
+};
+
 // Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
 // updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
 // launch the same agent's PTY + prompt file twice. Concurrent triggers coalesce into one queued
@@ -368,80 +620,23 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
   try {
     await updateAgentStatus(projectPath, agent.id, 'starting');
 
-    const { mission, skills, contextFiles } = useSwarmStore.getState();
+    const { mission, skills, contextFiles, digestLog } = useSwarmStore.getState();
 
-    // Inject active swarm skills (global) into every agent's brief.
-    const activeSkills = SWARM_SKILLS.filter((s) => skills.includes(s.id));
-    const skillsSection = activeSkills.length > 0
-      ? `\n## Active Swarm Skills\n${activeSkills.map((s) => `- **${s.label}:** ${s.promptText}`).join('\n')}\n`
-      : '';
-    const contextSection = contextFiles.length > 0
-      ? `\n## Provided Context Files\nRead these files for additional context:\n${contextFiles.map((f) => `- ${f.path}`).join('\n')}\n`
-      : '';
+    // Phase 3: coordinators on injection-capable providers run LIVE — the CLI launches as an
+    // interactive TUI, the prompt is typed into it after startup, and results digests are
+    // injected into the same session later. Workers (and fallback-provider coordinators) stay
+    // headless with the prompt piped in.
+    const interactive = agent.role === 'coordinator' && providerSupportsTurnInjection(agent.provider || 'codex');
 
-    // P4: a rejected agent relaunches with the reviewer's feedback front-and-centre so its retry
-    // addresses the rejection rather than repeating the same work.
-    const reviewFeedbackSection = agent.lastReviewFeedback
-      ? `\n## Review Feedback (rework attempt ${agent.attempt ?? 2})\nA previous attempt was rejected in review. Address this feedback before signaling completion:\n\n${agent.lastReviewFeedback}\n`
-      : '';
-
-    // Scope this agent's completion markers to its own token so its status can't be flipped by
-    // another pane's output or by echoing the generic marker name. Older agents (restored from a
-    // pre-marker state.json) have no token — they keep using the bare markers.
-    const marker = agent.marker;
-    // P3: before signaling, an agent may record a structured outcome so reviewers see what it did
-    // without opening the terminal. Optional — a marker on its own still completes the agent.
-    const outcomeSection = `## Structured Outcome (optional but recommended)
-Before you signal completion, write your outcome as JSON to \`.saple/swarm/outcomes/${agent.id}.json\`:
-\`\`\`json
-{ "summary": "one line on what you did", "changedFiles": ["path/to/file"], "tests": { "command": "npm test", "passed": true }, "decisions": ["a decision you made"], "needsReview": true }
-\`\`\`
-`;
-    // P6: coordinators may need another specialist mid-run. They RECORD a request (Bridge shows it
-    // for human approval and does the launching); they never spawn processes themselves.
-    const workerRequestSection = agent.role === 'coordinator'
-      ? `## Requesting a New Worker (optional — needs human approval)
-If you need another specialist during execution, append a request to \`.saple/swarm/requests.json\`
-(a JSON array — create it if missing; keep existing entries). Do NOT spawn any process yourself.
-Each request needs a unique \`id\` and a \`mission\`:
-\`\`\`json
-{ "id": "unique-request-id", "role": "builder", "provider": "codex", "model": "default", "mission": "what the worker must do", "dependsOn": ["${agent.id}"] }
-\`\`\`
-Bridge shows the request to the operator; approved workers join the swarm under the parallel-agent limit.
-`
-      : '';
-    const signalsSection = (marker
-      ? `## Review / Completion Signals
-Emit EXACTLY ONE of these on its own line when you finish. The \`:${marker}\` suffix identifies
-you — a signal without it is ignored, so always include it verbatim:
-- Success: \`[AGENT_DONE:${marker}]\`
-- Human review needed: \`[REVIEW_REQUESTED:${marker}]\`
-- Fatal failure: \`[AGENT_FAILED:${marker}]\`
-`
-      : `## Review / Completion Signals
-- When you are finished, output \`[AGENT_DONE]\` or \`[TASK_COMPLETE]\` to signify success.
-- If you require human review, output \`[REVIEW_REQUESTED]\` or \`## REVIEW REQUIRED\`.
-- If you encounter a fatal failure, output \`[AGENT_FAILED]\` or \`[TASK_FAILED]\`.
-`) + outcomeSection + workerRequestSection;
-
-    // Generate prompt content
-    const promptContent = `# Swarm Agent Mission Instructions
-
-**Mission:** ${mission || "Execute coordinated tasks"}
-**Agent Name:** ${agent.name}
-**Role:** ${agent.role}
-**Agent ID:** ${agent.id}
-
-## System Instructions
-${agent.systemPrompt}
-
-## Swarm Integration Context
-- Dependencies: ${agent.dependencies.join(', ') || 'None'}
-- Mailbox Path: .saple/swarm/mailbox/${agent.id}.md (Write your updates/output here)
-- Handoff Path: .saple/swarm/handoffs/${agent.id}-to-[next_agent].json
-${skillsSection}${contextSection}${reviewFeedbackSection}
-${contextBriefSection({ role: agent.role, agentId: agent.id })}
-${signalsSection}`;
+    // Coordinators get the plan-contract brief; workers get their own systemPrompt (the plan task
+    // mission) as the assignment. Built in swarmPrompts.ts (Phase 2).
+    const promptContent = buildAgentPrompt(agent, {
+      mission,
+      skills,
+      contextFiles,
+      digests: agent.role === 'coordinator' ? digestLog : undefined,
+      live: interactive,
+    });
 
     const promptFile = `.saple/agents/prompts/swarm_${agent.id}.md`;
     await invoke('write_project_file', {
@@ -459,6 +654,16 @@ ${signalsSection}`;
       content: '{}',
     }).catch(() => {});
 
+    // Phase 4: a review-gate reviewer must never have its verdict read from a previous review
+    // round, so clear it on every (re)launch. `{}` parses to "no verdict" (parseVerdict → null).
+    if (agent.reviewTaskId) {
+      await invoke('write_project_file', {
+        projectPath,
+        filePath: `.saple/swarm/verdicts/${agent.reviewTaskId}.json`,
+        content: '{}',
+      }).catch(() => {});
+    }
+
     // 1. Spawn terminal pane. spawn_pty launches the provider CLI with this prompt
     // file piped in, so no separate launch command is written to the PTY.
     const provider = agent.provider || 'codex';
@@ -467,15 +672,23 @@ ${signalsSection}`;
     // P11: pin the pane to the swarm's own workspace instance so it doesn't land in whatever
     // instance the user currently has active.
     const swarmWorkspaceId = useSwarmStore.getState().swarmWorkspaceId || undefined;
-    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile, undefined, swarmWorkspaceId);
+    const paneId = await useTerminalStore.getState().addPane(projectPath, provider, agent.model, promptFile, undefined, swarmWorkspaceId, interactive);
+
+    // Phase 3: track the live coordinator's output for the busy/idle injection heuristic.
+    if (interactive) {
+      watchCoordinatorPane(paneId);
+      useSwarmStore.setState({ coordinatorState: 'planning' });
+    }
 
     // 2. Set terminal metadata
     useTerminalStore.getState().updateSession(paneId, {
       name: `${agent.name} (${agent.role.toUpperCase()})`
     });
 
-    // 3. Link agent status to terminal ID and set session ID
-    const session = await useAgentSessionStore.getState().createSession({
+    // 3. Record the canonical run session. It is linked back to the agent by terminal pane
+    // (getSessionByTerminalId) — `taskId` stays the PLAN task id (verdict routing + cross-wave
+    // dependency mapping key), never the session id.
+    await useAgentSessionStore.getState().createSession({
       projectPath,
       name: agent.name,
       cwd: projectPath,
@@ -486,7 +699,7 @@ ${signalsSection}`;
       terminalId: paneId,
     });
 
-    await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, taskId: session.id, startedAt: Date.now() });
+    await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, startedAt: Date.now() });
   } catch (error) {
     console.error(`Failed to launch agent ${agent.id}:`, error);
     await updateAgentStatus(projectPath, agent.id, 'failed', { statusReason: `Launch failed: ${error}` });
@@ -504,12 +717,28 @@ export const useSwarmStore = create<SwarmState>()(
       contextFiles: [],
       status: 'idle',
       activeAgents: [],
+      plan: null,
+      appliedPlanTaskIds: [],
+      autonomy: 'gated',
+      wave: 1,
+      maxWaves: 3,
+      maxParallel: 0,
       templates: DEFAULT_TEMPLATES,
       swarmActive: false,
       activeTemplateId: null,
       swarmWorkspaceId: null,
       pendingWizardMission: null,
       resolvedWorkerRequests: [],
+      digestLog: [],
+      coordinatorCrashes: 0,
+      lastDigestWave: 0,
+      coordinatorState: 'idle',
+      acceptanceStatus: 'idle',
+      lastAcceptanceOutput: null,
+      lastAcceptanceFailureHash: null,
+      identicalAcceptanceFailures: 0,
+      escalation: null,
+      acceptanceApprovals: null,
 
       setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
 
@@ -592,11 +821,41 @@ export const useSwarmStore = create<SwarmState>()(
             activeTemplateId: parsed.templateId || null,
             swarmWorkspaceId: parsed.swarmWorkspaceId || null,
             resolvedWorkerRequests: parsed.resolvedWorkerRequests || [],
+            plan: parsed.plan || null,
+            appliedPlanTaskIds: parsed.appliedPlanTaskIds || [],
+            autonomy: parsed.autonomy || 'gated',
+            wave: parsed.wave || 1,
+            maxWaves: parsed.maxWaves || 3,
+            maxParallel: parsed.maxParallel || 0,
+            digestLog: parsed.digestLog || [],
+            coordinatorCrashes: parsed.coordinatorCrashes || 0,
+            lastDigestWave: parsed.lastDigestWave || 0,
+            coordinatorState: 'idle',
+            // A persisted 'running' means the app died mid-acceptance; the process is gone, so
+            // reconcile to 'idle' - the allCompleted funnel re-runs it when the roster settles.
+            acceptanceStatus: parsed.acceptanceStatus === 'running' ? 'idle' : parsed.acceptanceStatus || 'idle',
+            lastAcceptanceOutput: parsed.lastAcceptanceOutput || null,
+            lastAcceptanceFailureHash: parsed.lastAcceptanceFailureHash || null,
+            identicalAcceptanceFailures: parsed.identicalAcceptanceFailures || 0,
+            escalation: parsed.escalation || null,
+            // T2: approvals only survive a reload while they still belong to THIS run - a state
+            // file whose approvals point at another swarm id (or none) loads with none.
+            acceptanceApprovals:
+              parsed.acceptanceApprovals?.swarmId === (parsed.swarmId || null)
+                ? parsed.acceptanceApprovals
+                : null,
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
             await get().saveSwarmState(projectPath);
           }
+          // Phase 3: re-arm the live coordinator's output watch (module state doesn't survive a
+          // project switch). Without it, notifyCoordinator would treat a healthy live pane as
+          // uninjectable and relaunch it.
+          const liveCoordinator = reconciledAgents.find(
+            (a) => a.role === 'coordinator' && a.status === 'running' && a.terminalId && liveSessions[a.terminalId],
+          );
+          if (liveCoordinator?.terminalId) watchCoordinatorPane(liveCoordinator.terminalId);
           // P13: replay recovered transitions now that this project's agents are loaded. Each one
           // persists, notifies, closes out the run/outcome, and advances dependents.
           for (const r of recovered) {
@@ -609,8 +868,12 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [] });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle', acceptanceStatus: 'idle', lastAcceptanceOutput: null, lastAcceptanceFailureHash: null, identicalAcceptanceFailures: 0, escalation: null, acceptanceApprovals: null });
         }
+        // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
+        // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
+        // yet (no swarm has run here); re-armed on the next load once it does.
+        void invoke('watch_swarm_dir', { projectPath }).catch(() => {});
       },
 
       saveSwarmState: async (projectPath) => {
@@ -624,6 +887,21 @@ export const useSwarmStore = create<SwarmState>()(
             templateId: get().activeTemplateId,
             swarmWorkspaceId: get().swarmWorkspaceId,
             resolvedWorkerRequests: get().resolvedWorkerRequests,
+            plan: get().plan,
+            appliedPlanTaskIds: get().appliedPlanTaskIds,
+            autonomy: get().autonomy,
+            wave: get().wave,
+            maxWaves: get().maxWaves,
+            maxParallel: get().maxParallel,
+            digestLog: get().digestLog,
+            coordinatorCrashes: get().coordinatorCrashes,
+            lastDigestWave: get().lastDigestWave,
+            acceptanceStatus: get().acceptanceStatus,
+            lastAcceptanceOutput: get().lastAcceptanceOutput,
+            lastAcceptanceFailureHash: get().lastAcceptanceFailureHash,
+            identicalAcceptanceFailures: get().identicalAcceptanceFailures,
+            escalation: get().escalation,
+            acceptanceApprovals: get().acceptanceApprovals,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -703,10 +981,432 @@ export const useSwarmStore = create<SwarmState>()(
           loadedProjectPath: projectPath,
           swarmWorkspaceId,
           resolvedWorkerRequests: [],
+          digestLog: [],
+          coordinatorCrashes: 0,
+          lastDigestWave: 0,
+          // T2: approvals never carry into a fresh run.
+          acceptanceApprovals: null,
         });
 
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
+      },
+
+      startSwarm: async (projectPath, mission, options = {}) => {
+        const {
+          autonomy = 'gated',
+          maxParallel = 0,
+          maxWaves = 3,
+          provider = 'codex',
+          model = 'default',
+        } = options;
+
+        try {
+          await invoke('ensure_workspace_dirs', { projectPath });
+        } catch (error) {
+          console.error('Failed to ensure workspace dirs:', error);
+        }
+
+        // P11: give the swarm its own workspace instance so its agent panes don't mix with the
+        // user's interactive terminals (same flow as startSwarmFromWizard).
+        const project = useProjectStore.getState();
+        await project.addWorkspace(projectPath);
+        const swarmWorkspaceId = useProjectStore.getState().currentWorkspaceId;
+        if (swarmWorkspaceId) {
+          const base = projectPath.split(/[\\/]/).pop() || projectPath;
+          project.renameWorkspace(swarmWorkspaceId, `${base} (swarm)`);
+        }
+
+        // Seed ONE coordinator. Its plan.json materializes every worker (see ingestPlan); the
+        // wizard DAG is gone. A fresh marker scopes its PLAN_READY/PLAN_UPDATED/AGENT_DONE signals.
+        const coordinator: SwarmAgent = {
+          id: 'coordinator',
+          name: 'Coordinator',
+          role: 'coordinator',
+          provider,
+          model,
+          systemPrompt: 'You are the Swarm Coordinator. Decompose the mission into a plan.',
+          dependencies: [],
+          marker: createMarker(),
+          status: 'idle',
+        };
+
+        set({
+          swarmId: createId('swarm'),
+          swarmName: 'Swarm',
+          mission,
+          skills: [],
+          contextFiles: [],
+          activeTemplateId: null,
+          activeAgents: [coordinator],
+          plan: null,
+          appliedPlanTaskIds: [],
+          autonomy,
+          wave: 1,
+          maxWaves,
+          maxParallel,
+          status: 'running',
+          swarmActive: true,
+          loadedProjectPath: projectPath,
+          swarmWorkspaceId,
+          resolvedWorkerRequests: [],
+          digestLog: [],
+          coordinatorCrashes: 0,
+          lastDigestWave: 0,
+          coordinatorState: 'planning',
+          acceptanceStatus: 'idle',
+          lastAcceptanceOutput: null,
+          lastAcceptanceFailureHash: null,
+          identicalAcceptanceFailures: 0,
+          escalation: null,
+          acceptanceApprovals: null,
+        });
+
+        await get().saveSwarmState(projectPath);
+        await get().checkAndRunNextAgents(projectPath);
+      },
+
+      ingestPlan: async (projectPath) => {
+        // Only the loaded project's swarm materializes here; an away-project plan is picked up when
+        // its swarm loads. Guards a watcher/marker event that fires just after a project switch.
+        if (get().loadedProjectPath !== projectPath) return;
+
+        let plan: SwarmPlan;
+        try {
+          const raw = await invoke<string>('read_project_file', {
+            projectPath,
+            filePath: '.saple/swarm/plan.json',
+          });
+          plan = parsePlan(JSON.parse(raw));
+        } catch {
+          return; // no plan written yet (the common case before PLAN_READY) or unreadable
+        }
+
+        const newTasks = diffPlan(get().appliedPlanTaskIds, plan);
+        if (newTasks.length === 0) {
+          set({ plan }); // keep the latest snapshot even when nothing new to apply
+          return;
+        }
+
+        // Map plan task ids -> the agent ids a dependent must wait for. A `review: true` task's
+        // gate is [builder, reviewer] (Phase 4): "done" means built AND the review gate finished,
+        // so dependents hold until the verdict is processed. Seed with agents already materialized
+        // in earlier waves, then pre-assign ids for this batch so a task depending on a sibling
+        // later in the same plan still resolves (parsePlan preserves input order, not topological
+        // order).
+        const taskGate = new Map<string, string[]>();
+        for (const a of get().activeAgents) {
+          const key = a.taskId ?? a.reviewTaskId;
+          if (key) taskGate.set(key, [...(taskGate.get(key) ?? []), a.id]);
+        }
+        const builderIds = newTasks.map(() => createId('agent'));
+        const reviewerIds = newTasks.map((t) => (t.review ? createId('agent') : null));
+        newTasks.forEach((task, i) => {
+          const reviewerId = reviewerIds[i];
+          taskGate.set(task.id, reviewerId ? [builderIds[i], reviewerId] : [builderIds[i]]);
+        });
+
+        // `provider: "auto"` resolves to the coordinator's provider for now (the Phase 6 subscription
+        // assigner refines this); an explicit provider is kept verbatim.
+        const coordinatorProvider = get().activeAgents.find((a) => a.role === 'coordinator')?.provider;
+
+        const materialized: SwarmAgent[] = [];
+        newTasks.forEach((task, i) => {
+          const dependencies = task.dependsOn.flatMap((d) => taskGate.get(d) ?? []);
+          const provider =
+            task.provider === 'auto' ? coordinatorProvider : (task.provider as AgentProvider);
+          materialized.push({
+            id: builderIds[i],
+            taskId: task.id,
+            name: `${task.role.charAt(0).toUpperCase()}${task.role.slice(1)}: ${task.id}`,
+            role: task.role,
+            provider,
+            model: task.model,
+            systemPrompt: task.mission,
+            dependencies,
+            marker: createMarker(),
+            maxAttempts: 1,
+            status: dependencies.length > 0 ? 'waiting' : 'idle',
+          });
+          // Phase 4: one review-gate reviewer per `review: true` task, depending on it. Its
+          // systemPrompt carries the mission under review; buildAgentPrompt frames the rest
+          // (outcome path, verdict contract, markers).
+          const reviewerId = reviewerIds[i];
+          if (reviewerId) {
+            materialized.push({
+              id: reviewerId,
+              reviewTaskId: task.id,
+              reviewTargetAgentId: builderIds[i],
+              name: `Reviewer: ${task.id}`,
+              role: 'reviewer',
+              provider,
+              model: task.model,
+              systemPrompt: task.mission,
+              dependencies: [builderIds[i]],
+              marker: createMarker(),
+              maxAttempts: 1,
+              status: 'waiting',
+            });
+          }
+        });
+
+        set((state) => ({
+          plan,
+          activeAgents: [...state.activeAgents, ...materialized],
+          appliedPlanTaskIds: [...state.appliedPlanTaskIds, ...newTasks.map((t) => t.id)],
+          // Phase 3: new tasks arriving after this wave's digest was delivered open the next
+          // build wave (Phase 5 adds acceptance gating and the maxWaves guard around this).
+          wave: state.lastDigestWave >= state.wave ? state.wave + 1 : state.wave,
+          // Planning has produced something; the live coordinator settles back toward idle.
+          coordinatorState: state.coordinatorState === 'planning' ? 'idle' : state.coordinatorState,
+        }));
+        await get().saveSwarmState(projectPath);
+        await get().checkAndRunNextAgents(projectPath);
+      },
+
+      ingestVerdict: async (projectPath, taskId, options = {}) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        if (verdictsInFlight.has(taskId)) return;
+        verdictsInFlight.add(taskId);
+        try {
+          const target = get().activeAgents.find((a) => a.taskId === taskId);
+          const reviewer = get().activeAgents.find((a) => a.reviewTaskId === taskId);
+          if (!target) return;
+          // A verdict only becomes actionable once its reviewer has finished — a watcher event
+          // can fire while the reviewer is mid-run, and reworking under a live reviewer would
+          // orphan its pane and double-launch it.
+          if (reviewer && !FINISHED_AGENT_STATUSES.includes(reviewer.status)) return;
+
+          let verdict: Verdict | null = null;
+          try {
+            const raw = await invoke<string>('read_project_file', {
+              projectPath,
+              filePath: `.saple/swarm/verdicts/${taskId}.json`,
+            });
+            verdict = parseVerdict(JSON.parse(raw));
+          } catch {
+            verdict = null; // missing/unreadable — handled below
+          }
+
+          if (!verdict || verdict.taskId !== taskId) {
+            // Missing or garbage verdict: park for a human, never guess — but only on the strict
+            // (reviewer-completion) path and only while the build is done awaiting its gate. The
+            // lenient watcher path ignores it (the reviewer may simply not have written yet).
+            if (options.strict && target.status === 'done') {
+              await get().updateAgentStatus(projectPath, target.id, 'review', {
+                statusReason: 'Reviewer produced no readable verdict — approve or rework manually.',
+              });
+            }
+            return;
+          }
+
+          if (verdict.verdict === 'approve') {
+            // The reviewed task counts as approved; dependents unblock through the gate (they
+            // depend on both the builder and the now-done reviewer). No transition needed.
+            if (target.lastVerdict !== 'approve') {
+              set((state) => ({
+                activeAgents: state.activeAgents.map((a) =>
+                  a.id === target.id ? { ...a, lastVerdict: 'approve' as VerdictDecision } : a,
+                ),
+              }));
+              await get().saveSwarmState(projectPath);
+            }
+            return;
+          }
+
+          // Reject. Only actionable while the build sits done at its gate — after a rework it is
+          // starting/running and a re-delivered event must not rework it twice.
+          if (target.status !== 'done') return;
+          const feedback =
+            verdict.feedback?.trim() || 'Reviewer rejected the work (no feedback given).';
+          set((state) => ({
+            activeAgents: state.activeAgents.map((a) =>
+              a.id === target.id ? { ...a, lastVerdict: 'reject' as VerdictDecision } : a,
+            ),
+          }));
+          if (get().autonomy === 'manual') {
+            // Debug mode: record the verdict but leave every transition to a human click.
+            await get().updateAgentStatus(projectPath, target.id, 'review', {
+              statusReason: `Reviewer rejected: ${feedback}`,
+            });
+            return;
+          }
+          const result = await get().reworkAgent(projectPath, target.id, feedback);
+          if (!result.ok && result.limitReached) {
+            // Budget exhausted: the existing human escalation UI (approve / force-rework) takes
+            // over from the parked-in-review card.
+            await get().updateAgentStatus(projectPath, target.id, 'review', {
+              statusReason: `Reviewer rejected and the rework budget (${result.maxAttempts}) is spent: ${feedback}`,
+            });
+          }
+        } finally {
+          verdictsInFlight.delete(taskId);
+        }
+      },
+
+      notifyCoordinator: async (projectPath, digest, options = {}) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+        if (!coordinator) return;
+        // Record first: the digest log is the durable channel every relaunch prompt replays, so
+        // a digest whose injection never lands is still never lost.
+        set((state) => ({ digestLog: [...state.digestLog, digest] }));
+        await get().saveSwarmState(projectPath);
+
+        const injectable =
+          providerSupportsTurnInjection(coordinator.provider) &&
+          coordinator.status === 'running' &&
+          !!coordinator.terminalId &&
+          coordinatorWatch?.paneId === coordinator.terminalId &&
+          !useTerminalStore.getState().exitedPanes?.[coordinator.terminalId];
+        if (injectable) {
+          digestQueue.push(digest);
+          pumpDigests();
+        } else if (options.relaunch !== false) {
+          // Digest-relaunch fallback: a fresh coordinator whose prompt embeds the digest log.
+          await get().relaunchAgent(projectPath, coordinator.id);
+        }
+      },
+
+      runAcceptance: async (projectPath) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        const command = get().plan?.acceptance?.command;
+        // A passed acceptance is final for this run: later scheduler re-scans must not
+        // re-execute the (approved) command.
+        if (!command || get().acceptanceStatus === 'running' || get().acceptanceStatus === 'passed') return;
+        const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+
+        // T2 approval gate. An acceptance command the human has not approved in THIS swarm run
+        // is never sent to the backend runner: park the swarm and ask. The dialog carries the
+        // full command, cwd, source, and timeout; Confirm records a run-scoped approval.
+        const commandHash = await hashAcceptanceCommand(command);
+        if (!isAcceptanceCommandApproved(get().swarmId, get().acceptanceApprovals, commandHash)) {
+          set({ acceptanceStatus: 'awaiting_approval' });
+          await get().saveSwarmState(projectPath);
+          requestAcceptanceApproval(projectPath, command);
+          return;
+        }
+
+        set({ acceptanceStatus: 'running' });
+        await get().saveSwarmState(projectPath);
+
+        let exitCode: number | null = null;
+        let output = '';
+        try {
+          const result = await invoke<{ exitCode: number | null; output: string; timedOut: boolean }>(
+            'run_acceptance_command',
+            { projectPath, commandStr: command, commandHash },
+          );
+          exitCode = result.timedOut ? null : result.exitCode;
+          output = result.output;
+        } catch (error) {
+          // Bridge couldn't even run it (bad shell, dead project dir): a failure, not a pass.
+          output = `Bridge could not run the acceptance command: ${error}`;
+        }
+
+        const entries = await collectDigestEntries(projectPath);
+        const digestOpts = {
+          command,
+          wave: get().wave,
+          maxWaves: get().maxWaves,
+          output,
+          marker: coordinator?.marker,
+        };
+
+        if (exitCode === 0) {
+          set({
+            acceptanceStatus: 'passed',
+            lastAcceptanceOutput: output,
+            lastAcceptanceFailureHash: null,
+            identicalAcceptanceFailures: 0,
+          });
+          await get().saveSwarmState(projectPath);
+          const digest = buildAcceptanceDigest(entries, {
+            ...digestOpts,
+            passed: true,
+            outcomePath: coordinator ? `.saple/swarm/outcomes/${coordinator.id}.json` : undefined,
+          });
+          await get().notifyCoordinator(projectPath, digest);
+          return;
+        }
+
+        // Failed. Guard rails first: an identical repeat or an exhausted wave budget escalates
+        // instead of burning another repair wave on the same wall.
+        const hash = hashAcceptanceOutput(output);
+        const identical = hash === get().lastAcceptanceFailureHash ? get().identicalAcceptanceFailures + 1 : 1;
+        set({
+          acceptanceStatus: 'failed',
+          lastAcceptanceOutput: output,
+          lastAcceptanceFailureHash: hash,
+          identicalAcceptanceFailures: identical,
+        });
+        await get().saveSwarmState(projectPath);
+        if (identical >= 2) {
+          await get().escalateSwarm(projectPath, 'repeated_failure');
+          return;
+        }
+        if (get().wave >= get().maxWaves) {
+          await get().escalateSwarm(projectPath, 'max_waves');
+          return;
+        }
+        const digest = buildAcceptanceDigest(entries, { ...digestOpts, passed: false });
+        await get().notifyCoordinator(projectPath, digest);
+      },
+
+      approveAcceptanceCommand: async (projectPath) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        const command = get().plan?.acceptance?.command;
+        const swarmId = get().swarmId;
+        if (!command || !swarmId) return;
+
+        // Record the approval bound to THIS swarm run, then run it - the approval alone must
+        // never execute anything; execution still flows through the gated runAcceptance path.
+        const hash = await hashAcceptanceCommand(command);
+        const existing = get().acceptanceApprovals;
+        if (!isAcceptanceCommandApproved(swarmId, existing, hash)) {
+          // Approvals from a previous run (or another project's state) are dropped here.
+          const hashes = existing?.swarmId === swarmId ? existing.hashes : [];
+          set({ acceptanceApprovals: { swarmId, hashes: [...hashes, hash] } });
+          await get().saveSwarmState(projectPath);
+        }
+        await get().runAcceptance(projectPath);
+      },
+
+      escalateSwarm: async (projectPath, reason) => {
+        const { plan, appliedPlanTaskIds, wave, maxWaves, lastAcceptanceOutput } = get();
+        const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+        // Best-effort: the coordinator's own read on the situation, if it wrote an outcome.
+        let diagnosis: string | undefined;
+        if (coordinator) {
+          try {
+            const raw = await invoke<string>('read_project_file', {
+              projectPath,
+              filePath: `.saple/swarm/outcomes/${coordinator.id}.json`,
+            });
+            diagnosis = parseAgentOutcome(JSON.parse(raw))?.summary;
+          } catch {
+            // none written
+          }
+        }
+        const escalation: SwarmEscalation = {
+          reason,
+          wavesAttempted: wave,
+          maxWaves,
+          acceptanceCommand: plan?.acceptance?.command,
+          failureOutput: lastAcceptanceOutput ?? undefined,
+          diagnosis,
+          // Tasks the coordinator wrote but Bridge never materialized - its proposed next wave.
+          proposedTasks: plan
+            ? diffPlan(appliedPlanTaskIds, plan).map((t) => ({ id: t.id, mission: t.mission }))
+            : [],
+        };
+        set({ escalation, status: 'failed' });
+        await invoke('write_project_file', {
+          projectPath,
+          filePath: '.saple/swarm/escalation.json',
+          content: JSON.stringify(escalation, null, 2),
+        }).catch(() => {});
+        await get().saveSwarmState(projectPath);
       },
 
       pauseSwarm: async (projectPath) => {
@@ -721,6 +1421,9 @@ export const useSwarmStore = create<SwarmState>()(
       },
 
       stopSwarm: async (projectPath) => {
+        // Phase 3: drop the live-coordinator machinery (output watch, queued digests, pump timer)
+        // before the panes die under it.
+        stopCoordinatorWatch();
         // Deactivate BEFORE tearing panes down: the removePane awaits below yield to PTY-output
         // handlers, and a concurrent [AGENT_DONE] -> checkAndRunNextAgents must see the swarm as
         // stopped or it launches a fresh agent mid-shutdown, outside the kill list.
@@ -728,6 +1431,9 @@ export const useSwarmStore = create<SwarmState>()(
           swarmId: null,
           status: 'stopped',
           swarmActive: false,
+          coordinatorState: 'idle',
+          // T2: the run is over - its approvals die with it.
+          acceptanceApprovals: null,
           activeAgents: get().activeAgents.map(a => ({ ...a, status: 'stopped' }))
         });
 
@@ -748,6 +1454,54 @@ export const useSwarmStore = create<SwarmState>()(
         // Auto-approve: an agent that requests review but is flagged auto-approve
         // advances straight to 'done' so dependents unblock without manual sign-off.
         const previousAgent = get().activeAgents.find(a => a.id === agentId);
+
+        // Coordinator completion containment (Phase 2): before treating the coordinator's
+        // done/review as terminal, make sure its plan has been ingested (a plan written right
+        // before the marker/exit must not be missed). If it never produced a valid task, park it
+        // in 'review' — relaunching the coordinator retries planning — instead of a silent finish.
+        if (previousAgent?.role === 'coordinator' && (status === 'done' || status === 'review' || status === 'failed')) {
+          await get().ingestPlan(projectPath);
+          // Phase 3 crash containment: a LIVE coordinator's pane exiting while workers are still
+          // unfinished is a crash, not a completion — its TUI is supposed to stay open receiving
+          // digests. Auto-relaunch once with the digest-carrying prompt; a second crash escalates
+          // to a human. Marker-driven transitions (pane still alive) never enter this branch.
+          const paneExited =
+            !!previousAgent.terminalId && !!useTerminalStore.getState().exitedPanes?.[previousAgent.terminalId];
+          const workersUnfinished = get().activeAgents.some(
+            (a) => a.role !== 'coordinator' && !FINISHED_AGENT_STATUSES.includes(a.status),
+          );
+          const liveCoordinator = providerSupportsTurnInjection(previousAgent.provider);
+          if (liveCoordinator && paneExited && workersUnfinished && get().status === 'running') {
+            if (get().coordinatorCrashes < 1) {
+              const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
+                kind: 'crash_recovery',
+                wave: get().wave,
+                marker: previousAgent.marker,
+              });
+              set((state) => ({
+                coordinatorCrashes: state.coordinatorCrashes + 1,
+                digestLog: [...state.digestLog, digest],
+              }));
+              await get().saveSwarmState(projectPath);
+              void get().relaunchAgent(projectPath, agentId);
+              return;
+            }
+            status = 'review';
+            extra = { ...extra, statusReason: 'Coordinator crashed twice mid-swarm — relaunch it manually to continue.' };
+          } else if (status === 'done' || status === 'review') {
+            if (get().appliedPlanTaskIds.length === 0) {
+              status = 'review';
+              extra = { ...extra, statusReason: 'Planning produced no valid tasks — relaunch to retry planning.' };
+            } else {
+              // Planning succeeded: the coordinator is done whether it printed AGENT_DONE or just
+              // exited cleanly after writing the plan (fallback fire-and-forget; live coordinators
+              // reach here via their marker). Its own completion never needs a human click — the
+              // plan is the deliverable.
+              status = 'done';
+            }
+          }
+        }
+
         let effectiveStatus = status;
         if (status === 'review') {
           if (previousAgent?.autoApprove) {
@@ -797,6 +1551,37 @@ export const useSwarmStore = create<SwarmState>()(
               .getState()
               .completeSession(projectPath, linkedSession.id, effectiveStatus, outcome);
           }
+        }
+        // Phase 3: a worker's terminal failure is pushed to the live coordinator right away so it
+        // can react (repair task, replanning) before the wave ends. Injection-only — a
+        // fallback-provider coordinator gets failures in the wave digest instead of one relaunch
+        // per failure.
+        if (
+          previousAgent &&
+          previousAgent.role !== 'coordinator' &&
+          previousAgent.status !== effectiveStatus &&
+          effectiveStatus === 'failed' &&
+          get().swarmActive
+        ) {
+          const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+          if (coordinator) {
+            const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
+              kind: 'task_failed',
+              wave: get().wave,
+              marker: coordinator.marker,
+            });
+            void get().notifyCoordinator(projectPath, digest, { relaunch: false });
+          }
+        }
+        // Phase 4: a review-gate reviewer finishing means its verdict is on disk — machine-read
+        // it now (strict: a missing/garbage verdict parks the reviewed task for a human).
+        if (
+          previousAgent?.reviewTaskId &&
+          previousAgent.status !== effectiveStatus &&
+          effectiveStatus === 'done' &&
+          get().swarmActive
+        ) {
+          await get().ingestVerdict(projectPath, previousAgent.reviewTaskId, { strict: true });
         }
         await get().saveSwarmState(projectPath);
         await get().checkAndRunNextAgents(projectPath);
@@ -871,8 +1656,59 @@ export const useSwarmStore = create<SwarmState>()(
         const anyFailedOrBlocked = working.some(a => a.status === 'failed' || a.status === 'blocked');
         const allFinished = working.every(a => ['done', 'failed', 'blocked', 'stopped'].includes(a.status));
 
+        // Phase 3: wave completion. Every materialized worker is finished but the coordinator
+        // hasn't received this wave's results yet — instead of ending the swarm, deliver the
+        // results digest (injected live, or via digest-relaunch) and let the coordinator decide:
+        // final report (AGENT_DONE) or more tasks (PLAN_UPDATED). `lastDigestWave` makes this
+        // fire once per wave; the swarm then completes on a later scan.
+        const coordinatorAgent = working.find(a => a.role === 'coordinator');
+        const workerAgents = working.filter(a => a.role !== 'coordinator');
+        if (
+          coordinatorAgent &&
+          (coordinatorAgent.status === 'running' || coordinatorAgent.status === 'done') &&
+          workerAgents.length > 0 &&
+          workerAgents.every(a => FINISHED_AGENT_STATUSES.includes(a.status)) &&
+          get().lastDigestWave < get().wave
+        ) {
+          set({ lastDigestWave: get().wave });
+          await commit();
+          await get().saveSwarmState(projectPath);
+          // Phase 5: a fully-approved wave is verified BEFORE the coordinator hears about it -
+          // Bridge runs the plan's acceptance command and the result decides synthesis vs repair.
+          // A wave with failures/blocks skips acceptance (it can't pass) and gets the plain wave
+          // digest so the coordinator can replan.
+          if (workerAgents.every((a) => a.status === 'done') && get().plan?.acceptance?.command) {
+            void get().runAcceptance(projectPath);
+            return;
+          }
+          const digest = buildResultsDigest(await collectDigestEntries(projectPath), {
+            kind: 'wave',
+            wave: get().wave,
+            marker: coordinatorAgent.marker,
+          });
+          void get().notifyCoordinator(projectPath, digest);
+          return;
+        }
+
         if (allCompleted) {
           await commit();
+          // Phase 5: `completed` is a VERIFIED state. When the plan carries an acceptance
+          // command, the roster finishing only completes the swarm after that command passed.
+          if (get().plan?.acceptance?.command && get().acceptanceStatus !== 'passed') {
+            if (get().acceptanceStatus === 'failed') {
+              // The coordinator finished without appending repair tasks after a failure - the
+              // "wave produced zero new tasks" short-circuit.
+              await get().escalateSwarm(projectPath, 'no_new_tasks');
+            } else if (get().acceptanceStatus === 'idle') {
+              // Never ran (e.g. state restored mid-acceptance): run it now; its result drives
+              // the next transition.
+              void get().runAcceptance(projectPath);
+            }
+            // 'running': the in-flight acceptance decides what happens next.
+            // T2 'awaiting_approval': Bridge is holding the command for a human decision - the
+            // Swarm room banner re-opens the approval dialog. Never run it unprompted.
+            return;
+          }
           set({ status: 'completed' });
           await get().saveSwarmState(projectPath);
           return;
@@ -888,7 +1724,8 @@ export const useSwarmStore = create<SwarmState>()(
         // would spawn every CLI at once, blowing past maxParallelAgents and swamping the machine.
         // Over-limit agents stay 'waiting'/'idle' and launch on a later scan — each completion
         // fires checkAndRunNextAgents, which frees a slot and picks up the next one.
-        const maxParallel = useTerminalStore.getState().getMaxPaneLimit();
+        // The swarm's own cap when set (Phase 2 `maxParallel`), else the global pane limit.
+        const maxParallel = get().maxParallel || useTerminalStore.getState().getMaxPaneLimit();
         let activeCount = working.filter(a => a.status === 'starting' || a.status === 'running').length;
         for (let i = 0; i < working.length; i++) {
           if (activeCount >= maxParallel) break;
@@ -923,13 +1760,25 @@ export const useSwarmStore = create<SwarmState>()(
         const agent = get().activeAgents.find(a => a.id === agentId);
         if (!agent) return;
 
+        // Phase 4: relaunching a reviewed task re-arms its finished review gate. The reviewer must
+        // judge the NEW attempt, so it drops back to 'waiting' behind the relaunched builder (the
+        // scheduler re-runs it — with a cleared verdict file — once the builder is done again).
+        // This lives here, not in the auto-rework path, so a manual rework/relaunch re-arms too.
+        const gateReviewer = get().activeAgents.find(
+          (a) => a.reviewTargetAgentId === agentId && FINISHED_AGENT_STATUSES.includes(a.status),
+        );
+
         // Reset state BEFORE killing the old terminal: the kill fires a pty-exit event, and the
         // exit fallback in terminalStore must not find this agent still linked to the dying pane
         // (it would mark it failed mid-relaunch). Clearing terminalId first makes that lookup miss.
+        // `taskId` (the plan task link) survives the relaunch — verdict routing keys on it.
         set(state => {
           const resetAgents = state.activeAgents.map(a => {
             if (a.id === agentId) {
-              return { ...a, status: 'starting' as AgentStatus, terminalId: undefined, taskId: undefined, statusReason: undefined };
+              return { ...a, status: 'starting' as AgentStatus, terminalId: undefined, statusReason: undefined };
+            }
+            if (gateReviewer && a.id === gateReviewer.id) {
+              return { ...a, status: 'waiting' as AgentStatus, terminalId: undefined, statusReason: undefined };
             }
             // If another agent had a dependency on this one and was blocked, reset it to waiting/idle
             if (a.status === 'blocked' && a.dependencies.includes(agentId)) {
@@ -940,9 +1789,10 @@ export const useSwarmStore = create<SwarmState>()(
           return { activeAgents: resetAgents };
         });
 
-        if (agent.terminalId) {
+        for (const paneId of [agent.terminalId, gateReviewer?.terminalId]) {
+          if (!paneId) continue;
           try {
-            await useTerminalStore.getState().removePane(agent.terminalId);
+            await useTerminalStore.getState().removePane(paneId);
           } catch (e) {
             console.error('Failed to kill terminal on relaunch:', e);
           }

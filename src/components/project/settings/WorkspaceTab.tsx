@@ -60,7 +60,8 @@ export const WorkspaceTab: React.FC = () => {
   useEffect(() => {
     if (workspaceConfig) {
       setWorkspaceName(workspaceConfig.workspaceName);
-      setMemoryMode(workspaceConfig.memoryMode);
+      // Only 'saple' mode is supported; normalize any legacy value.
+      setMemoryMode('saple');
       setDefaultProvider(workspaceConfig.defaultProvider);
       setMaxAgents(workspaceConfig.maxParallelAgents);
       setEnableEditMode(workspaceConfig.enableEditMode ?? true);
@@ -111,8 +112,6 @@ export const WorkspaceTab: React.FC = () => {
             <label className="input-label">Memory Mode</label>
             <select value={memoryMode} onChange={e => setMemoryMode(e.target.value as 'saple' | 'bridge-compatible' | 'both')} className="settings-select">
               <option value="saple">Saple (.saple/memory)</option>
-              <option value="bridge-compatible">Bridge-compatible (.bridgememory)</option>
-              <option value="both">Both</option>
             </select>
           </div>
           <div className="input-group">

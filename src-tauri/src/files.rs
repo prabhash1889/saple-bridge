@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use crate::process_ext::CommandNoWindow;
+use crate::project_roots::ProjectRootRegistry;
 
 const MAX_FILE_ENTRIES: usize = 5_000;
 const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -76,10 +77,12 @@ fn project_walker(root: &Path, max_depth: Option<usize>) -> WalkBuilder {
 }
 
 fn list_project_files_inner(
+    registry: &ProjectRootRegistry,
     project_path: String,
     root: String,
     depth: Option<usize>,
 ) -> Result<Vec<FileEntry>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let base = Path::new(&project_path);
     let target = if root.is_empty() {
         base.to_path_buf()
@@ -152,7 +155,8 @@ fn list_project_files_inner(
     Ok(results)
 }
 
-fn read_text_file_inner(project_path: String, file_path: String) -> Result<String, String> {
+fn read_text_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     // Utilize safe file path function from project module
     let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
@@ -173,21 +177,24 @@ fn read_text_file_inner(project_path: String, file_path: String) -> Result<Strin
 }
 
 fn write_text_file_inner(
+    registry: &ProjectRootRegistry,
     project_path: String,
     file_path: String,
     content: String,
 ) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     // Check if editing is enabled in the workspace configuration
-    let config = crate::project::read_project_config_inner(project_path.clone())?;
+    let config = crate::project::read_project_config_inner(registry, project_path.clone())?;
     if !config.enable_edit_mode {
         return Err("Access denied: Editing files is disabled for this workspace. Enable it in Settings.".to_string());
     }
     
-    let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
+    let full_path = crate::project::get_project_write_path(&project_path, &file_path)?;
     crate::fs_lock::atomic_write(&full_path, content.as_bytes())
 }
 
-fn open_in_external_editor_inner(project_path: String, file_path: String) -> Result<(), String> {
+fn open_in_external_editor_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("File not found".to_string());
@@ -221,15 +228,22 @@ pub async fn list_project_files(
     project_path: String,
     root: String,
     depth: Option<usize>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<Vec<FileEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || list_project_files_inner(project_path, root, depth))
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || list_project_files_inner(&registry, project_path, root, depth))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn read_text_file(project_path: String, file_path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_text_file_inner(project_path, file_path))
+pub async fn read_text_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || read_text_file_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -239,13 +253,16 @@ pub async fn write_text_file(
     project_path: String,
     file_path: String,
     content: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_text_file_inner(project_path, file_path, content))
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || write_text_file_inner(&registry, project_path, file_path, content))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn reveal_in_file_explorer_inner(project_path: String, file_path: String) -> Result<(), String> {
+fn reveal_in_file_explorer_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     // An empty `file_path` targets the workspace root itself (used by the
     // sidebar workspace rows); otherwise resolve a contained relative path
     // (used by the file tree's subfolders).
@@ -305,15 +322,25 @@ fn reveal_in_file_explorer_inner(project_path: String, file_path: String) -> Res
 }
 
 #[tauri::command]
-pub async fn open_in_external_editor(project_path: String, file_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || open_in_external_editor_inner(project_path, file_path))
+pub async fn open_in_external_editor(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || open_in_external_editor_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn reveal_in_file_explorer(project_path: String, file_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || reveal_in_file_explorer_inner(project_path, file_path))
+pub async fn reveal_in_file_explorer(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || reveal_in_file_explorer_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -323,8 +350,9 @@ pub async fn reveal_in_file_explorer(project_path: String, file_path: String) ->
 // proves containment against the workspace root, so these can never touch a path
 // outside the selected project.
 
-fn create_file_inner(project_path: String, file_path: String) -> Result<(), String> {
-    let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
+fn create_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    let full_path = crate::project::get_project_write_path(&project_path, &file_path)?;
     if full_path.exists() {
         return Err("A file or folder with that name already exists".to_string());
     }
@@ -337,60 +365,91 @@ fn create_file_inner(project_path: String, file_path: String) -> Result<(), Stri
     Ok(())
 }
 
-fn create_directory_inner(project_path: String, dir_path: String) -> Result<(), String> {
-    let full_path = crate::project::get_project_file_path(&project_path, &dir_path)?;
+fn create_directory_inner(registry: &ProjectRootRegistry, project_path: String, dir_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    let full_path = crate::project::get_project_write_path(&project_path, &dir_path)?;
     if full_path.exists() {
         return Err("A file or folder with that name already exists".to_string());
     }
     fs::create_dir_all(&full_path).map_err(|e| format!("Failed to create folder: {}", e))
 }
 
-fn rename_path_inner(project_path: String, from_path: String, to_path: String) -> Result<(), String> {
-    let from = crate::project::get_project_file_path(&project_path, &from_path)?;
+fn rename_path_inner(registry: &ProjectRootRegistry, project_path: String, from_path: String, to_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    // Both endpoints go through the writer policy: a rename must not move git internals
+    // out of `.git` nor plant a foreign path inside it.
+    let from = crate::project::get_project_write_path(&project_path, &from_path)?;
     if !from.exists() {
         return Err("Source path no longer exists".to_string());
     }
-    // Validate the destination for containment even though it doesn't exist yet.
-    let to = crate::project::get_project_file_path(&project_path, &to_path)?;
+    let to = crate::project::get_project_write_path(&project_path, &to_path)?;
     if to.exists() {
         return Err("A file or folder with that name already exists".to_string());
     }
     fs::rename(&from, &to).map_err(|e| format!("Failed to rename: {}", e))
 }
 
-fn delete_path_inner(project_path: String, file_path: String) -> Result<(), String> {
+fn delete_path_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("Path no longer exists".to_string());
     }
+    // The root itself is a contained path, so containment alone would allow `file_path`
+    // of "." or "" to trash the whole project. Reject any target that resolves to it.
+    let canonical_base = Path::new(&project_path)
+        .canonicalize()
+        .map_err(|e| format!("Base path error: {}", e))?;
+    crate::project::ensure_not_workspace_root(&canonical_base, &full_path)?;
     // Recycle bin rather than permanent delete, so an accidental removal is recoverable.
     trash::delete(&full_path).map_err(|e| format!("Failed to move to trash: {}", e))
 }
 
 #[tauri::command]
-pub async fn create_file(project_path: String, file_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || create_file_inner(project_path, file_path))
+pub async fn create_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || create_file_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn create_directory(project_path: String, dir_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || create_directory_inner(project_path, dir_path))
+pub async fn create_directory(
+    project_path: String,
+    dir_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || create_directory_inner(&registry, project_path, dir_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn rename_path(project_path: String, from_path: String, to_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || rename_path_inner(project_path, from_path, to_path))
+pub async fn rename_path(
+    project_path: String,
+    from_path: String,
+    to_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || rename_path_inner(&registry, project_path, from_path, to_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn delete_path(project_path: String, file_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || delete_path_inner(project_path, file_path))
+pub async fn delete_path(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_path_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -468,7 +527,8 @@ pub struct SearchResult {
     pub truncated: bool,
 }
 
-fn search_in_files_inner(project_path: String, query: String) -> Result<SearchResult, String> {
+fn search_in_files_inner(registry: &ProjectRootRegistry, project_path: String, query: String) -> Result<SearchResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let needle = query.trim();
     if needle.is_empty() {
         return Ok(SearchResult { hits: Vec::new(), truncated: false });
@@ -516,8 +576,13 @@ fn search_in_files_inner(project_path: String, query: String) -> Result<SearchRe
 }
 
 #[tauri::command]
-pub async fn search_in_files(project_path: String, query: String) -> Result<SearchResult, String> {
-    tauri::async_runtime::spawn_blocking(move || search_in_files_inner(project_path, query))
+pub async fn search_in_files(
+    project_path: String,
+    query: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<SearchResult, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || search_in_files_inner(&registry, project_path, query))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -525,12 +590,22 @@ pub async fn search_in_files(project_path: String, query: String) -> Result<Sear
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// A registry with `dir` approved - the "legitimately opened workspace" fixture.
+    fn approved(dir: &Path) -> ProjectRootRegistry {
+        let registry = ProjectRootRegistry::new();
+        registry.register_root(dir).unwrap();
+        registry
+    }
 
     #[test]
     fn test_list_files() {
         // Use the crate dir (always present, cross-platform) as the project root.
         let project_path = env!("CARGO_MANIFEST_DIR").to_string();
-        let results = list_project_files_inner(project_path, "".to_string(), Some(8));
+        let dir = Path::new(&project_path).to_path_buf();
+        let registry = approved(&dir);
+        let results = list_project_files_inner(&registry, project_path, "".to_string(), Some(8));
         match &results {
             Ok(files) => {
                 println!("SUCCESS: found {} files", files.len());
@@ -548,32 +623,140 @@ mod tests {
     }
 
     #[test]
+    fn privileged_inners_reject_unregistered_absolute_root() {
+        let dir = std::env::temp_dir().join(format!("saple-files-reg-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let sibling = std::env::temp_dir().join(format!("saple-files-stranger-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&sibling).unwrap();
+
+        let all_cases = |registry: &ProjectRootRegistry, path: String| -> Vec<(&'static str, Result<(), String>)> {
+            vec![
+                ("list_project_files", list_project_files_inner(registry, path.clone(), String::new(), None).map(|_| ())),
+                ("read_text_file", read_text_file_inner(registry, path.clone(), "x.txt".into()).map(|_| ())),
+                ("write_text_file", write_text_file_inner(registry, path.clone(), "x.txt".into(), "x".into())),
+                ("open_in_external_editor", open_in_external_editor_inner(registry, path.clone(), "x.txt".into())),
+                ("reveal_in_file_explorer", reveal_in_file_explorer_inner(registry, path.clone(), String::new())),
+                ("create_file", create_file_inner(registry, path.clone(), "x.txt".into())),
+                ("create_directory", create_directory_inner(registry, path.clone(), "d".into())),
+                ("rename_path", rename_path_inner(registry, path.clone(), "a".into(), "b".into())),
+                ("delete_path", delete_path_inner(registry, path.clone(), "x.txt".into())),
+                ("search_in_files", search_in_files_inner(registry, path, "q".into()).map(|_| ())),
+            ]
+        };
+
+        let stranger = approved(&sibling);
+        for (name, result) in all_cases(&stranger, dir.to_string_lossy().to_string()) {
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("not inside an approved project root"),
+                "case '{}': expected registry rejection, got: {}",
+                name,
+                err
+            );
+        }
+
+        let own = approved(&dir);
+        for (name, result) in all_cases(&own, dir.to_string_lossy().to_string()) {
+            if let Err(err) = result {
+                assert!(
+                    !err.contains("not inside an approved project root"),
+                    "case '{}': approved root must pass the gate, got: {}",
+                    name,
+                    err
+                );
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&sibling);
+    }
+
+    #[test]
     fn create_file_rejects_traversal() {
-        let project_path = env!("CARGO_MANIFEST_DIR").to_string();
-        let err = create_file_inner(project_path, "../escapes.txt".to_string());
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let registry = approved(&dir);
+        let err = create_file_inner(&registry, env!("CARGO_MANIFEST_DIR").to_string(), "../escapes.txt".to_string());
         assert!(err.is_err());
     }
 
     #[test]
     fn rename_rejects_absolute_dest() {
-        let project_path = env!("CARGO_MANIFEST_DIR").to_string();
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let registry = approved(&dir);
         let abs = if cfg!(windows) { "C:/Windows/x.txt" } else { "/tmp/x.txt" };
-        let err = rename_path_inner(project_path, "Cargo.toml".to_string(), abs.to_string());
+        let err = rename_path_inner(&registry, env!("CARGO_MANIFEST_DIR").to_string(), "Cargo.toml".to_string(), abs.to_string());
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn delete_rejects_workspace_root_and_leaves_it_intact() {
+        let dir = std::env::temp_dir().join(format!("saple-del-root-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("keep.txt"), "sentinel").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let registry = approved(&dir);
+
+        for target in ["", ".", "./"] {
+            let err = delete_path_inner(&registry, project.clone(), target.to_string()).unwrap_err();
+            assert!(
+                err.contains("workspace itself"),
+                "target {:?} must be rejected, got: {}",
+                target,
+                err
+            );
+        }
+        assert!(dir.join("keep.txt").exists(), "workspace must be intact after rejected deletes");
+        assert!(dir.exists(), "workspace root must still exist");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_still_allows_contained_child() {
+        let dir = std::env::temp_dir().join(format!("saple-del-child-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub").join("gone.txt"), "bye").unwrap();
+        fs::write(dir.join("stay.txt"), "here").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let registry = approved(&dir);
+
+        delete_path_inner(&registry, project, "sub/gone.txt".to_string()).expect("contained child delete must succeed");
+        assert!(!dir.join("sub").join("gone.txt").exists(), "target child removed");
+        assert!(dir.join("stay.txt").exists(), "sibling untouched");
+        assert!(dir.exists(), "workspace intact");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_file_rejects_git_internal_paths() {
+        let dir = std::env::temp_dir().join(format!("saple-git-block-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let registry = approved(&dir);
+
+        assert!(create_file_inner(&registry, project.clone(), ".git/hooks/hook".to_string()).is_err());
+        assert!(create_directory_inner(&registry, project.clone(), ".git/custom".to_string()).is_err());
+        assert!(rename_path_inner(&registry, project.clone(), ".git/config".to_string(), "stolen".to_string()).is_err());
+        assert!(!dir.join(".git").exists(), ".git must not be created by rejected mutations");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn search_finds_known_token() {
         // Cargo.toml in the crate root always contains the package name "saple-bridge".
         let project_path = env!("CARGO_MANIFEST_DIR").to_string();
-        let res = search_in_files_inner(project_path, "saple-bridge".to_string()).unwrap();
+        let dir = PathBuf::from(&project_path);
+        let registry = approved(&dir);
+        let res = search_in_files_inner(&registry, project_path, "saple-bridge".to_string()).unwrap();
         assert!(res.hits.iter().any(|h| h.path == "Cargo.toml"));
     }
 
     #[test]
     fn search_empty_query_returns_nothing() {
         let project_path = env!("CARGO_MANIFEST_DIR").to_string();
-        let res = search_in_files_inner(project_path, "   ".to_string()).unwrap();
+        let dir = PathBuf::from(&project_path);
+        let registry = approved(&dir);
+        let res = search_in_files_inner(&registry, project_path, "   ".to_string()).unwrap();
         assert!(res.hits.is_empty());
     }
 }

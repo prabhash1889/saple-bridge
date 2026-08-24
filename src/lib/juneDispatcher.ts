@@ -89,6 +89,16 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
           failed++;
         }
       }
+      // Only these panes are legal targets for June's later terminal actions (Rust-enforced).
+      if (agentIds.length > 0) {
+        try {
+          await invoke('june_permit_terminals', { paneIds: agentIds });
+        } catch {
+          // Registration failure must not silently widen or narrow authority: without it,
+          // June cannot drive these panes at all, which is the safe direction.
+          agentIds.length = 0;
+        }
+      }
       // Partial success is first-class (PLAN.md §2): counts always sum to requested.
       return ok(id, { counts: { requested: count, started, failed, skipped: 0 }, agent_ids: agentIds });
     }
@@ -97,6 +107,11 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
       const agentId = str(args.agent_id);
       const task = str(args.task);
       if (!agentId) return err(id, 'invalid_request', 'agent_id is required');
+      try {
+        await invoke('june_ensure_terminal_permitted', { paneId: agentId });
+      } catch {
+        return err(id, 'forbidden_target', `terminal '${agentId}' is not a June-spawned pane`);
+      }
       await invoke('write_pty', { id: agentId, data: `${task}\r` });
       await emitEvent(ws, 'task.assigned', id, { agent_id: agentId });
       return ok(id, { agent_id: agentId });
@@ -105,6 +120,11 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
     case 'write_terminal': {
       const paneId = str(args.pane_id);
       if (!paneId) return err(id, 'invalid_request', 'pane_id is required');
+      try {
+        await invoke('june_ensure_terminal_permitted', { paneId });
+      } catch {
+        return err(id, 'forbidden_target', `terminal '${paneId}' is not a June-spawned pane`);
+      }
       await invoke('write_pty', { id: paneId, data: str(args.data) });
       return ok(id, { pane_id: paneId });
     }
@@ -112,7 +132,13 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
     case 'close_terminal': {
       const paneId = str(args.pane_id);
       if (!paneId) return err(id, 'invalid_request', 'pane_id is required');
+      try {
+        await invoke('june_ensure_terminal_permitted', { paneId });
+      } catch {
+        return err(id, 'forbidden_target', `terminal '${paneId}' is not a June-spawned pane`);
+      }
       await useTerminalStore.getState().removePane(paneId);
+      void invoke('june_revoke_terminal', { paneId }).catch(() => {});
       await emitEvent(ws, 'terminal.closed', id, { pane_id: paneId });
       return ok(id, { pane_id: paneId });
     }

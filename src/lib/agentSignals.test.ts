@@ -4,6 +4,7 @@ import {
   mightContainSignal,
   mightContainAgentMarker,
   getSwarmStatusFromOutput,
+  getPlanSignalFromOutput,
   exitFallbackTransition,
 } from './agentSignals';
 
@@ -88,7 +89,41 @@ describe('mightContainAgentMarker pre-filter', () => {
     expect(mightContainAgentMarker('[AGENT_DONE:abc]')).toBe(true);
     expect(mightContainAgentMarker('[TASK_FAILED]')).toBe(true);
     expect(mightContainAgentMarker('## REVIEW REQUIRED')).toBe(true);
+    expect(mightContainAgentMarker('[PLAN_READY:abc]')).toBe(true);
     expect(mightContainAgentMarker('const x = arr[0];')).toBe(false);
+  });
+});
+
+describe('plan lifecycle marker detection', () => {
+  const marker = 'c00rd1nat';
+
+  it('detects scoped plan-ready and plan-updated markers on their own line', () => {
+    expect(getPlanSignalFromOutput(`planning\n[PLAN_READY:${marker}]\n`, marker)).toBe('plan_ready');
+    expect(getPlanSignalFromOutput(`repairing\n[PLAN_UPDATED:${marker}]\n`, marker)).toBe('plan_updated');
+  });
+
+  it('detects a plan marker split across two PTY bursts', () => {
+    const chunk1 = `done planning\n[PLAN_READY:`;
+    const chunk2 = `${marker}]\n`;
+    expect(getPlanSignalFromOutput(chunk1, marker)).toBeNull();
+    expect(getPlanSignalFromOutput(chunk1 + chunk2, marker)).toBe('plan_ready');
+  });
+
+  it('prefers plan_updated when both markers are present', () => {
+    expect(getPlanSignalFromOutput(`[PLAN_READY:${marker}]\n[PLAN_UPDATED:${marker}]\n`, marker)).toBe(
+      'plan_updated',
+    );
+  });
+
+  it('ignores a marker echoed mid-sentence', () => {
+    expect(getPlanSignalFromOutput(`when ready print [PLAN_READY:${marker}] here\n`, marker)).toBeNull();
+  });
+
+  it("ignores another coordinator's scoped marker and bare/missing markers", () => {
+    expect(getPlanSignalFromOutput(`\n[PLAN_READY:deadbeef]\n`, marker)).toBeNull();
+    expect(getPlanSignalFromOutput(`\n[PLAN_READY]\n`, marker)).toBeNull();
+    expect(getPlanSignalFromOutput(`\n[PLAN_READY:${marker}]\n`, undefined)).toBeNull();
+    expect(getPlanSignalFromOutput(`\n[PLAN_READY:${marker}]\n`, 'bad token!')).toBeNull();
   });
 });
 

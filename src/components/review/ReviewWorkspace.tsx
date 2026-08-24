@@ -12,6 +12,7 @@ import { VirtualizedTextViewer } from './VirtualizedTextViewer';
 import { SplitDiffViewer } from './SplitDiffViewer';
 import { ReviewFileList } from './ReviewFileList';
 import { ReviewActionsPanel } from './ReviewActionsPanel';
+import { runRejectionFlow } from './reviewRejection';
 import { PANE_WIDTH_LIMITS, useWorkspacePaneLayoutStore } from '../../stores/workspacePaneLayoutStore';
 
 const statusPillClass = (status?: string) => {
@@ -310,22 +311,20 @@ export const ReviewWorkspace: React.FC = () => {
     }
     setSubmittingDecision(true);
     try {
-      await submitReviewDecision(currentProjectPath, activeTaskId, 'reject', notes);
-
-      // If task had terminal session, notify shell PTY to resume
-      if (activeTask && activeTask.terminalId) {
-        try {
-          await invoke('write_pty', {
-            id: activeTask.terminalId,
-            data: `\r# Review Rejected: ${notes.replace(/\r?\n/g, ' ')}. Resuming task...\r`
-          });
-        } catch (e) {
-          console.warn("Could not write rejection to PTY:", e);
-        }
-      }
-
-      await loadTasks(currentProjectPath, true);
-      await loadSessions(currentProjectPath, true);
+      // Notes are persisted to the review record only; the agent resumes via
+      // the structured rejected-state transition, never through its PTY.
+      await runRejectionFlow({
+        projectPath: currentProjectPath,
+        taskId: activeTaskId,
+        notes,
+        submitReviewDecision,
+        loadTasks: (path, force) => loadTasks(path, force),
+        loadSessions: (path, force) => loadSessions(path, force),
+      });
+      useNotificationStore.getState().success(
+        'Rejection recorded.',
+        'Notes saved to the review record. Resume the agent manually from its terminal if needed.'
+      );
       setActiveTaskId(null);
     } catch (err) {
       useNotificationStore.getState().error(`Rejection failed: ${String(err)}`);

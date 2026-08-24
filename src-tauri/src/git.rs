@@ -1,9 +1,11 @@
 use std::process::{Command, Output, Stdio};
 use std::fs;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::project::get_project_file_path;
 use crate::process_ext::CommandNoWindow;
+use crate::project_roots::ProjectRootRegistry;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_STATUS_FILES: usize = 500;
@@ -219,14 +221,23 @@ pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<St
 }
 
 #[tauri::command]
-pub async fn git_status(project_path: String) -> Result<Vec<GitFileStatus>, String> {
+pub async fn git_status(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<GitFileStatus>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_status_inner(project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_diff_file(project_path: String, file_path: String) -> Result<String, String> {
+pub async fn git_diff_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_diff_file_inner(project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
@@ -252,14 +263,24 @@ fn git_stage_file_inner(project_path: String, file_path: String, stage: bool) ->
 }
 
 #[tauri::command]
-pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(), String> {
+pub async fn git_stage_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_stage_file_inner(project_path, file_path, true))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_unstage_file(project_path: String, file_path: String) -> Result<(), String> {
+pub async fn git_unstage_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_stage_file_inner(project_path, file_path, false))
         .await
         .map_err(|e| e.to_string())?
@@ -283,7 +304,12 @@ fn git_commit_inner(project_path: String, message: String) -> Result<String, Str
 }
 
 #[tauri::command]
-pub async fn git_commit(project_path: String, message: String) -> Result<String, String> {
+pub async fn git_commit(
+    project_path: String,
+    message: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_commit_inner(project_path, message))
         .await
         .map_err(|e| e.to_string())?
@@ -349,14 +375,23 @@ fn git_checkout_branch_inner(project_path: String, branch: String) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn git_list_branches(project_path: String) -> Result<Vec<GitBranch>, String> {
+pub async fn git_list_branches(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<GitBranch>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_list_branches_inner(project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_checkout_branch(project_path: String, branch: String) -> Result<(), String> {
+pub async fn git_checkout_branch(
+    project_path: String,
+    branch: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || git_checkout_branch_inner(project_path, branch))
         .await
         .map_err(|e| e.to_string())?
@@ -400,6 +435,38 @@ mod tests {
         assert!(err.contains("Invalid branch name"));
         let err = git_checkout_branch_inner(".".to_string(), "  ".to_string()).unwrap_err();
         assert!(err.contains("Invalid branch name"));
+    }
+
+    #[test]
+    fn stage_and_unstage_remain_functional() {
+        // Intentional git.rs operations write through real git commands, not the generic
+        // file writers, so the `.git/**` writer block must leave them untouched.
+        let dir = std::env::temp_dir().join(format!("saple-git-stage-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git_stage_file_inner(path.clone(), "a.txt".to_string(), true).unwrap();
+
+        let staged = git_status_inner(path.clone()).unwrap();
+        let entry = staged.iter().find(|f| f.path == "a.txt").expect("a.txt in status");
+        assert!(entry.staged, "a.txt must be staged after git add");
+
+        git_stage_file_inner(path.clone(), "a.txt".to_string(), false).unwrap();
+        let unstaged = git_status_inner(path.clone()).unwrap();
+        let entry = unstaged.iter().find(|f| f.path == "a.txt").expect("a.txt in status");
+        assert!(!entry.staged, "a.txt must be unstaged after git reset");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -292,6 +292,110 @@ fn write_discovery_record(endpoint: &str, token: &str, version: &str) {
     let tmp = path.with_extension("json.tmp");
     if std::fs::write(&tmp, record.to_string()).is_ok() {
         let _ = std::fs::rename(&tmp, &path);
+        #[cfg(windows)]
+        restrict_discovery_record_to_owner(&path);
+    }
+}
+
+/// The record contains the bearer token, so only the current user may read it. %APPDATA%
+/// inherits user-scoped ACLs already; this best-effort step additionally replaces the file's
+/// DACL with a single owner-full-control ACE (inheritance blocked), so an unusual parent
+/// ACL can never widen it. Failure is non-fatal: token auth still guards the endpoint.
+#[cfg(windows)]
+fn restrict_discovery_record_to_owner(path: &std::path::Path) {
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, GENERIC_ALL, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        GetNamedSecurityInfoW, SetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        ACL, ACL_REVISION, ACCESS_ALLOWED_ACE, DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSID,
+    };
+
+    fn wide(path: &std::path::Path) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        path.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    unsafe {
+        let wpath = wide(path);
+        let mut owner: PSID = std::ptr::null_mut();
+        let mut psd: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        if GetNamedSecurityInfoW(
+            wpath.as_ptr(),
+            SE_FILE_OBJECT,
+            windows_sys::Win32::Security::OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut psd,
+        ) != ERROR_SUCCESS
+            || owner.is_null()
+        {
+            if !psd.is_null() {
+                LocalFree(psd);
+            }
+            eprintln!("[june-control] could not read discovery record owner; leaving inherited ACL");
+            return;
+        }
+
+        let sid_len =
+            windows_sys::Win32::Security::GetSidLengthRequired(*windows_sys::Win32::Security::GetSidSubAuthorityCount(owner));
+        let acl_size = (std::mem::size_of::<ACL>()
+            + std::mem::size_of::<ACCESS_ALLOWED_ACE>()
+            + sid_len as usize
+            - std::mem::size_of::<u32>())
+            .next_multiple_of(4);
+        let mut acl_buf = vec![0u8; acl_size];
+        let acl = acl_buf.as_mut_ptr() as *mut ACL;
+        let ok = windows_sys::Win32::Security::InitializeAcl(acl, acl_size as u32, ACL_REVISION)
+            != 0
+            && windows_sys::Win32::Security::AddAccessAllowedAce(
+                acl,
+                ACL_REVISION,
+                GENERIC_ALL,
+                owner,
+            ) != 0
+            && SetNamedSecurityInfoW(
+                wpath.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl,
+                std::ptr::null_mut(),
+            ) == ERROR_SUCCESS;
+        if !ok {
+            eprintln!("[june-control] failed to tighten discovery record ACL; leaving inherited ACL");
+        }
+        if !psd.is_null() {
+            LocalFree(psd);
+        }
+    }
+}
+
+/// True when a discovery record with this content was written by a process other than ours
+/// (including unreadable or pid-less records - those can only mislead June).
+fn is_stale_record(content: &str) -> bool {
+    serde_json::from_str::<Value>(content)
+        .ok()
+        .and_then(|v| v["pid"].as_u64())
+        .map(|p| p as u32)
+        .is_none_or(|pid| pid != std::process::id())
+}
+
+/// Remove a discovery record left behind by a dead previous run. Called unconditionally at
+/// startup so June never discovers an endpoint nobody is serving; the current process's own
+/// record is re-written right after by [`start`].
+pub fn remove_stale_discovery_record() {
+    let Some(path) = discovery_path() else { return };
+    // Absent/unreadable records are useless for June but harmless; leave removal of
+    // those to the clean-shutdown path rather than deleting files we cannot parse.
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if is_stale_record(&content) {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 
@@ -303,10 +407,16 @@ pub fn remove_discovery_record() {
     }
 }
 
+/// Max concurrent in-flight June requests before new ones are shed with 503.
+const MAX_IN_FLIGHT_REQUESTS: usize = 8;
+
 /// Start the endpoint if the user has opted in. Binds an ephemeral loopback port, writes the
 /// discovery record, and serves requests on a background thread. No-op (and no open port) when the
 /// toggle is off.
 pub fn start(app: AppHandle) {
+    // A record from a dead previous run must never survive into this launch: June would
+    // discover an endpoint nobody is serving (and a token that no longer matches).
+    remove_stale_discovery_record();
     if !is_enabled() {
         return;
     }
@@ -326,12 +436,19 @@ pub fn start(app: AppHandle) {
     write_discovery_record(&endpoint, &token, &version);
     eprintln!("[june-control] listening on {endpoint}");
 
+    let gate = std::sync::Arc::new(ConcurrencyGate::new(MAX_IN_FLIGHT_REQUESTS));
     std::thread::spawn(move || {
         for request in server.incoming_requests() {
             let app = app.clone();
+            let gate = gate.clone();
             // Thread-per-request: `command` blocks up to COMMAND_TIMEOUT on the renderer, so it must
-            // not stall `observe` polls. ponytail: fine for a single local client (June).
-            std::thread::spawn(move || handle_request(app, request));
+            // not stall `observe` polls. The gate sheds bursts instead of spawning unbounded threads.
+            std::thread::spawn(move || {
+                let Some(_permit) = gate.acquire() else {
+                    return respond_json(request, 503, &json!({ "error": "busy" }));
+                };
+                handle_request(app, request)
+            });
         }
     });
 }
@@ -345,9 +462,68 @@ fn respond_json(request: tiny_http::Request, status: u16, body: &Value) {
 }
 
 fn authorized(request: &tiny_http::Request, token: &str) -> bool {
+    const PREFIX: &str = "Bearer ";
     request.headers().iter().any(|h| {
-        h.field.equiv("Authorization") && h.value.as_str() == format!("Bearer {token}")
+        if !h.field.equiv("Authorization") {
+            return false;
+        }
+        let value = h.value.as_str();
+        let Some(credential) = value.strip_prefix(PREFIX) else {
+            return false;
+        };
+        // Constant-time comparison: a short-circuiting `==` would leak the token one byte
+        // at a time to a local process timing failed authentication attempts.
+        constant_time_eq(credential.as_bytes(), token.as_bytes())
     })
+}
+
+/// Length-independent byte equality: always XORs every byte pair, so timing does not
+/// depend on how many leading bytes matched.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Caps how many June requests may be in flight at once. Thread-per-request means an
+/// unbounded burst of requests would spawn unbounded threads; above the cap we shed load
+/// with a 503 instead. Single local client, so a small cap is plenty.
+pub struct ConcurrencyGate {
+    max: usize,
+    in_flight: Mutex<usize>,
+}
+
+impl ConcurrencyGate {
+    pub fn new(max: usize) -> Self {
+        ConcurrencyGate { max, in_flight: Mutex::new(0) }
+    }
+
+    /// Reserve a slot; `None` means the caller was shed.
+    pub fn acquire(&self) -> Option<ConcurrencyPermit<'_>> {
+        let mut count = self.in_flight.lock().unwrap();
+        if *count >= self.max {
+            return None;
+        }
+        *count += 1;
+        Some(ConcurrencyPermit { gate: self })
+    }
+}
+
+/// RAII slot returned by [`ConcurrencyGate::acquire`]; releases on drop.
+pub struct ConcurrencyPermit<'a> {
+    gate: &'a ConcurrencyGate,
+}
+
+impl Drop for ConcurrencyPermit<'_> {
+    fn drop(&mut self) {
+        let mut count = self.gate.in_flight.lock().unwrap();
+        *count = count.saturating_sub(1);
+    }
 }
 
 fn handle_request(app: AppHandle, mut request: tiny_http::Request) {
@@ -475,6 +651,66 @@ pub fn june_emit_event(
         .record_event(workspace_id, kind, request_id, payload);
 }
 
+// ---------------------------------------------------------------------------
+// Terminal-action scoping. June may only write to or close panes it spawned through this
+// endpoint - never the operator's own panes. The dispatcher registers each spawned pane id
+// here; `write_terminal` / `assign_task` / `close_terminal` must pass the Rust-side check
+// before any PTY command runs. Enforcement lives in Rust so a compromised renderer cannot
+// widen it.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub struct JuneTerminalScopes(Mutex<std::collections::HashSet<String>>);
+
+impl JuneTerminalScopes {
+    pub fn permit(&self, pane_ids: &[String]) {
+        self.0.lock().unwrap().extend(pane_ids.iter().cloned());
+    }
+
+    pub fn is_permitted(&self, pane_id: &str) -> bool {
+        self.0.lock().unwrap().contains(pane_id)
+    }
+
+    pub fn revoke(&self, pane_id: &str) -> bool {
+        self.0.lock().unwrap().remove(pane_id)
+    }
+}
+
+/// Register panes June spawned as the only ones its terminal actions may target.
+#[tauri::command]
+pub fn june_permit_terminals(
+    app: AppHandle,
+    pane_ids: Vec<String>,
+    scopes: tauri::State<JuneTerminalScopes>,
+) {
+    let _ = app;
+    scopes.permit(&pane_ids);
+}
+
+/// Fail-closed check before a June-driven write/close touches a pane.
+#[tauri::command]
+pub fn june_ensure_terminal_permitted(
+    app: AppHandle,
+    pane_id: String,
+    scopes: tauri::State<JuneTerminalScopes>,
+) -> Result<(), String> {
+    let _ = app;
+    if scopes.is_permitted(&pane_id) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Terminal '{pane_id}' was not spawned by June and may not be driven by it"
+        ))
+    }
+}
+
+/// A closed pane is no longer a legal target.
+#[tauri::command]
+pub fn june_revoke_terminal(app: AppHandle, pane_id: String, scopes: tauri::State<JuneTerminalScopes>) {
+    let _ = app;
+    scopes.revoke(&pane_id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,5 +795,65 @@ mod tests {
         assert_eq!(caps["contract_version"], CONTRACT_VERSION);
         assert_eq!(caps["actions"].as_array().unwrap().len(), ACTIONS.len());
         assert_eq!(caps["limits"]["max_concurrent_agents"], MAX_CONCURRENT_AGENTS);
+    }
+
+    #[test]
+    fn constant_time_eq_table() {
+        for (a, b, expected) in [
+            ("", "", true),
+            ("secret", "secret", true),
+            ("secret", "secreT", false),
+            ("secret", "secre", false),
+            ("secre", "secret", false),
+            ("\0\0", "\0\0", true),
+        ] {
+            assert_eq!(constant_time_eq(a.as_bytes(), b.as_bytes()), expected, "{a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn concurrency_gate_admits_up_to_max_then_sheds_and_releases() {
+        let gate = ConcurrencyGate::new(2);
+        let first = gate.acquire();
+        let second = gate.acquire();
+        assert!(first.is_some() && second.is_some(), "slots below max are granted");
+        assert!(gate.acquire().is_none(), "requests above max are shed");
+
+        drop(second);
+        let third = gate.acquire();
+        assert!(third.is_some(), "a released slot is reusable");
+        assert!(gate.acquire().is_none());
+    }
+
+    #[test]
+    fn terminal_scopes_permit_revoke_and_fail_closed() {
+        let scopes = JuneTerminalScopes::default();
+        // Fail closed before anything is registered.
+        assert!(!scopes.is_permitted("p1"));
+
+        scopes.permit(&["p1".to_string(), "p2".to_string()]);
+        assert!(scopes.is_permitted("p1"));
+        assert!(scopes.is_permitted("p2"));
+        assert!(!scopes.is_permitted("operator-pane"), "unregistered panes stay forbidden");
+
+        assert!(scopes.revoke("p1"));
+        assert!(!scopes.is_permitted("p1"), "revoked panes are immediately forbidden");
+        assert!(!scopes.revoke("p1"), "double revoke reports nothing removed");
+        assert!(scopes.is_permitted("p2"), "siblings unaffected");
+    }
+
+    #[test]
+    fn stale_discovery_records_are_detected_by_pid() {
+        let ours = std::process::id();
+        let record = |pid: u64| {
+            json!({ "protocol_version": CONTRACT_VERSION, "pid": pid, "endpoint": "http://127.0.0.1:1", "token": "t" }).to_string()
+        };
+
+        // Our own record is fresh; any other process's (or a garbage/record-less file) is stale.
+        assert!(!is_stale_record(&record(ours as u64)));
+        let other = if ours as u64 > 0 { ours as u64 - 1 } else { ours as u64 + 1 };
+        assert!(is_stale_record(&record(other)));
+        assert!(is_stale_record("not json at all"));
+        assert!(is_stale_record(&json!({ "endpoint": "http://x" }).to_string()));
     }
 }

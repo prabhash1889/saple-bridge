@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm v2 - Complete Redesign Plan</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-soft: #11151f;
+    --card: #151b28;
+    --card-2: #1a2133;
+    --border: #263048;
+    --text: #e6ebf5;
+    --muted: #8b96ad;
+    --accent: #5eead4;
+    --accent-2: #7dd3fc;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --success: #4ade80;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --display: "Palatino Linotype", Palatino, Georgia, Cambria, serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fb;
+      --bg-soft: #eef1f7;
+      --card: #ffffff;
+      --card-2: #f2f5fa;
+      --border: #d8dfec;
+      --text: #1a2233;
+      --muted: #5b6578;
+      --accent: #0d9488;
+      --accent-2: #0284c7;
+      --warn: #b45309;
+      --danger: #dc2626;
+      --success: #15803d;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* Hero */
+  .hero {
+    padding: 72px 0 48px;
+    text-align: center;
+    background:
+      radial-gradient(600px 300px at 50% -50px, rgba(94, 234, 212, 0.12), transparent),
+      radial-gradient(500px 260px at 80% 0, rgba(125, 211, 252, 0.08), transparent);
+  }
+  .hero .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 16px;
+    margin-bottom: 20px;
+    background: var(--card);
+  }
+  .hero h1 { font-family: var(--display); font-size: clamp(32px, 5vw, 50px); font-weight: 700; letter-spacing: -0.5px; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero p.sub {
+    max-width: 720px;
+    margin: 16px auto 0;
+    color: var(--muted);
+    font-size: 17px;
+  }
+  .pipeline {
+    margin: 32px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .pipeline span {
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 7px 13px;
+    border-radius: 8px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .pipeline .arr { border: none; background: none; color: var(--muted); padding: 7px 0; }
+
+  /* Sections */
+  section { margin-top: 64px; }
+  h2 {
+    font-family: var(--display);
+    font-size: 28px;
+    letter-spacing: -0.3px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h2 .n {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 6px;
+    padding: 2px 9px;
+  }
+  .lede { color: var(--muted); margin-bottom: 24px; max-width: 780px; }
+
+  /* Goals grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .goal {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .goal b { color: var(--accent-2); display: block; margin-bottom: 4px; font-size: 15px; }
+  .goal p { color: var(--muted); font-size: 14px; }
+
+  /* Keep / delete */
+  .keepdrop { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .keepdrop { grid-template-columns: 1fr; } }
+  .kd {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .kd h3 { font-size: 15px; margin-bottom: 12px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .kd.keep h3 { color: var(--success); }
+  .kd.drop h3 { color: var(--danger); }
+  .kd ul { list-style: none; }
+  .kd li {
+    padding: 7px 0 7px 24px;
+    position: relative;
+    font-size: 14px;
+    color: var(--text);
+    border-bottom: 1px dashed var(--border);
+  }
+  .kd li:last-child { border-bottom: none; }
+  .kd.keep li::before { content: "+"; color: var(--success); position: absolute; left: 4px; font-family: var(--mono); }
+  .kd.drop li::before { content: "x"; color: var(--danger); position: absolute; left: 4px; font-family: var(--mono); }
+  .kd li code { color: var(--muted); }
+
+  /* Flow diagram */
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .fnode {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 22px;
+    width: min(640px, 100%);
+    text-align: center;
+    font-size: 14.5px;
+  }
+  .fnode b { color: var(--accent-2); }
+  .fnode small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .fnode.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .fdown { color: var(--muted); font-family: var(--mono); padding: 4px 0; font-size: 13px; }
+  .fbranch {
+    width: min(640px, 100%);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 4px 0;
+  }
+  .fbranch .fnode { width: 100%; }
+  .fnode.pass { border-color: rgba(74, 222, 128, 0.5); }
+  .fnode.fail { border-color: rgba(251, 191, 36, 0.5); }
+
+  /* Tables */
+  .tblwrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--card); }
+  th {
+    text-align: left;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-2);
+  }
+  td { padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code, li code, p code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    color: var(--accent-2);
+  }
+
+  /* Code blocks */
+  pre {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+  }
+  pre .k { color: var(--accent-2); }
+  pre .s { color: var(--accent); }
+  pre .c { color: var(--muted); }
+
+  /* Phases */
+  .phase {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-top: 22px;
+    overflow: hidden;
+  }
+  .phead {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 20px 24px 6px;
+    flex-wrap: wrap;
+  }
+  .pnum {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--bg);
+    background: var(--accent);
+    border-radius: 7px;
+    padding: 3px 10px;
+    flex-shrink: 0;
+  }
+  .phead h3 { font-family: var(--display); font-size: 20px; letter-spacing: -0.2px; }
+  .phead .pill {
+    font-size: 11.5px;
+    font-family: var(--mono);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+  }
+  .pbody { padding: 6px 24px 22px; }
+  .pbody > p.why { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+  ol.steps { padding-left: 0; counter-reset: step; list-style: none; }
+  ol.steps > li {
+    counter-increment: step;
+    position: relative;
+    padding: 10px 0 10px 40px;
+    font-size: 14.5px;
+    border-bottom: 1px dashed var(--border);
+  }
+  ol.steps > li:last-child { border-bottom: none; }
+  ol.steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  ol.steps ul { margin-top: 6px; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+  ol.steps ul li { padding: 2px 0; }
+  .done {
+    margin-top: 16px;
+    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid rgba(74, 222, 128, 0.35);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  .done b { color: var(--success); }
+
+  /* Risk list */
+  .risk { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 22px; }
+  .risk ul { list-style: none; }
+  .risk li { padding: 12px 0 12px 26px; position: relative; font-size: 14.5px; border-bottom: 1px dashed var(--border); }
+  .risk li:last-child { border-bottom: none; }
+  .risk li::before { content: "!"; position: absolute; left: 2px; color: var(--warn); font-family: var(--mono); font-weight: 700; }
+  .risk b { color: var(--accent-2); }
+
+  footer { margin-top: 72px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* TOC */
+  nav.toc {
+    margin: 40px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+  nav.toc a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    font-family: var(--mono);
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 8px;
+    padding: 5px 12px;
+    transition: color .15s, border-color .15s;
+  }
+  nav.toc a:hover { color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <div class="tag">saple bridge / swarm v2</div>
+    <h1>Swarm <em>Complete Redesign</em></h1>
+    <p class="sub">A from-scratch replacement of the current swarm with real orchestration: event-driven, contract-driven, and subscription-aware. The coordinator coordinates, builders build live, and "completed" means the acceptance command actually passed.</p>
+    <div class="pipeline">
+      <span>mission</span><span class="arr">-&gt;</span>
+      <span>plan</span><span class="arr">-&gt;</span>
+      <span>build</span><span class="arr">-&gt;</span>
+      <span>review</span><span class="arr">-&gt;</span>
+      <span>synthesize</span><span class="arr">-&gt;</span>
+      <span>acceptance</span><span class="arr">-&gt;</span>
+      <span>repair waves</span><span class="arr">-&gt;</span>
+      <span>done / escalate</span>
+    </div>
+    <nav class="toc">
+      <a href="#goals">goals</a>
+      <a href="#keepdrop">keep vs delete</a>
+      <a href="#arch">architecture</a>
+      <a href="#contracts">contracts</a>
+      <a href="#p0">phase 0</a>
+      <a href="#p1">phase 1</a>
+      <a href="#p2">phase 2</a>
+      <a href="#p3">phase 3</a>
+      <a href="#p4">phase 4</a>
+      <a href="#p5">phase 5</a>
+      <a href="#p6">phase 6</a>
+      <a href="#p7">phase 7</a>
+      <a href="#p8">phase 8</a>
+      <a href="#risk">rollout</a>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <section id="goals">
+    <h2>Design goals</h2>
+    <div class="grid">
+      <div class="goal"><b>Coordinator actually coordinates</b><p>Its plan is machine-read and materializes workers. It stays alive, receives results, reacts, and produces the final answer.</p></div>
+      <div class="goal"><b>Seamless and realtime</b><p>File-watcher events replace every 5-second poll. A task completion propagates to the scheduler, the UI, and the coordinator in milliseconds.</p></div>
+      <div class="goal"><b>Contracts, not conventions</b><p><code>plan.json</code>, <code>verdicts/*.json</code>, <code>outcomes/*.json</code> are parsed, sanitized, and enforced by Bridge. Agent output is untrusted: sanitize, fall back, or escalate - never trust, never hang.</p></div>
+      <div class="goal"><b>Verified completion</b><p><code>completed</code> means the acceptance command passed, not "markers printed".</p></div>
+      <div class="goal"><b>Subscriptions are the fuel</b><p>Sign-in detection for every provider, auto-assignment of tasks across signed-in CLIs, per-provider concurrency caps and rate-limit cooldowns.</p></div>
+    </div>
+  </section>
+
+  <section id="keepdrop">
+    <h2>What is kept vs deleted</h2>
+    <p class="lede">The current swarm is a hardened substrate wearing orchestration theater. Keep the substrate, delete the theater.</p>
+    <div class="keepdrop">
+      <div class="kd keep">
+        <h3>Keep - proven substrate</h3>
+        <ul>
+          <li>PTY spawn, allowlist, validated inputs, headless exit codes <code>pty.rs</code></li>
+          <li>Scoped lifecycle markers + rolling-tail detection + exit fallback <code>agentSignals.ts</code></li>
+          <li>Crash/restart reconciliation + cross-project recovery <code>loadSwarmState</code></li>
+          <li>Serialized scheduler core, parallel cap, per-agent commit discipline</li>
+          <li>Bounded rework (<code>reworkAgent</code>, attempt budgets)</li>
+          <li>Mailboxes, handoffs, workspace pinning</li>
+          <li>Control-plane records <code>controlPlane.ts</code></li>
+          <li>Provider readiness store <code>providerStore</code> (extended in Phase 6)</li>
+          <li>Rust file watcher <code>watcher.rs</code> (promoted to event backbone)</li>
+        </ul>
+      </div>
+      <div class="kd drop">
+        <h3>Delete - orchestration theater</h3>
+        <ul>
+          <li>6-step wizard as the launch flow <code>SwarmWizard.tsx</code></li>
+          <li>Static roster templates <code>DEFAULT_TEMPLATES</code>, <code>SwarmTemplateEditor</code></li>
+          <li>Prompt-only <code>tasks.json</code> convention (nothing parses it)</li>
+          <li>5-second polling loops in <code>SwarmWorkspace</code></li>
+          <li>Human-approval-only worker requests (<code>requests.json</code>)</li>
+          <li>"All agents done = completed" terminal condition</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="arch">
+    <h2>Target architecture</h2>
+    <div class="flow">
+      <div class="fnode"><b>User mission</b></div>
+      <div class="fdown">|</div>
+      <div class="fnode hot"><b>Coordinator</b> - live interactive PTY, never headless<small>writes .saple/swarm/plan.json, emits [PLAN_READY:token]</small></div>
+      <div class="fdown">|</div>
+      <div class="fnode"><b>Bridge</b> - parse + sanitize plan, materialize worker agents<small>diffPlan against applied task ids; cycles and garbage dropped</small></div>
+      <div class="fdown">|</div>
+      <div class="fnode"><b>Workers</b> build in parallel<small>headless PTYs, capped, subscription-assigned; outcomes + [AGENT_DONE:token]; watcher events, ms latency</small></div>
+      <div class="fdown">|</div>
+      <div class="fnode"><b>Reviewers</b> - auto-generated per review:true task<small>verdicts/&lt;taskId&gt;.json machine-read: approve unblocks, reject auto-reworks (bounded)</small></div>
+      <div class="fdown">|</div>
+      <div class="fnode hot"><b>Wave complete</b> - digest injected into coordinator's live PTY<small>coordinator synthesizes; Bridge runs plan.acceptance.command for real</small></div>
+      <div class="fbranch">
+        <div class="fnode pass"><b>Pass</b><small>final report artifact, swarm COMPLETED</small></div>
+        <div class="fnode fail"><b>Fail</b><small>repair tasks appended, [PLAN_UPDATED:token], next wave</small></div>
+      </div>
+      <div class="fdown">|</div>
+      <div class="fnode"><b>Guard rails</b><small>maxWaves exhausted or repeated identical failure -&gt; structured escalation to human</small></div>
+    </div>
+
+    <h2 style="margin-top:48px; font-size:20px;">Data model - <code style="font-size:15px;">.saple/swarm/</code></h2>
+    <div class="tblwrap">
+      <table>
+        <tr><th>File</th><th>Owner</th><th>Purpose</th></tr>
+        <tr><td><code>plan.json</code></td><td>Coordinator</td><td>Task list + acceptance command</td></tr>
+        <tr><td><code>state.json</code></td><td>Bridge</td><td>Roster, statuses, waves, applied task ids, autonomy</td></tr>
+        <tr><td><code>verdicts/&lt;taskId&gt;.json</code></td><td>Reviewers</td><td>approve / reject + feedback</td></tr>
+        <tr><td><code>outcomes/&lt;agentId&gt;.json</code></td><td>Workers</td><td>Structured outcome (existing P3 contract, unchanged)</td></tr>
+        <tr><td><code>mailbox/&lt;agentId&gt;.md</code></td><td>Both</td><td>Operator/agent messages (now push-updated)</td></tr>
+        <tr><td><code>handoffs/&lt;from&gt;-to-&lt;to&gt;.json</code></td><td>Workers</td><td>Peer handoffs (now push-updated)</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="contracts">
+    <h2>Contracts</h2>
+    <p class="lede">Sanitizer rules: unknown fields dropped; missing id/mission drops the task; unknown deps filtered; cycles rejected; task ids are append-only dedup keys. A malformed plan can never crash the scheduler or launch a bad worker.</p>
+    <pre>
+<span class="c">// plan.json (coordinator-owned, Bridge-sanitized)</span>
+{
+  <span class="k">"version"</span>: 2,
+  <span class="k">"acceptance"</span>: { <span class="k">"command"</span>: <span class="s">"npm test"</span>, <span class="k">"description"</span>: <span class="s">"suite green"</span> },
+  <span class="k">"tasks"</span>: [
+    {
+      <span class="k">"id"</span>: <span class="s">"fe_auth"</span>,
+      <span class="k">"mission"</span>: <span class="s">"Implement login form + token storage in keychain"</span>,
+      <span class="k">"role"</span>: <span class="s">"builder"</span>,
+      <span class="k">"dependsOn"</span>: [<span class="s">"design"</span>],
+      <span class="k">"provider"</span>: <span class="s">"auto"</span>,
+      <span class="k">"model"</span>: <span class="s">"default"</span>,
+      <span class="k">"review"</span>: true,
+      <span class="k">"strategy"</span>: <span class="s">"single"</span>
+    }
+  ]
+}
+
+<span class="c">// verdicts/&lt;taskId&gt;.json (reviewer-owned)</span>
+{ <span class="k">"taskId"</span>: <span class="s">"fe_auth"</span>, <span class="k">"verdict"</span>: <span class="s">"reject"</span>, <span class="k">"feedback"</span>: <span class="s">"token stored in localStorage, move to keychain"</span> }
+
+<span class="c">// new lifecycle markers (same scoped-token scheme as [AGENT_DONE:&lt;token&gt;])</span>
+[PLAN_READY:&lt;token&gt;]    <span class="c">// coordinator finished initial planning</span>
+[PLAN_UPDATED:&lt;token&gt;]  <span class="c">// coordinator appended tasks mid-run (repair wave / dynamic growth)</span></pre>
+  </section>
+
+  <section id="p0">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 0</span><h3>Contracts and parsers</h3><span class="pill">pure lib - zero behavior change</span></div>
+      <div class="pbody">
+        <p class="why">The foundation everything else compiles against. No UI or runtime changes ship here.</p>
+        <ol class="steps">
+          <li><code>src/types/swarmPlan.ts</code> - <code>SwarmPlan</code>, <code>PlanTask</code>, <code>Verdict</code>, <code>SwarmWave</code>, <code>AutonomyMode</code> (<code>manual | gated | auto</code>), <code>SwarmEvent</code> union (<code>plan_ready</code>, <code>plan_updated</code>, <code>task_completed</code>, <code>task_failed</code>, <code>verdict_recorded</code>, <code>wave_completed</code>, <code>acceptance_passed</code>, <code>acceptance_failed</code>, <code>escalated</code>).</li>
+          <li><code>src/lib/swarmPlan.ts</code>:
+            <ul>
+              <li><code>parsePlan(raw)</code> - full sanitizer per contract rules (mirror <code>parseWorkerRequests</code> / <code>parseAgentOutcome</code> style: drop, never throw)</li>
+              <li><code>parseVerdict(raw)</code> - only approve/reject accepted; anything else null (parks task for a human)</li>
+              <li><code>diffPlan(appliedIds, incoming)</code> - returns only new, valid, acyclic tasks</li>
+              <li>Cycle detection: reuse the logic behind <code>validate_dependency_graph</code>, ported to run sync in TS</li>
+            </ul>
+          </li>
+          <li><code>agentSignals.ts</code> - add scoped <code>PLAN_READY</code> / <code>PLAN_UPDATED</code> regexes to the cached per-token battery; extend <code>mightContainAgentMarker</code> with <code>PLAN_</code>.</li>
+          <li>Vitest: every malformed-input path (missing fields, wrong types, cycles, duplicate ids, hostile strings), plus marker tests mirroring <code>agentSignals.test.ts</code>.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> typecheck and tests pass; nothing user-visible changes.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p1">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 1</span><h3>Realtime event backbone</h3><span class="pill">kill all polling</span></div>
+      <div class="pbody">
+        <p class="why">Replace every setInterval with push events from the Rust file watcher.</p>
+        <ol class="steps">
+          <li>Rust (<code>watcher.rs</code>): <code>watch_swarm_dir</code> / <code>unwatch_swarm_dir</code> commands - recursive, debounced (~150 ms) notify watcher on <code>.saple/swarm/</code> emitting a <code>swarm-file-changed {projectPath, relPath}</code> Tauri event. Register in <code>lib.rs</code>.</li>
+          <li><code>src/lib/swarmEvents.ts</code> - tiny TS event bus: subscribes once, classifies <code>relPath</code> (plan / verdicts / outcomes / mailbox / handoffs), fans out typed callbacks. Single module-level listener, mirrors <code>startPtyOutputListener</code> lifecycle.</li>
+          <li><code>swarmStore</code>: start/stop watching in <code>loadSwarmState</code> / <code>stopSwarm</code>; route classified events to handlers (stubs now; Phases 2-5 fill them in).</li>
+          <li><code>SwarmWorkspace.tsx</code>: delete the 5 s worker-request poll and mailbox/handoff polling effects; re-read a file only when its event fires.</li>
+          <li>Guard: events for a project that is not <code>loadedProjectPath</code> are dropped (P13 recovery already covers away-project catch-up on load).</li>
+        </ol>
+        <div class="done"><b>Done when:</b> editing a mailbox file externally updates the open Swarm room in under a second with zero intervals registered.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p2">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 2</span><h3>Coordinator-driven orchestration core</h3><span class="pill">the pivot</span></div>
+      <div class="pbody">
+        <p class="why">The swarm starts with a coordinator only; its plan materializes the workers. The wizard DAG dies.</p>
+        <ol class="steps">
+          <li>Store rewrite keeping the proven pieces. State adds: <code>plan</code>, <code>appliedPlanTaskIds</code>, <code>autonomy</code>, <code>wave</code>, <code>maxWaves</code>, <code>maxParallel</code> (persisted in <code>state.json</code>). Keep: marker minting, scheduler serialization guard, per-agent commit discipline, reconciliation, mailbox/handoff/outcome plumbing, <code>reworkAgent</code>.</li>
+          <li><code>startSwarm(mission, options)</code> replaces <code>startSwarmFromWizard</code>: writes dirs, pins a swarm workspace instance (existing P11 flow), seeds ONE coordinator agent, launches it.</li>
+          <li>Coordinator prompt (<code>src/lib/swarmPrompts.ts</code>): mission, the plan.json contract verbatim, the acceptance-command requirement, scoped markers incl. <code>[PLAN_READY]</code> / <code>[PLAN_UPDATED]</code>, mailbox path.</li>
+          <li>Plan intake on marker (fast path) or plan.json watcher event (fallback): read, <code>parsePlan</code>, <code>diffPlan</code>, materialize each new task as a <code>SwarmAgent</code> (fresh id + marker, prompt from task.mission + role sections), append applied ids, persist, run scheduler.</li>
+          <li>Scheduler: existing <code>runAgentScan</code> logic (deps-done, launch under cap) on materialized tasks; plan <code>dependsOn</code> maps through a taskId-to-agentId map in state.</li>
+          <li>Worker prompts: mission comes from the plan task. Remove the tasks.json paragraph everywhere - the plan IS the assignment.</li>
+          <li>Failure containment: coordinator exits without a valid plan -> swarm parks in review with the terminal tail visible and one-click "retry planning".</li>
+          <li>Tests: plan intake (valid / partial / garbage / duplicate re-emit), materialization idempotency, scheduler cascade.</li>
+        </ol>
+        <div class="done"><b>Done when (E2E):</b> mission -> coordinator plans -> workers spawn from plan.json -> complete -> dependents cascade. Kill the app mid-run -> reconciliation recovers.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p3">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 3</span><h3>Live coordinator</h3><span class="pill">seamless, not fire-and-forget</span></div>
+      <div class="pbody">
+        <p class="why">The coordinator stays alive for the whole swarm and receives results in its own PTY.</p>
+        <ol class="steps">
+          <li><code>pty.rs</code>: new spawn mode <code>interactive_with_prompt</code> - launch the CLI interactively (no stdin pipe, no headless exit wiring), deliver the prompt by writing it to the PTY via the existing writer path once ready. Coordinator panes use this; workers stay headless.</li>
+          <li>Digest injection: <code>notifyCoordinator(digest)</code> writes a compact results digest (task id, status, outcome summary, verdict) into the coordinator's PTY as a user turn. Triggered on <code>wave_completed</code> and terminal task failures.</li>
+          <li>Busy/idle tracking: only inject at the input prompt (quiet-output heuristic); queue digests while busy, flush on idle. Observable store state: <code>planning | idle | digesting</code>.</li>
+          <li>Fallback (per-provider flag in <code>providerMeta</code>): TUIs that reject injected turns get digest-relaunch - fresh coordinator whose prompt embeds all outcomes/verdicts so far. Injection is the optimization; relaunch is the guarantee.</li>
+          <li>Coordinator crash mid-swarm: exit fallback detects it; auto-relaunch once with the digest prompt; a second crash escalates to human.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> a worker finishes and its summary visibly appears inside the coordinator's terminal within seconds, and the coordinator's next output reacts with prior context intact.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p4">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 4</span><h3>Automated review gate</h3><span class="pill">verdicts drive rework</span></div>
+      <div class="pbody">
+        <ol class="steps">
+          <li>Every plan task with <code>review: true</code> auto-generates a reviewer agent depending on it (shared reviewer per wave by default; per-task for large waves). Reviewer prompt: target mission + outcome file + diff-scope instruction + the verdict contract + scoped markers.</li>
+          <li>On reviewer completion (or verdicts watcher event): <code>parseVerdict</code>.
+            <ul>
+              <li><b>approve</b> -> task approved; dependents treat it as done</li>
+              <li><b>reject</b> -> auto <code>reworkAgent(taskAgent, feedback)</code> (existing bounded loop; budget exhausted -> existing human escalation UI)</li>
+              <li><b>missing / garbage</b> -> park the task in review for a human. Never guess.</li>
+            </ul>
+          </li>
+          <li>Autonomy dial per swarm: <code>manual</code> (every transition needs a click - debug), <code>gated</code> (auto-rework, human approves the plan - default), <code>auto</code> (hands-free within budgets).</li>
+          <li>Dependents of a rejected task stay blocked; existing blocked-cascade logic works once "done" is redefined as done + approved when review:true.</li>
+          <li>Tests: verdict parse paths, auto-rework trigger, budget exhaustion, garbage-verdict parking.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> a reviewer rejection relaunches the builder with feedback embedded, zero human clicks, at most maxAttempts times.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p5">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 5</span><h3>Acceptance and repair waves</h3><span class="pill">completed = verified</span></div>
+      <div class="pbody">
+        <ol class="steps">
+          <li>Acceptance runner: Bridge (never the coordinator - never trust an agent's claim) runs <code>plan.acceptance.command</code> in a headless PTY in the project dir when all tasks are done + approved. Exit 0 = pass. The command is operator-visible before launch.</li>
+          <li>Pass -> synthesis digest into the coordinator -> final report written -> stored as a control-plane artifact -> swarm <code>completed</code>, report surfaced in the UI.</li>
+          <li>Fail -> failure-output digest -> coordinator appends repair tasks + <code>[PLAN_UPDATED]</code> -> Phase 2 intake + Phase 4 gate run the repair wave; <code>wave</code> increments.</li>
+          <li>Guard rails: <code>maxWaves</code> (default 3); a wave with zero new tasks or two consecutive identical acceptance failures (trimmed output hash) short-circuits to escalation; escalation = structured report artifact (waves attempted, remaining failures, diagnosis, proposed next wave) with human choices: one more wave / redirect / stop.</li>
+          <li>Tests: pass/fail transitions, wave counting, identical-failure short-circuit, escalation payload shape.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> an intentionally broken build triggers a repair wave that fixes it; an unfixable one escalates with a readable report instead of looping.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p6">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 6</span><h3>Subscription-aware provider layer</h3><span class="pill">spread, cap, cool down</span></div>
+      <div class="pbody">
+        <ol class="steps">
+          <li>Extend <code>check_provider_signin</code> beyond codex/claude: <code>gemini</code> (<code>~/.gemini/oauth_creds.json</code>), <code>copilot</code> (<code>gh auth status</code>), <code>opencode</code> (<code>opencode auth list</code>); cursor/droid/grok/pi where a probe exists, honest <code>None</code> where not.</li>
+          <li>Fix the silent prompt hole: providers failing <code>provider_accepts_prompt_pipe</code> (cursor, copilot) must not launch mission-less TUIs as workers - deliver the prompt via the Phase 3 stdin-write path, or refuse the assignment at materialization with a clear per-task status.</li>
+          <li>Provider assigner (<code>src/lib/providerAssign.ts</code>): resolves <code>provider: "auto"</code> across ready providers (installed + signed-in/keyed + enabled), round-robin weighted by caps; deterministic and unit-tested. Explicit provider wins if ready, else falls back with a status note.</li>
+          <li>Per-provider concurrency caps (settings, default ~2 per subscription CLI) under the global <code>maxParallel</code>: scheduler counts running agents per provider and holds excess in waiting.</li>
+          <li>Rate-limit awareness: per-provider rate-limit phrase regexes in <code>providerMeta</code> matched on the signal tail; on hit, mark the provider cooling for N minutes, requeue to another ready provider or hold, surface a badge in the UI.</li>
+          <li>Tests: assigner distribution, cap enforcement, rate-limit requeue.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> a plan with provider "auto" spreads tasks across every signed-in CLI, respects caps, and a rate-limited provider visibly cools down while work continues elsewhere.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p7">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 7</span><h3>Mission-first UI</h3><span class="pill">replace the wizard</span></div>
+      <div class="pbody">
+        <ol class="steps">
+          <li>Launch composer (replaces <code>SwarmWizard</code> and all steps): one screen - mission textarea, autonomy dial, maxParallel / maxWaves, provider preference chips auto-populated from readiness (unready greyed with the reason). Command Palette's <code>pendingWizardMission</code> seeds it.</li>
+          <li>Plan approval screen (manual/gated): the parsed plan as editable cards - edit mission text, change provider/model, toggle review, delete tasks, see the acceptance command. Approve -> materialize + launch. <code>auto</code> skips straight through.</li>
+          <li><code>SwarmWorkspace</code> rebuild: wave timeline header (plan -> build -> review -> acceptance per wave, live states); agent cards with existing status colors + verdict badges, outcome summaries, elapsed time; coordinator strip (planning / idle / digesting + latest digest); escalation panel with the three actions; <code>SwarmGraph</code> kept, reading the same materialized roster, restyled for waves.</li>
+          <li>Delete: <code>SwarmWizard.tsx</code>, <code>wizard/steps/*</code>, <code>SwarmTemplateEditor.tsx</code>, <code>DEFAULT_TEMPLATES</code>, template persistence in partialize. Role prompt presets survive as a small <code>rolePresets.ts</code> used by the prompt builder.</li>
+          <li>No new nav: the swarm entry point stays exactly where it is today.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> mission -> glance at proposed team -> launch in under a minute; the room shows a live, self-updating picture with zero manual refresh.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="p8">
+    <div class="phase">
+      <div class="phead"><span class="pnum">PHASE 8</span><h3>Patterns, hardening, telemetry</h3><span class="pill">debate + cleanup</span></div>
+      <div class="pbody">
+        <ol class="steps">
+          <li><b>Debate strategy:</b> <code>"strategy": "debate", "attempts": N</code> on a plan task -> N parallel builders (isolated dirs or file-scope partitioning) + an auto-generated judge task writing a verdict that picks/merges - the Phase 4 verdict contract reused verbatim.</li>
+          <li>Telemetry in state.json: waves used, rework counts per task, per-provider launch/failure/rate-limit counts, wall-clock per phase. Feeds escalation reports and tuning; nothing transmitted externally.</li>
+          <li>Prompt-injection hardening pass: every agent-written file re-audited against its sanitizer; fuzz tests with hostile strings; markers remain the only status channel and stay scoped per agent.</li>
+          <li>Docs: CLAUDE.md storage table (plan.json, verdicts/), src/AGENTS.md, src-tauri AGENTS.md (watcher + interactive-prompt spawn mode).</li>
+          <li>Cleanup sweep: delete dead old-swarm code (<code>parseWorkerRequests</code>, <code>resolveWorkerRequest</code>, requests polling, unused types) with reviewable per-phase diffs.</li>
+        </ol>
+        <div class="done"><b>Done when:</b> a debate task produces a judged merge; telemetry shows up in escalation reports; no orphaned old-swarm code remains.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="risk">
+    <h2>Rollout, risk, and testing</h2>
+    <div class="risk">
+      <ul>
+        <li><b>Phase order is dependency order.</b> 0-1 are invisible foundations; 2 is the breaking pivot. Between 2 and 7 the composer is a minimal mission box so the app never ships wizard-less AND composer-less.</li>
+        <li><b>Trust posture everywhere:</b> agent output is untrusted input. Sanitize-or-drop on every read; park-for-human on ambiguity; markers scoped per agent; acceptance is executed by Bridge, never self-reported.</li>
+        <li><b>Containment:</b> all new files stay inside <code>.saple/swarm/*</code> via existing contained write commands. New Rust surface is small: swarm-dir watcher + interactive-prompt spawn mode, both validated like existing inputs.</li>
+        <li><b>Crash safety:</b> every new state field lives in state.json and round-trips through existing reconciliation; a mid-wave restart resumes the wave, never restarts it.</li>
+        <li><b>Test strategy per phase:</b> vitest for every parser/scheduler/assigner path, cargo test for watcher and spawn-mode validators, one real E2E swarm run on Windows before each phase merges.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Swarm v2 redesign plan - Saple Bridge - source: swarm-update-new.md</footer>
+</div>
+
+</body>
+</html>

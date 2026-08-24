@@ -37,6 +37,16 @@ export const PROVIDER_ORDER: AgentProvider[] = [
 // launches them interactively. Surfaced with an "experimental" badge in the UI.
 export const EXPERIMENTAL_PROVIDERS = new Set<AgentProvider>(['cursor', 'copilot']);
 
+// Phase 3: providers whose interactive TUI reliably accepts an injected typed turn (bracketed
+// paste + Enter written straight to the PTY). Coordinators on these run LIVE for the whole swarm
+// and receive results digests in their own session; every other provider uses the digest-relaunch
+// fallback — injection is the optimization, relaunch is the guarantee. Conservative on purpose:
+// add a provider here only once its TUI is verified to accept injected turns.
+export const TURN_INJECTION_PROVIDERS = new Set<AgentProvider>(['claude', 'codex', 'gemini', 'opencode']);
+
+export const providerSupportsTurnInjection = (provider?: AgentProvider): boolean =>
+  !!provider && TURN_INJECTION_PROVIDERS.has(provider);
+
 // Default model per provider, used when generating a roster or switching CLI.
 //
 // `'default'` means "let the CLI pick its own current model": spawn_pty omits the `--model` flag
