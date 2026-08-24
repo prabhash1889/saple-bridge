@@ -166,54 +166,91 @@ flowchart LR
 
 ---
 
-## Phase 3 — Review, swarm, and process correctness
+## Progress log
+
+Updated at phase boundaries; completed implementation detail lives in git history, not here.
+
+| Phase | Status | Evidence |
+| --- | --- | --- |
+| 0 - Emergency safeguards | Complete | destructive-root rejection, acceptance approval gate, review prose never reaches `write_pty`, `.git/**` writer block, backup-gated memory restore |
+| 1 - Privileged-command trust boundaries | Complete | approved-root registry, per-command `project_path` validation, PTY cwd/env hardening, browser scheme and June fixes |
+| 2 - State integrity and recovery | Complete | structured load outcomes, recovery UI, request-sequence tokens, locked read-modify-writes, transactional snapshots, BOM handling, `.saple/` exclude disclosure |
+| 3 - Review, swarm, and process correctness | **Complete (code)** | all work items and automated checks landed; two environment-dependent QA/CI runs deferred into Phase 4 - see Phase 3 status |
+
+---
+## Phase 3 - Review, swarm, and process correctness
 
 **Outcome:** Reviews certify exact evidence, swarms recover from lifecycle races, and stopped processes actually stop.
 
-### Review work
+### Status (updated at the end of the first Phase 3 session)
 
-- Bind a review record to a captured Git commit/tree identity and timestamp.
-- Invalidate the diff cache by tree/file identity, not only project path plus filename.
-- Refuse approval when the worktree or staged set differs from reviewed evidence.
-- Distinguish a missing review record from a corrupt one; never auto-recreate over corruption.
-- Commit only the reviewed/staged path set or refuse unexpected staged files.
-- Prevent verification refreshes from clobbering a user-edited command.
+All three work areas landed on branch `traycer/saple-bridge-soft-salmon` in four commits:
 
-### Swarm work
+1. `feat(review)` - tree-evidence binding, stale-approval refusal, structured corrupt loads, scoped commits, diff-cache invalidation by tree identity, verification-command edit guard.
+2. `feat(swarm)` - exactly-once digest delivery via persisted `pendingDigests`, digest log/prompt caps plus worker-text sanitization, pre/post launch race guards, `removeAgent` graph repair, scheduler-deadlock detection, configurable hung-agent alerts.
+3. `feat(process)` - concurrent pipe drains in `run_shell_with_timeout` (fixes false timeouts on verbose output), whole-tree kill on timeout/cancel via the shared `proc_tree` module (Job Objects / process groups), per-run cancel tokens with UI cancel controls for verification and acceptance, `write_pty` input-pressure reporting, terminal spawn tombstones, PTY listener startup unwinding.
+4. `refactor(swarm)` - Enter-drop retry semantics for digest injection, hung-watch persistence guard, documented kill-on-close behavior.
 
-- Re-enqueue undelivered digests after pause, project switch, or coordinator re-arm.
-- Re-check `swarmActive` and status before and after asynchronous pane creation.
-- When removing an agent, explicitly block dependents or remove their dependency edges.
-- Detect scheduler deadlock: waiting agents exist, but none are schedulable or running.
-- Add a configurable hung-agent alert based on `startedAt`; alert first, never auto-kill by default.
-- Cap the persisted digest log and recovery-prompt content.
-- Fence and length-cap worker-controlled digest, acceptance, and review text before sending it to a coordinator.
+Automated checks that now exist: approval fails after any reviewed-tree change; corrupt review records are preserved, flagged, and never recreated over; commits refuse unexpected staged files and scope to the reviewed path set; tree identity is stable when unchanged and sensitive to HEAD/status changes; verbose commands exceeding pipe-buffer size complete without false timeout; timeout/cancel tests prove descendants are terminated; pause/resume keeps undelivered digests queued exactly once; a stop racing a delayed launch kills the just-created pane; deadlock and removal-edge helpers covered by unit tests.
 
-### Process work
+### Remaining work to finish Phase 3
 
-- Track in-flight PTY spawn promises/tombstones so immediate pane closure cannot orphan a child.
-- Register PTY event listeners before marking initialization complete; reset on failure.
-- Drain child stdout/stderr concurrently while waiting.
-- Kill the entire process tree on timeout and cancellation.
-  - Reuse Windows Job Objects.
-  - Use process groups on Unix.
-- Add cancel controls for verification and acceptance runs.
-- Report PTY input queue pressure instead of silently dropping structured prompt/digest payloads.
+All codeable items are done (second Phase 3 session, commit `cf2ffc4`):
+
+- [x] Settings > Workspace exposes "Hung Agent Alert (minutes)" writing the persisted `hungAgentAlertMs` (0 disables; alert-only by design).
+- [x] Frontend tests drive the real digest pump against a mocked live PTY watch: a delivered digest pops the queue exactly once, and a saturated input queue defers both digests without dropping or duplicating them once drained.
+- [x] `write_pty` `{accepted:false}` drops surface in every structured-payload caller: June's spawn_agents reports `input_dropped` counts plus a `terminal.input_dropped` event, assign_task/write_terminal return `terminal_busy`, and TerminalGrid toasts when dropped file paths cannot be inserted.
+- [x] `src-tauri/src/AGENTS.md` module map lists the new `proc_tree` module.
+
+Deferred to their natural owners (environment/tooling-dependent, not code work):
+
+- [ ] Run the Unix-side process-group kill test on macOS CI - belongs with the CI expansion in Phase 4 (the test is written cfg(unix); developed on Windows).
+- [ ] Packaged-app QA pass on Windows: review approve-after-edit flow, acceptance cancel banner, verification Cancel button, hung-agent alert toast. Manual QA for the release checklist.
+
+### Original work items
+
+#### Review work - COMPLETE
+
+- Bind a review record to a captured Git commit/tree identity and timestamp. (done: `reviewedTree` evidence on every record)
+- Invalidate the diff cache by tree/file identity, not only project path plus filename. (done: cache keys embed the status hash; staging refreshes it)
+- Refuse approval when the worktree or staged set differs from reviewed evidence. (done: backend gate on approve)
+- Distinguish a missing review record from a corrupt one; never auto-recreate over corruption. (done: structured `missing|loaded|corrupt` load + recovery UI)
+- Commit only the reviewed/staged path set or refuse unexpected staged files. (done: `git_commit` path-set guard)
+- Prevent verification refreshes from clobbering a user-edited command. (done: edited-command ref)
+
+#### Swarm work - COMPLETE
+
+- Re-enqueue undelivered digests after pause, project switch, or coordinator re-arm. (done: persisted `pendingDigests`)
+- Re-check `swarmActive` and status before and after asynchronous pane creation. (done: launch guards kill late panes)
+- When removing an agent, explicitly block dependents or remove their dependency edges. (done: `removeAgentFromRoster`)
+- Detect scheduler deadlock: waiting agents exist, but none are schedulable or running. (done: scan-end detection marks blocked + notifies)
+- Add a configurable hung-agent alert based on `startedAt`; alert first, never auto-kill by default. (done: interval watch, one alert per agent per run)
+- Cap the persisted digest log and recovery-prompt content. (done: 40 entries / 8000 chars)
+- Fence and length-cap worker-controlled digest, acceptance, and review text before sending it to a coordinator. (done: marker filtering + control-char stripping + length caps)
+
+#### Process work - COMPLETE
+
+- Track in-flight PTY spawn promises/tombstones so immediate pane closure cannot orphan a child. (done)
+- Register PTY event listeners before marking initialization complete; reset on failure. (done: partial-registration unwind)
+- Drain child stdout/stderr concurrently while waiting. (done)
+- Kill the entire process tree on timeout and cancellation - Job Objects on Windows, process groups on Unix. (done: shared `proc_tree` module)
+- Add cancel controls for verification and acceptance runs. (done: per-run tokens + Review/Swarm UI)
+- Report PTY input queue pressure instead of silently dropping structured prompt/digest payloads. (done: `write_pty` returns `accepted`; digest pump re-delivers)
 
 ### Checks
 
-- Approval fails after any reviewed-tree change.
-- A corrupt review record remains untouched and surfaces recovery UI.
-- Stop racing a delayed launch leaves no pane and no process.
-- Pause during digest delivery results in exactly one delivery after resume.
-- Verbose commands exceeding pipe-buffer size complete without false timeout.
-- Timeout tests prove descendants are terminated.
+- [x] Approval fails after any reviewed-tree change.
+- [x] A corrupt review record remains untouched and surfaces recovery UI.
+- [x] Stop racing a delayed launch leaves no pane and no process.
+- [x] Pause during digest delivery results in exactly one delivery after resume.
+- [x] Verbose commands exceeding pipe-buffer size complete without false timeout.
+- [x] Timeout tests prove descendants are terminated.
 
 ### Exit criteria
 
-- Review approval identifies exactly what was reviewed.
-- Stop/cancel leaves no orphan processes.
-- Swarms cannot remain silently stuck because of a dropped digest, missing dependency, or hung slot.
+- Review approval identifies exactly what was reviewed. (met)
+- Stop/cancel leaves no orphan processes. (met on Windows; macOS run pending)
+- Swarms cannot remain silently stuck because of a dropped digest, missing dependency, or hung slot. (met; alert threshold UI deferred)
 
 ---
 
