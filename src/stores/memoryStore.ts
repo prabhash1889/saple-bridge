@@ -63,6 +63,10 @@ interface MemoryState {
 // content. Only the latest request may commit its result.
 let loadNoteSeq = 0;
 
+// Same token pattern for loadGraph (Phase 2: replaces the old boolean `loading` guard, which
+// silently swallowed legitimate reloads and let stale responses win after project switches).
+let loadGraphSeq = 0;
+
 export const useMemoryStore = create<MemoryState>((set, get) => ({
   nodes: [],
   edges: [],
@@ -78,17 +82,19 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   error: null,
 
   loadGraph: async (projectPath) => {
-    if (get().loading || get().loadedProjectPath === projectPath) return;
+    const token = ++loadGraphSeq;
     set({ loading: true, error: null });
     try {
       const graph = await invoke<MemoryGraph>('get_memory_graph', { projectPath });
-      set({ 
-        nodes: graph.nodes, 
-        edges: graph.edges, 
+      if (token !== loadGraphSeq) return; // superseded by a newer load
+      set({
+        nodes: graph.nodes,
+        edges: graph.edges,
         loadedProjectPath: projectPath,
-        loading: false 
+        loading: false
       });
     } catch (err) {
+      if (token !== loadGraphSeq) return;
       set({ error: `Failed to load graph: ${String(err)}`, loading: false });
     }
   },

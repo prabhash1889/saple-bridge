@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { enqueueWrite } from '../lib/writeQueue';
 import { createId } from '../lib/id';
 import { nowIso } from '../lib/date';
+import { loadStateFile, type CorruptState } from '../lib/stateLoad';
 import type { AgentSession, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { AgentRole } from '../types/agent';
@@ -12,6 +13,8 @@ interface AgentSessionState {
   sessions: AgentSession[];
   loaded: boolean;
   loadedProjectPath: string | null;
+  // Set while sessions.json is corrupt and unresolved; blocks persistence until recovery.
+  corruptState: CorruptState | null;
 
   loadSessions: (projectPath: string, force?: boolean) => Promise<void>;
   saveSessions: (projectPath: string) => Promise<void>;
@@ -43,31 +46,67 @@ interface AgentSessionState {
 
 const SESSION_FILE = '.saple/agents/sessions.json';
 
+// Currency token for loadSessions: only the latest request may commit, so rapid project switches
+// can never land an earlier project's sessions into the current state (Phase 2).
+let loadSessionsSeq = 0;
+
 export const useAgentSessionStore = create<AgentSessionState>()(
   (set, get) => ({
     sessions: [],
     loaded: false,
     loadedProjectPath: null,
+    corruptState: null,
 
     loadSessions: async (projectPath, force = false) => {
-      if (!force && get().loadedProjectPath === projectPath) return;
-      try {
-        const content = await invoke<string>('read_project_file', {
-          projectPath,
-          filePath: SESSION_FILE,
-        });
-        const parsed = JSON.parse(content) as AgentSession[];
-        const sessions = parsed.map(s => ({
-          ...s,
-          status: s.status === 'running' || s.status === 'starting' ? 'stopped' as AgentStatus : s.status,
-        }));
-        set({ sessions, loaded: true, loadedProjectPath: projectPath });
-      } catch {
-        set({ sessions: [], loaded: true, loadedProjectPath: projectPath });
+      if (!force && get().loadedProjectPath === projectPath && !get().corruptState) return;
+      const token = ++loadSessionsSeq;
+      // The disk read runs on the save queue key so a watcher reload lands behind pending writes.
+      const result = await enqueueWrite(`sessions:${projectPath}`, () =>
+        loadStateFile(projectPath, SESSION_FILE),
+      );
+      if (token !== loadSessionsSeq) return;
+
+      switch (result.status) {
+        case 'missing':
+          set({ sessions: [], loaded: true, loadedProjectPath: projectPath, corruptState: null });
+          break;
+        case 'loaded': {
+          try {
+            const parsed = JSON.parse(result.content) as AgentSession[];
+            const sessions = parsed.map(s => ({
+              ...s,
+              status: s.status === 'running' || s.status === 'starting' ? 'stopped' as AgentStatus : s.status,
+            }));
+            set({ sessions, loaded: true, loadedProjectPath: projectPath, corruptState: null });
+          } catch (err) {
+            console.error('Failed to process sessions.json:', err);
+          }
+          break;
+        }
+        case 'corrupt':
+          // Fail closed: never treat corrupt bytes as empty session history.
+          set({
+            sessions: [],
+            loaded: true,
+            loadedProjectPath: projectPath,
+            corruptState: { filePath: SESSION_FILE, error: result.error, backupPath: result.backupPath },
+          });
+          break;
+        case 'locked':
+          console.warn('sessions.json is locked by another process; retry shortly.');
+          break;
+        case 'ioError':
+          console.error('Failed to read sessions.json:', result.error);
+          break;
       }
     },
 
     saveSessions: async (projectPath) => {
+      // A corrupt sessions.json is never overwritten; recovery must clear the flag first.
+      if (get().corruptState) {
+        console.error('Session save skipped: sessions.json is corrupt and awaiting recovery.');
+        return;
+      }
       try {
         // Serialized like tasks/swarm saves: overlapping saves must not reorder, or a stale
         // session snapshot wins on disk. The content is read inside the queued task so each

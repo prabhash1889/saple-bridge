@@ -26,9 +26,15 @@ import { buildAgentPrompt } from '../lib/swarmPrompts';
 import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, type DigestEntry } from '../lib/swarmDigest';
 import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
+import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
 import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
+
+// Backing file for swarm state, and the request-sequence token that makes only the latest
+// loadSwarmState commit (Phase 2: replace boolean load guards with per-request tokens).
+const SWARM_STATE_FILE = '.saple/swarm/state.json';
+let loadSwarmStateSeq = 0;
 
 // T2 approval gate: extends the Phase 5 acceptance run state with a parked state where Bridge
 // holds the command until a human approves it in the confirmation dialog.
@@ -97,6 +103,8 @@ interface SwarmState {
   swarmId: string | null;
   swarmName: string;
   loadedProjectPath: string | null;
+  // Set while .saple/swarm/state.json is corrupt and unresolved; blocks saves until recovery.
+  corruptState: CorruptState | null;
   mission: string;
   skills: string[];
   contextFiles: ContextFileRef[];
@@ -712,6 +720,7 @@ export const useSwarmStore = create<SwarmState>()(
       swarmId: null,
       swarmName: '',
       loadedProjectPath: null,
+      corruptState: null,
       mission: '',
       skills: [],
       contextFiles: [],
@@ -746,7 +755,7 @@ export const useSwarmStore = create<SwarmState>()(
         // loadedProjectPath is rehydrated from localStorage (persist), so without `force`
         // reopening a project would skip re-reading .saple/swarm/state.json and discard
         // external/MCP edits. The project-open flow passes force=true to always re-read disk.
-        if (!force && get().loadedProjectPath === projectPath) return;
+        if (!force && get().loadedProjectPath === projectPath && !get().corruptState) return;
 
         // P11: a swarm launch now switches workspace instance, which fires App's workspace-change
         // force-reload while the launch is still in flight. Re-reading disk mid-launch could
@@ -758,8 +767,52 @@ export const useSwarmStore = create<SwarmState>()(
         if (get().loadedProjectPath === projectPath && get().activeAgents.some((a) => a.status === 'starting')) {
           return;
         }
+
+        // Phase 2: request-sequence token - only the latest load may commit, so rapid project
+        // switches can never land an earlier project's state into the current view.
+        const token = ++loadSwarmStateSeq;
+
+        // The disk read shares the save queue key (`swarm:<path>`), so a watcher-triggered reload
+        // is serialized behind any pending save instead of racing it.
+        let result: StateLoadResult;
         try {
-          const content = await invoke<string>('read_swarm_state', { projectPath });
+          result = await enqueueWrite(`swarm:${projectPath}`, () =>
+            loadStateFile(projectPath, SWARM_STATE_FILE),
+          );
+        } catch {
+          result = { status: 'ioError', error: 'load_state_file failed' };
+        }
+        if (token !== loadSwarmStateSeq) return; // superseded by a newer load
+
+        if (result.status === 'missing' || result.status === 'corrupt') {
+          // Missing = fresh project: reset to idle defaults.
+          // Corrupt = fail closed: reset the view but BLOCK saves until recovery resolves;
+          // treating corrupt bytes as empty state would let the next save erase them.
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle', acceptanceStatus: 'idle', lastAcceptanceOutput: null, lastAcceptanceFailureHash: null, identicalAcceptanceFailures: 0, escalation: null, acceptanceApprovals: null });
+          set({
+            corruptState:
+              result.status === 'corrupt'
+                ? { filePath: SWARM_STATE_FILE, error: result.error, backupPath: result.backupPath }
+                : null,
+          });
+          void invoke('watch_swarm_dir', { projectPath }).catch(() => {});
+          return;
+        }
+
+        if (result.status === 'locked') {
+          set({ corruptState: null, loadedProjectPath: projectPath });
+          void invoke('watch_swarm_dir', { projectPath }).catch(() => {});
+          return;
+        }
+
+        if (result.status === 'ioError') {
+          console.error('Failed to read swarm state:', result.error);
+          void invoke('watch_swarm_dir', { projectPath }).catch(() => {});
+          return;
+        }
+
+        const content = result.content;
+        try {
           const parsed = JSON.parse(content);
 
           // Crash/restart reconciliation: state.json can say an agent is running while its PTY
@@ -811,6 +864,7 @@ export const useSwarmStore = create<SwarmState>()(
 
           set({
             loadedProjectPath: projectPath,
+            corruptState: null,
             swarmId: parsed.swarmId || null,
             swarmName: parsed.swarmName || '',
             mission: parsed.mission || '',
@@ -866,9 +920,10 @@ export const useSwarmStore = create<SwarmState>()(
               r.statusReason ? { statusReason: r.statusReason } : undefined,
             );
           }
-        } catch {
-          // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle', acceptanceStatus: 'idle', lastAcceptanceOutput: null, lastAcceptanceFailureHash: null, identicalAcceptanceFailures: 0, escalation: null, acceptanceApprovals: null });
+        } catch (err) {
+          // The bytes parsed in Rust but reconciliation failed - surface it without resetting
+          // persisted state; a reset here would be treated as empty state by the next save.
+          console.error('Failed to reconcile swarm state:', err);
         }
         // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
         // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
@@ -877,6 +932,12 @@ export const useSwarmStore = create<SwarmState>()(
       },
 
       saveSwarmState: async (projectPath) => {
+        // Phase 2: a corrupt state.json is never overwritten by a subsequent action; recovery
+        // must clear the flag first.
+        if (get().corruptState) {
+          console.error('Swarm save skipped: state.json is corrupt and awaiting recovery.');
+          return;
+        }
         try {
           const state = {
             swarmId: get().swarmId,

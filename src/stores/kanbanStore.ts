@@ -1,19 +1,24 @@
 import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
 import { nowIso } from '../lib/date';
 import { toErrorMessage } from '../lib/errors';
 import { createId } from '../lib/id';
 import { enqueueWrite } from '../lib/writeQueue';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
+import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
+import { invoke } from '@tauri-apps/api/core';
 import type { Task, TaskColumn, TaskPriority } from '../types/task';
 export type { AgentConfig, Task, TaskColumn, TaskPriority } from '../types/task';
+
+const TASKS_FILE = '.saple/tasks.json';
 
 interface KanbanState {
   tasks: Task[];
   loadedProjectPath: string | null;
   loading: boolean;
   error: string | null;
-  
+  // Set while the tasks file is corrupt and unresolved; blocks every mutation until recovery.
+  corruptState: CorruptState | null;
+
   loadTasks: (projectPath: string, force?: boolean) => Promise<void>;
   addTask: (projectPath: string, task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'priority'> & { priority?: TaskPriority }) => Promise<void>;
   updateTask: (projectPath: string, id: string, updates: Partial<Task>) => Promise<void>;
@@ -74,47 +79,92 @@ const consumePendingTaskReviews = (projectPath: string): Set<string> => {
   return forProject;
 };
 
+// Currency token for loadTasks: rapid project switches fire overlapping loads, and without this
+// an older (slower) response could land after a newer one and commit another project's tasks
+// into the current view. Only the latest request may commit (Phase 2: request-sequence tokens).
+let loadTasksSeq = 0;
+
 export const useKanbanStore = create<KanbanState>((set, get) => ({
   tasks: [],
   loadedProjectPath: null,
   loading: false,
   error: null,
+  corruptState: null,
 
   loadTasks: async (projectPath, force = false) => {
-    if (get().loading || (!force && get().loadedProjectPath === projectPath)) return;
+    if (!force && get().loadedProjectPath === projectPath && !get().corruptState) return;
+    const token = ++loadTasksSeq;
     set({ loading: true, error: null });
+
+    // The disk read runs on the same queue key as saves, so a watcher-triggered reload always
+    // lands AFTER any pending write settles - never between a save's read and its commit.
+    let result: StateLoadResult;
     try {
-      const content = await invoke<string>('read_project_file', {
-        projectPath,
-        filePath: '.saple/tasks.json',
-      });
-      const parsed = JSON.parse(content) as Partial<Task>[];
-      const tasks = parsed.map(normalizeTask);
-      if (JSON.stringify(parsed) !== JSON.stringify(tasks)) {
-        await saveTasks(projectPath, tasks);
-      }
-      set({ tasks, loadedProjectPath: projectPath, loading: false });
-      // P13: apply review moves that fired while this project wasn't loaded. Only panes that a
-      // task actually links matter; anything else queued (interactive terminals) is dropped.
-      for (const terminalId of consumePendingTaskReviews(projectPath)) {
-        const task = get().tasks.find((t) => t.terminalId === terminalId);
-        if (task && task.column === 'progress') {
-          await get().updateTask(projectPath, task.id, { column: 'review' });
-          notifyTaskReadyForReview(task.title);
-        }
-      }
+      result = await enqueueWrite(`tasks:${projectPath}`, () => loadStateFile(projectPath, TASKS_FILE));
     } catch (err: unknown) {
-      // If file not found, it's a new project; initialize empty task list
-      const message = toErrorMessage(err);
-      if (message.includes('File not found')) {
-        set({ tasks: [], loadedProjectPath: projectPath, loading: false });
-      } else {
-        set({ error: message, loading: false });
+      if (token !== loadTasksSeq) return;
+      set({ error: toErrorMessage(err), loading: false });
+      return;
+    }
+    if (token !== loadTasksSeq) return; // superseded by a newer load
+
+    switch (result.status) {
+      case 'missing': {
+        // New project: initialize empty task list.
+        set({ tasks: [], loadedProjectPath: projectPath, loading: false, error: null, corruptState: null });
+        break;
+      }
+      case 'loaded': {
+        try {
+          const parsed = JSON.parse(result.content) as Partial<Task>[];
+          const tasks = parsed.map(normalizeTask);
+          set({ tasks, loadedProjectPath: projectPath, loading: false, error: null, corruptState: null });
+          // Normalization rewrite happens outside the queued read so it can safely re-enqueue.
+          if (JSON.stringify(parsed) !== JSON.stringify(tasks)) {
+            await saveTasks(projectPath, get().tasks);
+          }
+          // P13: apply review moves that fired while this project wasn't loaded. Only panes that a
+          // task actually links matter; anything else queued (interactive terminals) is dropped.
+          for (const terminalId of consumePendingTaskReviews(projectPath)) {
+            const task = get().tasks.find((t) => t.terminalId === terminalId);
+            if (task && task.column === 'progress') {
+              await get().updateTask(projectPath, task.id, { column: 'review' });
+              notifyTaskReadyForReview(task.title);
+            }
+          }
+        } catch (err: unknown) {
+          // The file parsed in Rust but not here - surface it without overwriting anything.
+          set({ error: `Failed to process tasks: ${toErrorMessage(err)}`, loading: false });
+        }
+        break;
+      }
+      case 'corrupt': {
+        // Fail closed: keep the corrupt file untouched, surface recovery, block mutations.
+        set({
+          tasks: [],
+          loadedProjectPath: projectPath,
+          loading: false,
+          error: null,
+          corruptState: { filePath: TASKS_FILE, error: result.error, backupPath: result.backupPath },
+        });
+        break;
+      }
+      case 'locked': {
+        set({ error: 'tasks.json is locked by another process; retry shortly.', loading: false });
+        break;
+      }
+      case 'ioError': {
+        set({ error: `Failed to read tasks.json: ${result.error}`, loading: false });
+        break;
       }
     }
   },
 
   addTask: async (projectPath, taskData) => {
+    if (get().corruptState) {
+      set({ error: 'Resolve the corrupted tasks.json before editing tasks.' });
+      return;
+    }
     const createdAt = nowIso();
     const newTask: Task = {
       ...taskData,
@@ -136,6 +186,10 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
   },
 
   updateTask: async (projectPath, id, updates) => {
+    if (get().corruptState) {
+      set({ error: 'Resolve the corrupted tasks.json before editing tasks.' });
+      return;
+    }
     const previous = get().tasks;
     const updatedTasks = previous.map((t) =>
       t.id === id ? { ...t, ...updates, updatedAt: nowIso() } : t
@@ -149,6 +203,10 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
   },
 
   deleteTask: async (projectPath, id) => {
+    if (get().corruptState) {
+      set({ error: 'Resolve the corrupted tasks.json before editing tasks.' });
+      return;
+    }
     const previous = get().tasks;
     const updatedTasks = previous.filter((t) => t.id !== id);
     set({ tasks: updatedTasks, error: null });
@@ -160,6 +218,10 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
   },
 
   moveTask: async (projectPath, id, targetColumn) => {
+    if (get().corruptState) {
+      set({ error: 'Resolve the corrupted tasks.json before editing tasks.' });
+      return;
+    }
     const previous = get().tasks;
     const target = previous.find((t) => t.id === id);
     // No-op guard: dropping a card on its current column changes nothing.
@@ -177,6 +239,10 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
   },
 
   reorderTask: async (projectPath, id, targetColumn, beforeId) => {
+    if (get().corruptState) {
+      set({ error: 'Resolve the corrupted tasks.json before editing tasks.' });
+      return;
+    }
     const previous = get().tasks;
     const moving = previous.find((t) => t.id === id);
     if (!moving) return;
