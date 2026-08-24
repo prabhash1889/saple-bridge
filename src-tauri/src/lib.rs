@@ -80,6 +80,8 @@ pub fn run() {
             // June control endpoint: a per-process token, then start the loopback server only if the
             // user opted in (default off, no open port). See june_control.rs.
             app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
+            // Panes June spawned and may drive with terminal actions; everything else is refused.
+            app.manage(june_control::JuneTerminalScopes::default());
             // Registry of approved project roots (canonical absolute paths). Lives only in
             // Rust memory: roots are added by native directory selection or validated
             // restoration, and every privileged command verifies against it before touching
@@ -164,6 +166,9 @@ pub fn run() {
             june_control::june_control_set_enabled,
             june_control::june_command_result,
             june_control::june_emit_event,
+            june_control::june_permit_terminals,
+            june_control::june_ensure_terminal_permitted,
+            june_control::june_revoke_terminal,
             swarm::read_swarm_state,
             swarm::write_swarm_state,
             swarm::read_mailbox_file,
