@@ -175,7 +175,7 @@ Updated at phase boundaries; completed implementation detail lives in git histor
 | 0 - Emergency safeguards | Complete | destructive-root rejection, acceptance approval gate, review prose never reaches `write_pty`, `.git/**` writer block, backup-gated memory restore |
 | 1 - Privileged-command trust boundaries | Complete | approved-root registry, per-command `project_path` validation, PTY cwd/env hardening, browser scheme and June fixes |
 | 2 - State integrity and recovery | Complete | structured load outcomes, recovery UI, request-sequence tokens, locked read-modify-writes, transactional snapshots, BOM handling, `.saple/` exclude disclosure |
-| 3 - Review, swarm, and process correctness | **In progress** | review, swarm, and process work all landed; remaining polish items are listed inside Phase 3 below |
+| 3 - Review, swarm, and process correctness | **Complete (code)** | all work items and automated checks landed; two environment-dependent QA/CI runs deferred into Phase 4 - see Phase 3 status |
 
 ---
 ## Phase 3 - Review, swarm, and process correctness
@@ -195,12 +195,17 @@ Automated checks that now exist: approval fails after any reviewed-tree change; 
 
 ### Remaining work to finish Phase 3
 
-- [ ] Settings surface for the hung-agent threshold (`hungAgentAlertMs` persists today but only the 20-minute default is reachable from the UI).
-- [ ] Frontend test for the injected-digest pop-once path with a mocked live coordinator watch (queue survival is covered; the successful-injection path is not).
-- [ ] Surface `write_pty` `{accepted:false}` drops in the remaining structured-payload callers (June dispatcher, dropped-path paste) instead of only the digest pump.
-- [ ] Run the new Unix-side process-group kill test on macOS CI (written cfg(unix); developed on Windows).
-- [ ] Packaged-app QA pass on Windows: review approve-after-edit flow, acceptance cancel banner, verification Cancel button, hung-agent alert toast.
-- [ ] Update the Rust module map in `src-tauri/src/AGENTS.md` for the new `proc_tree` module (done alongside this plan update if not already).
+All codeable items are done (second Phase 3 session, commit `cf2ffc4`):
+
+- [x] Settings > Workspace exposes "Hung Agent Alert (minutes)" writing the persisted `hungAgentAlertMs` (0 disables; alert-only by design).
+- [x] Frontend tests drive the real digest pump against a mocked live PTY watch: a delivered digest pops the queue exactly once, and a saturated input queue defers both digests without dropping or duplicating them once drained.
+- [x] `write_pty` `{accepted:false}` drops surface in every structured-payload caller: June's spawn_agents reports `input_dropped` counts plus a `terminal.input_dropped` event, assign_task/write_terminal return `terminal_busy`, and TerminalGrid toasts when dropped file paths cannot be inserted.
+- [x] `src-tauri/src/AGENTS.md` module map lists the new `proc_tree` module.
+
+Deferred to their natural owners (environment/tooling-dependent, not code work):
+
+- [ ] Run the Unix-side process-group kill test on macOS CI - belongs with the CI expansion in Phase 4 (the test is written cfg(unix); developed on Windows).
+- [ ] Packaged-app QA pass on Windows: review approve-after-edit flow, acceptance cancel banner, verification Cancel button, hung-agent alert toast. Manual QA for the release checklist.
 
 ### Original work items
 
