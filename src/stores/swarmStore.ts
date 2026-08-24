@@ -607,6 +607,16 @@ const pumpDigestsTick = () => {
   pumpDigests();
 };
 
+// Test seam: the pump timer is module-level state that survives between tests. Switching to
+// fake timers orphans a pending handle (the variable stays non-null and blocks scheduling),
+// so tests must clear it alongside `vi.useRealTimers()`.
+export const _resetDigestPumpForTests = (): void => {
+  if (digestTimer) {
+    clearTimeout(digestTimer);
+    digestTimer = null;
+  }
+};
+
 // Phase 3 hung-agent alerts: a lightweight interval (armed once per session) checks running
 // agents against the configured threshold and raises ONE operator alert per agent per run.
 // Alert-first by design: Bridge never auto-kills a hung-looking agent (governing decision).

@@ -59,6 +59,14 @@ function emitEvent(
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
 
+// Phase 3: write_pty reports {accepted:false} when a pane's input queue is full and the bytes
+// were DROPPED. Structured payloads (prompts, tasks) must not vanish silently - callers below
+// surface the drop to June instead of pretending the write landed.
+const writePtyAccepted = async (paneId: string, data: string): Promise<boolean> => {
+  const outcome = await invoke<{ accepted?: boolean }>('write_pty', { id: paneId, data });
+  return outcome?.accepted !== false;
+};
+
 async function handle(ev: CommandEvent): Promise<CommandResponse> {
   const { request_id: id, workspace_id: ws, arguments: args } = ev;
   const projectPath = useProjectStore.getState().currentProjectPath;
@@ -77,6 +85,7 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
       const agentIds: string[] = [];
       let started = 0;
       let failed = 0;
+      let inputDropped = 0;
       for (let i = 0; i < count; i++) {
         try {
           // Spawns into the active workspace; June's workspace_id is used only for observe routing.
@@ -84,7 +93,16 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
           agentIds.push(paneId);
           started++;
           await emitEvent(ws, 'agent.spawned', id, { agent_id: paneId, provider, model: model ?? null });
-          if (prompt) await invoke('write_pty', { id: paneId, data: `${prompt}\r` });
+          if (prompt) {
+            if (await writePtyAccepted(paneId, `${prompt}\r`)) {
+              await emitEvent(ws, 'task.assigned', id, { agent_id: paneId });
+            } else {
+              // The pane started but its input queue is full - the prompt was dropped. Report
+              // it rather than letting June assume the agent received its instructions.
+              inputDropped++;
+              await emitEvent(ws, 'terminal.input_dropped', id, { agent_id: paneId });
+            }
+          }
         } catch {
           failed++;
         }
@@ -100,7 +118,7 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
         }
       }
       // Partial success is first-class (PLAN.md §2): counts always sum to requested.
-      return ok(id, { counts: { requested: count, started, failed, skipped: 0 }, agent_ids: agentIds });
+      return ok(id, { counts: { requested: count, started, failed, skipped: 0 }, agent_ids: agentIds, input_dropped: inputDropped });
     }
 
     case 'assign_task': {
@@ -112,7 +130,9 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
       } catch {
         return err(id, 'forbidden_target', `terminal '${agentId}' is not a June-spawned pane`);
       }
-      await invoke('write_pty', { id: agentId, data: `${task}\r` });
+      if (!(await writePtyAccepted(agentId, `${task}\r`))) {
+        return err(id, 'terminal_busy', `agent '${agentId}' input queue is full - task payload was dropped`);
+      }
       await emitEvent(ws, 'task.assigned', id, { agent_id: agentId });
       return ok(id, { agent_id: agentId });
     }
@@ -125,7 +145,9 @@ async function handle(ev: CommandEvent): Promise<CommandResponse> {
       } catch {
         return err(id, 'forbidden_target', `terminal '${paneId}' is not a June-spawned pane`);
       }
-      await invoke('write_pty', { id: paneId, data: str(args.data) });
+      if (!(await writePtyAccepted(paneId, str(args.data)))) {
+        return err(id, 'terminal_busy', `terminal '${paneId}' input queue is full - payload was dropped`);
+      }
       return ok(id, { pane_id: paneId });
     }
 
