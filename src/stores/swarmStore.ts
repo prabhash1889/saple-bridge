@@ -569,15 +569,21 @@ const pumpDigests = () => {
       // structured payloads must never be silently lost, so a drop keeps the digest queued.
       const paste = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: `\u001b[200~${digest}\u001b[201~` });
       if (!paste?.accepted) {
+        // Nothing was typed - safe to retry the whole delivery later.
         scheduleDigestRetry();
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, DIGEST_ENTER_DELAY_MS));
-      const enter = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: '\r' });
-      if (enter?.accepted) {
-        // Delivered (paste AND submit both landed): pop only now.
-        useSwarmStore.setState((s) => ({ pendingDigests: s.pendingDigests.slice(1) }));
+      let enter = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: '\r' });
+      if (!enter?.accepted) {
+        // The paste is already in the TUI's input; only the submit keystroke was dropped.
+        // Re-queuing the WHOLE digest would duplicate the text, so retry just the Enter
+        // once after the next quiet window, then consider it delivered (the text sits in
+        // the coordinator's input where the operator can see it).
+        await new Promise((resolve) => setTimeout(resolve, IDLE_QUIET_MS));
+        enter = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: '\r' }).catch(() => ({ accepted: false }));
       }
+      useSwarmStore.setState((s) => ({ pendingDigests: s.pendingDigests.slice(1) }));
     } catch (error) {
       console.error('Failed to inject digest into coordinator PTY:', error);
       scheduleDigestRetry(); // keep the digest queued; try again after the next quiet window
@@ -630,9 +636,10 @@ const ensureHungWatch = () => {
       ),
       hungAlertedAgentIds: [...state.hungAlertedAgentIds, ...newlyHung.map((a) => a.id)],
     }));
-    void useSwarmStore
-      .getState()
-      .saveSwarmState(useSwarmStore.getState().loadedProjectPath || '');
+    const projectToPersist = useSwarmStore.getState().loadedProjectPath;
+    if (projectToPersist) {
+      void useSwarmStore.getState().saveSwarmState(projectToPersist);
+    }
   }, HUNG_CHECK_INTERVAL_MS);
 };
 

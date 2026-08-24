@@ -620,6 +620,9 @@ pub(crate) fn run_shell_with_timeout(
         crate::proc_tree::kill_process_group(child_pid);
         let _ = child.kill();
     }
+    // On Completed, dropping `job` (the last handle) at scope end still fires
+    // KILL_ON_JOB_CLOSE for any descendant that outlived the exited shell - deliberate:
+    // a finished verification/acceptance run must not leak stray processes either.
 
     let status = child.wait().map_err(|e| e.to_string())?;
     let stdout = stdout_handle.join().unwrap_or_default();
