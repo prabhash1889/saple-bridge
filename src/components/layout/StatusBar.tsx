@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo } from 'react';
-import { CheckCircle, Cpu, Database, GitPullRequest, PanelTop, ShieldAlert, ShieldCheck, XCircle, AlertCircle } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Bot, CheckCircle, Cpu, Database, GitPullRequest, PanelTop, ShieldAlert, ShieldCheck, XCircle, AlertCircle } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useMemoryStore } from '../../stores/memoryStore';
 import { useProjectStore } from '../../stores/projectStore';
@@ -19,6 +20,15 @@ export const StatusBar: React.FC = () => {
   );
   const providers = useProviderStore((state) => state.providers);
   const refreshReadiness = useProviderStore((state) => state.refreshReadiness);
+
+  // Persistent disclosure: when browser automation (CDP) is active in this process, say so
+  // for as long as the endpoint exists. The port is fixed per launch, so one read suffices.
+  const [automationPort, setAutomationPort] = useState<number | null>(null);
+  useEffect(() => {
+    invoke<number | null>('agent_browser_active_port')
+      .then(setAutomationPort)
+      .catch(() => {});
+  }, []);
 
   const readinessInfo = useMemo(() => {
     const enabled = providers.filter(p => p.enabled && p.provider !== 'custom');
@@ -68,6 +78,9 @@ export const StatusBar: React.FC = () => {
       </div>
 
       <div className="statusbar-section statusbar-counts">
+        {automationPort !== null && (
+          <span className="status-pill warning"><Bot size={11} /> Browser automation active</span>
+        )}
         <span><PanelTop size={12} /> {paneCount} panes</span>
         <span><Cpu size={12} /> {runningAgents} active agents</span>
         <span><Database size={12} /> {memoryCount} memories</span>

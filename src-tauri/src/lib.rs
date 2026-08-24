@@ -198,6 +198,7 @@ pub fn run() {
             browser::browser_forward,
             browser::browser_reload,
             browser::agent_browser_get_enabled,
+            browser::agent_browser_active_port,
             browser::agent_browser_set_enabled
         ])
         .run(tauri::generate_context!())
