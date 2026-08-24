@@ -346,6 +346,11 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       // Make xterm grow rows into the scrollback the way ConPTY expects, so maximizing the
       // window keeps the existing output instead of replacing it with empty rows.
       ...(IS_WINDOWS_PTY ? { windowsPty: { backend: 'conpty' as const } } : {}),
+      // Under WebDriver automation (E2E) also maintain xterm's accessibility tree: the
+      // WebGL renderer draws to a canvas with no DOM text, which leaves specs nothing to
+      // assert on. navigator.webdriver is only true when driven by tauri-driver, so real
+      // sessions never pay the accessibility-tree render cost.
+      ...(navigator.webdriver ? { screenReaderMode: true } : {}),
     });
 
     const fitAddon = new FitAddon();

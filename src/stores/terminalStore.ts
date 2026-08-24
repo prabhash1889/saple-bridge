@@ -158,6 +158,7 @@ let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let swarmStorePromise: Promise<typeof import('./swarmStore')> | null = null;
 let ptyOutputUnlisten: UnlistenFn | null = null;
 let ptyExitUnlisten: UnlistenFn | null = null;
+let ptyListenerStartPromise: Promise<void> | null = null;
 
 const getActiveWorkspacePath = () => useProjectStore.getState().currentProjectPath;
 
@@ -393,8 +394,9 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
 
     startPtyOutputListener: async () => {
       if (get().ptyOutputListenerStarted) return;
-      set({ ptyOutputListenerStarted: true });
+      if (ptyListenerStartPromise) return ptyListenerStartPromise;
 
+      ptyListenerStartPromise = (async () => {
       ptyOutputUnlisten = await listen<{ id: string; data: string }>('pty-output', (event) => {
         const { id, data } = event.payload;
         get().appendOutput(id, data);
@@ -512,9 +514,18 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           }
         }
       });
+      set({ ptyOutputListenerStarted: true });
+      })();
+
+      try {
+        await ptyListenerStartPromise;
+      } finally {
+        ptyListenerStartPromise = null;
+      }
     },
 
     stopPtyOutputListener: async () => {
+      await ptyListenerStartPromise?.catch(() => undefined);
       if (ptyOutputUnlisten) {
         await ptyOutputUnlisten();
         ptyOutputUnlisten = null;
@@ -592,6 +603,13 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         focusedPaneId: getActiveWorkspaceKey() === workspaceKey ? id : state.focusedPaneId,
       }));
 
+      try {
+        await get().startPtyOutputListener();
+      } catch (err) {
+        failPaneSpawn(id, err);
+        return id;
+      }
+
       invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand, sessionUuid: claudeSessionId, interactivePrompt }).catch((err) => {
         failPaneSpawn(id, err);
       });
@@ -652,6 +670,13 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
           focusedPaneId: isActiveWorkspace ? id : state.focusedPaneId,
         };
       });
+
+      try {
+        await get().startPtyOutputListener();
+      } catch (err) {
+        failPaneSpawn(id, err);
+        return id;
+      }
 
       invoke('spawn_pty', {
         id,
