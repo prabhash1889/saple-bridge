@@ -64,6 +64,49 @@ pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Resu
     Ok(target)
 }
 
+/// Refuse destructive operations whose target resolves to the workspace root itself
+/// (`file_path = ""`, `"."`, `"./"`). `get_project_file_path` proves containment but
+/// treats the root as contained, so without this a delete request for `.` would move
+/// the entire project to the trash.
+pub(crate) fn ensure_not_workspace_root(canonical_base: &Path, target: &Path) -> Result<(), String> {
+    if target == canonical_base {
+        return Err("Access denied: refusing to operate on the project workspace itself".to_string());
+    }
+    Ok(())
+}
+
+/// Whether any component of `path` names the git internals directory. Applied to both
+/// the raw relative path and the fully resolved absolute path so symlinked escapes
+/// into `.git` are caught too. Windows filesystems are case-insensitive, so `.GIT`
+/// must hit the same block; on Unix a differently-cased name is an unrelated folder.
+fn has_git_component(path: &Path) -> bool {
+    path.components().any(|c| {
+        let name = c.as_os_str();
+        if cfg!(windows) {
+            name.eq_ignore_ascii_case(".git")
+        } else {
+            name == ".git"
+        }
+    })
+}
+
+/// Contained-path policy for generic file writers: identical to
+/// [`get_project_file_path`] plus a `.git/**` block. Git internals are owned by
+/// `git.rs`, which runs intentional git commands; raw writes from the editor layer
+/// must never corrupt them. The raw relative path is checked first so requesting a
+/// not-yet-existing `.git/hooks/...` target cannot make `get_project_file_path`
+/// create `.git` subdirectories as a side effect.
+pub(crate) fn get_project_write_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
+    if has_git_component(Path::new(file_path)) {
+        return Err("Access denied: writing inside .git is not allowed".to_string());
+    }
+    let full_path = get_project_file_path(project_path, file_path)?;
+    if has_git_component(&full_path) {
+        return Err("Access denied: writing inside .git is not allowed".to_string());
+    }
+    Ok(full_path)
+}
+
 fn default_enable_edit_mode() -> bool {
     true
 }
@@ -309,7 +352,7 @@ pub async fn write_project_file(project_path: String, file_path: String, content
 }
 
 fn write_project_file_inner(project_path: String, file_path: String, content: String) -> Result<(), String> {
-    let full_path = get_project_file_path(&project_path, &file_path)?;
+    let full_path = get_project_write_path(&project_path, &file_path)?;
     crate::fs_lock::atomic_write(&full_path, content.as_bytes())
 }
 
@@ -793,6 +836,36 @@ mod tests {
         let long_rel = format!(".saple/{}/note.md", "a/".repeat(40));
         let p = get_project_file_path(dir.to_str().unwrap(), &long_rel).unwrap();
         assert!(p.starts_with(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_project_file_rejects_git_internal_paths() {
+        let dir = temp_project();
+        let project = dir.to_str().unwrap().to_string();
+
+        let err = write_project_file_inner(project.clone(), ".git/config".to_string(), "x".to_string()).unwrap_err();
+        assert!(err.contains(".git"), "got: {}", err);
+        let err = write_project_file_inner(project.clone(), ".git/hooks/pre-commit".to_string(), "x".to_string()).unwrap_err();
+        assert!(err.contains(".git"), "got: {}", err);
+
+        // Windows filesystems are case-insensitive: an upper-cased component must hit
+        // the same block instead of reaching the real .git directory.
+        #[cfg(windows)]
+        {
+            let err = write_project_file_inner(project.clone(), ".GIT/config".to_string(), "x".to_string()).unwrap_err();
+            assert!(err.contains(".git"), "got: {}", err);
+        }
+
+        // The raw-path check must run before containment resolution, so no `.git`
+        // directories were created as a side effect of rejecting the write.
+        assert!(!dir.join(".git").exists(), ".git must not be created by a rejected write");
+
+        // A normal contained write is untouched.
+        write_project_file_inner(project, "docs/note.md".to_string(), "hi".to_string())
+            .expect("contained write must succeed");
+        assert!(dir.join("docs").join("note.md").exists());
+
         let _ = fs::remove_dir_all(&dir);
     }
 

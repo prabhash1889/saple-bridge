@@ -183,7 +183,7 @@ fn write_text_file_inner(
         return Err("Access denied: Editing files is disabled for this workspace. Enable it in Settings.".to_string());
     }
     
-    let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
+    let full_path = crate::project::get_project_write_path(&project_path, &file_path)?;
     crate::fs_lock::atomic_write(&full_path, content.as_bytes())
 }
 
@@ -324,7 +324,7 @@ pub async fn reveal_in_file_explorer(project_path: String, file_path: String) ->
 // outside the selected project.
 
 fn create_file_inner(project_path: String, file_path: String) -> Result<(), String> {
-    let full_path = crate::project::get_project_file_path(&project_path, &file_path)?;
+    let full_path = crate::project::get_project_write_path(&project_path, &file_path)?;
     if full_path.exists() {
         return Err("A file or folder with that name already exists".to_string());
     }
@@ -338,7 +338,7 @@ fn create_file_inner(project_path: String, file_path: String) -> Result<(), Stri
 }
 
 fn create_directory_inner(project_path: String, dir_path: String) -> Result<(), String> {
-    let full_path = crate::project::get_project_file_path(&project_path, &dir_path)?;
+    let full_path = crate::project::get_project_write_path(&project_path, &dir_path)?;
     if full_path.exists() {
         return Err("A file or folder with that name already exists".to_string());
     }
@@ -346,12 +346,13 @@ fn create_directory_inner(project_path: String, dir_path: String) -> Result<(), 
 }
 
 fn rename_path_inner(project_path: String, from_path: String, to_path: String) -> Result<(), String> {
-    let from = crate::project::get_project_file_path(&project_path, &from_path)?;
+    // Both endpoints go through the writer policy: a rename must not move git internals
+    // out of `.git` nor plant a foreign path inside it.
+    let from = crate::project::get_project_write_path(&project_path, &from_path)?;
     if !from.exists() {
         return Err("Source path no longer exists".to_string());
     }
-    // Validate the destination for containment even though it doesn't exist yet.
-    let to = crate::project::get_project_file_path(&project_path, &to_path)?;
+    let to = crate::project::get_project_write_path(&project_path, &to_path)?;
     if to.exists() {
         return Err("A file or folder with that name already exists".to_string());
     }
@@ -363,6 +364,12 @@ fn delete_path_inner(project_path: String, file_path: String) -> Result<(), Stri
     if !full_path.exists() {
         return Err("Path no longer exists".to_string());
     }
+    // The root itself is a contained path, so containment alone would allow `file_path`
+    // of "." or "" to trash the whole project. Reject any target that resolves to it.
+    let canonical_base = Path::new(&project_path)
+        .canonicalize()
+        .map_err(|e| format!("Base path error: {}", e))?;
+    crate::project::ensure_not_workspace_root(&canonical_base, &full_path)?;
     // Recycle bin rather than permanent delete, so an accidental removal is recoverable.
     trash::delete(&full_path).map_err(|e| format!("Failed to move to trash: {}", e))
 }
@@ -560,6 +567,56 @@ mod tests {
         let abs = if cfg!(windows) { "C:/Windows/x.txt" } else { "/tmp/x.txt" };
         let err = rename_path_inner(project_path, "Cargo.toml".to_string(), abs.to_string());
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn delete_rejects_workspace_root_and_leaves_it_intact() {
+        let dir = std::env::temp_dir().join(format!("saple-del-root-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("keep.txt"), "sentinel").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+
+        for target in ["", ".", "./"] {
+            let err = delete_path_inner(project.clone(), target.to_string()).unwrap_err();
+            assert!(
+                err.contains("workspace itself"),
+                "target {:?} must be rejected, got: {}",
+                target,
+                err
+            );
+        }
+        assert!(dir.join("keep.txt").exists(), "workspace must be intact after rejected deletes");
+        assert!(dir.exists(), "workspace root must still exist");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_still_allows_contained_child() {
+        let dir = std::env::temp_dir().join(format!("saple-del-child-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub").join("gone.txt"), "bye").unwrap();
+        fs::write(dir.join("stay.txt"), "here").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+
+        delete_path_inner(project, "sub/gone.txt".to_string()).expect("contained child delete must succeed");
+        assert!(!dir.join("sub").join("gone.txt").exists(), "target child removed");
+        assert!(dir.join("stay.txt").exists(), "sibling untouched");
+        assert!(dir.exists(), "workspace intact");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_file_rejects_git_internal_paths() {
+        let dir = std::env::temp_dir().join(format!("saple-git-block-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+
+        assert!(create_file_inner(project.clone(), ".git/hooks/hook".to_string()).is_err());
+        assert!(create_directory_inner(project.clone(), ".git/custom".to_string()).is_err());
+        assert!(rename_path_inner(project.clone(), ".git/config".to_string(), "stolen".to_string()).is_err());
+        assert!(!dir.join(".git").exists(), ".git must not be created by rejected mutations");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
