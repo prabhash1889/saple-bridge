@@ -280,8 +280,25 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
 
     if config_path.exists() {
-        let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+        // Phase 2: a corrupt config is never silently recreated over; original bytes are
+        // preserved and writes to the config stay blocked until recovery.
+        match crate::state_load::read_json_text(&config_path) {
+            crate::state_load::JsonText::Ok(content) => {
+                serde_json::from_str(&content).map_err(|e| {
+                    let err = format!("Failed to parse config: {}", e);
+                    match crate::state_load::preserve_and_flag_corrupt(&config_path, &err) {
+                        Ok(backup) => format!(
+                            "{}. Original bytes preserved at {} — resolve recovery before writing.",
+                            err,
+                            backup.display()
+                        ),
+                        Err(preserve_err) => format!("{} ({})", err, preserve_err),
+                    }
+                })
+            }
+            crate::state_load::JsonText::Io(e) => Err(e.to_string()),
+            crate::state_load::JsonText::Encoding(m) => Err(m),
+        }
     } else {
         let now = now_iso();
         let base = Path::new(&project_path);
@@ -326,8 +343,12 @@ pub(crate) fn read_project_config_inner(registry: &ProjectRootRegistry, project_
     if !config_path.exists() {
         return Err("Config file not found".to_string());
     }
-    let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+    match crate::state_load::read_json_text(&config_path) {
+        crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse config: {}", e)),
+        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
+        crate::state_load::JsonText::Encoding(m) => Err(m),
+    }
 }
 
 #[tauri::command]

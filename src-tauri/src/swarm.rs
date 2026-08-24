@@ -26,19 +26,15 @@ pub struct SwarmAgentRust {
 pub async fn read_swarm_state(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<String, String> {
+) -> Result<crate::state_load::StateLoadResult, String> {
     registry.ensure_inside_approved_root(&project_path)?;
-    tauri::async_runtime::spawn_blocking(move || read_swarm_state_inner(project_path))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-fn read_swarm_state_inner(project_path: String) -> Result<String, String> {
-    let path = crate::project::get_project_file_path(&project_path, ".saple/swarm/state.json")?;
-    if !path.exists() {
-        return Err("Swarm state file not found".to_string());
-    }
-    fs::read_to_string(path).map_err(|e| e.to_string())
+    // Structured outcome (Phase 2): missing vs corrupt vs locked are distinct, and a corrupt
+    // state.json preserves its bytes + blocks writes until recovery.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::state_load::load_state_inner(&project_path, ".saple/swarm/state.json")
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
