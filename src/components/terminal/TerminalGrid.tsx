@@ -13,6 +13,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { AiProvider, useTerminalStore } from '../../stores/terminalStore';
 import { useTerminalLayoutStore } from '../../stores/terminalLayoutStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { useBrowserStore } from '../../stores/browserStore';
 import { useFileStore } from '../../stores/fileStore';
 import { TerminalPane } from './TerminalPane';
@@ -276,7 +277,7 @@ const TerminalGridComponent: React.FC = () => {
   // level, so HTML5 drag-and-drop never fires here; we read the paths and drop point from the
   // Tauri drag-drop event and hit-test which pane the drop landed on.
   useEffect(() => {
-    const unlistenPromise = getCurrentWebview().onDragDropEvent((event) => {
+    const unlistenPromise = getCurrentWebview().onDragDropEvent(async (event) => {
       if (event.payload.type !== 'drop') return;
       const { paths, position } = event.payload;
       if (!paths.length) return;
@@ -286,9 +287,19 @@ const TerminalGridComponent: React.FC = () => {
       const sessionId = el?.closest<HTMLElement>('.terminal-pane[data-session-id]')?.dataset.sessionId;
       if (!sessionId) return;
       useTerminalStore.getState().setFocusedPane(sessionId);
-      invoke('write_pty', { id: sessionId, data: formatDroppedPaths(paths) }).catch((err) => {
+      const outcome = await invoke<{ accepted?: boolean }>('write_pty', { id: sessionId, data: formatDroppedPaths(paths) }).catch((err) => {
         console.error('Failed to insert dropped file path:', err);
+        return null;
       });
+      if (outcome === null) return;
+      if (outcome.accepted === false) {
+        // Phase 3: the pane stopped draining input and the paths were dropped - say so instead
+        // of leaving the user wondering why nothing appeared at the prompt.
+        useNotificationStore.getState().warning(
+          'Pane input queue is full',
+          'The dropped file path(s) could not be inserted - that terminal is not accepting input right now.',
+        );
+      }
     });
     return () => {
       void unlistenPromise.then((unlisten) => unlisten());

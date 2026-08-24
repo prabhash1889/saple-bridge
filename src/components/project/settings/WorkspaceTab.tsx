@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, Save, Terminal } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
+import { useSwarmStore } from '../../../stores/swarmStore';
 import { useTerminalFontStore } from '../../../stores/terminalFontStore';
 import { MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS } from '../../../lib/terminalLimits';
 import { SshPresetsSection } from './SshPresetsSection';
@@ -15,6 +16,9 @@ export const WorkspaceTab: React.FC = () => {
   const [memoryMode, setMemoryMode] = useState<'saple' | 'bridge-compatible' | 'both'>('saple');
   const [defaultProvider, setDefaultProvider] = useState('codex');
   const [maxAgents, setMaxAgents] = useState(12);
+  // Hung-agent alert threshold (Phase 3). Persisted in .saple/swarm/state.json, minutes in the
+  // UI; 0 disables alerting. Alert-only: Bridge never stops a slow agent on its own.
+  const [hungAlertMinutes, setHungAlertMinutes] = useState(20);
   const [enableEditMode, setEnableEditMode] = useState(true);
   const [verificationPresets, setVerificationPresets] = useState('');
   const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -69,6 +73,13 @@ export const WorkspaceTab: React.FC = () => {
     }
   }, [workspaceConfig]);
 
+  // The hung threshold lives in swarm state, not config.json; re-read it when the project
+  // (and therefore its loaded swarm state) changes.
+  useEffect(() => {
+    const ms = useSwarmStore.getState().hungAgentAlertMs;
+    setHungAlertMinutes(ms ? Math.round(ms / 60000) : 0);
+  }, [currentProjectPath]);
+
   const handleWsSave = async () => {
     await updateWorkspaceConfig({
       workspaceName,
@@ -81,6 +92,13 @@ export const WorkspaceTab: React.FC = () => {
         .map((p) => p.trim())
         .filter((p) => p.length > 0),
     });
+    const hungMs = hungAlertMinutes > 0 ? hungAlertMinutes * 60000 : null;
+    if (useSwarmStore.getState().hungAgentAlertMs !== hungMs) {
+      useSwarmStore.setState({ hungAgentAlertMs: hungMs });
+      if (currentProjectPath) {
+        await useSwarmStore.getState().saveSwarmState(currentProjectPath);
+      }
+    }
     setWsSaveStatus('success');
     setTimeout(() => setWsSaveStatus('idle'), 3000);
   };
@@ -136,6 +154,21 @@ export const WorkspaceTab: React.FC = () => {
               onChange={e => setMaxAgents(parseInt(e.target.value) || 12)}
               className="settings-input settings-input-narrow"
             />
+          </div>
+          <div className="input-group">
+            <label className="input-label">Hung Agent Alert (minutes)</label>
+            <input
+              type="number"
+              min={0}
+              max={720}
+              value={hungAlertMinutes}
+              onChange={e => setHungAlertMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+              className="settings-input settings-input-narrow"
+            />
+            <span className="input-hint">
+              Warn once when a swarm agent runs longer than this. 0 disables alerts. Bridge never
+              stops agents automatically - the alert only tells you.
+            </span>
           </div>
           <div className="input-group">
             <label className="input-label">Terminal Scrollback (rows)</label>

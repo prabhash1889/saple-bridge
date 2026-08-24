@@ -66,6 +66,7 @@ import {
   useSwarmStore,
   recordPendingAgentExit,
   hashAcceptanceCommand,
+  _resetDigestPumpForTests,
   type SwarmAgent,
   type AgentStatus,
 } from './swarmStore';
@@ -1274,6 +1275,89 @@ describe('swarm lifecycle races (Phase 3)', () => {
     await useSwarmStore.getState().checkAndRunNextAgents(PROJECT); // schedules the launch
     await useSwarmStore.getState().stopSwarm(PROJECT); // lands inside the addPane await
     await vi.waitFor(() => expect(removePaneMock).toHaveBeenCalledWith('late-pane'));
+  });
+});
+
+// Phase 3: the injected-digest path with a LIVE coordinator watch armed. launchAgentProcess
+// arms the module-level output watch for injection-capable providers (claude here) when their
+// pane spawns, which is exactly the state notifyCoordinator's pump needs. Fake timers drive the
+// quiet-window scheduling without real 3-second waits.
+describe('live digest injection (Phase 3 exactly-once)', () => {
+  beforeEach(() => {
+    // A pending pump handle left by a previous test blocks all future scheduling.
+    _resetDigestPumpForTests();
+  });
+
+  // Launch an interactive coordinator so the module-level pane watch arms on 'pane-1', then
+  // return a write_pty spy keyed off `acceptedRef`.
+  const armLiveCoordinator = async (writes: string[], acceptedRef: { value: boolean }) => {
+    invokeMock.mockImplementation(async (_cmd: string, args: Record<string, unknown>) => {
+      if (_cmd === 'write_pty') {
+        if (!acceptedRef.value) return { accepted: false };
+        writes.push(String(args.data));
+        return { accepted: true };
+      }
+      return undefined;
+    });
+    seed([agent('coordinator', [], 'idle', { role: 'coordinator', provider: 'claude' })]);
+    void useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+    // The launch is fire-and-forget and only awaits promises - microtask flushes suffice.
+    for (let i = 0; i < 50 && getAgent('coordinator')?.status !== 'running'; i++) {
+      await Promise.resolve();
+    }
+    expect(getAgent('coordinator').status).toBe('running');
+    expect(getAgent('coordinator').terminalId).toBe('pane-1'); // watch armed on this pane
+  };
+
+  it('injects a queued digest through the live PTY and pops it exactly once', async () => {
+    vi.useFakeTimers();
+    try {
+      const writes: string[] = [];
+      const acceptedRef = { value: true };
+      await armLiveCoordinator(writes, acceptedRef);
+
+      await useSwarmStore.getState().notifyCoordinator(PROJECT, '[Bridge digest] hello world');
+      expect(useSwarmStore.getState().pendingDigests).toHaveLength(1);
+
+      // One quiet window (3s) + the paste/enter gap (150ms): delivery pops the queue once.
+      await vi.advanceTimersByTimeAsync(3600);
+
+      expect(useSwarmStore.getState().pendingDigests).toHaveLength(0);
+      expect(writes.filter((d) => d.includes('hello world'))).toHaveLength(1);
+      // The submit keystroke followed the paste.
+      expect(writes.filter((d) => d === '\r').length).toBeGreaterThanOrEqual(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a saturated PTY input queue defers delivery instead of dropping, then delivers each digest exactly once', async () => {
+    vi.useFakeTimers();
+    try {
+      const writes: string[] = [];
+      const acceptedRef = { value: true };
+      await armLiveCoordinator(writes, acceptedRef);
+
+      // Saturate the pane, then queue two digests: neither may be lost or delivered.
+      acceptedRef.value = false;
+      await useSwarmStore.getState().notifyCoordinator(PROJECT, 'DIGEST-ONE');
+      await useSwarmStore.getState().notifyCoordinator(PROJECT, 'DIGEST-TWO');
+      expect(useSwarmStore.getState().pendingDigests).toEqual(['DIGEST-ONE', 'DIGEST-TWO']);
+
+      // Several quiet windows pass while saturated; both stay queued, nothing written.
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(useSwarmStore.getState().pendingDigests).toHaveLength(2);
+      expect(writes).toHaveLength(0);
+
+      // Drain the pane: the pump delivers both, each exactly once, in order.
+      acceptedRef.value = true;
+      await vi.advanceTimersByTimeAsync(12000);
+      expect(useSwarmStore.getState().pendingDigests).toHaveLength(0);
+      expect(writes.filter((d) => d.includes('DIGEST-ONE'))).toHaveLength(1);
+      expect(writes.filter((d) => d.includes('DIGEST-TWO'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
