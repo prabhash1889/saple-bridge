@@ -220,6 +220,76 @@ pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<St
     }
 }
 
+/// Captured identity of the repository state a review certified (Phase 3). A review approval
+/// must identify exactly what was reviewed: the HEAD commit it sat on, when that commit was made,
+/// and a digest over the full working-tree/index status at capture time. Any later change to the
+/// HEAD or to the staged/unstaged set produces a different identity, so stale approvals are
+/// refused instead of certifying unseen work.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTreeIdentity {
+    /// Current HEAD commit id, or `null` on a repo with no commits yet.
+    pub head_commit: Option<String>,
+    /// Committer timestamp of HEAD (ISO-8601), or `null` with no HEAD.
+    pub committed_at: Option<String>,
+    /// SHA-256 hex over `git status --porcelain` output - the staged plus unstaged change set.
+    pub status_hash: String,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{:02x}", byte));
+    }
+    hex
+}
+
+pub fn git_tree_identity_inner(project_path: String) -> Result<GitTreeIdentity, String> {
+    // HEAD: absent on a fresh repo before the first commit - that is a legitimate state, not an
+    // error, so both probes degrade to `None` instead of failing the capture.
+    let head_output = run_git_with_timeout(
+        &project_path,
+        &["rev-parse", "HEAD"],
+        GIT_TIMEOUT,
+    );
+    let head_commit = match head_output {
+        Ok(out) if out.status.success() => Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        _ => None,
+    };
+    let committed_at = match run_git_with_timeout(
+        &project_path,
+        &["log", "-1", "--format=%cI"],
+        GIT_TIMEOUT,
+    ) {
+        Ok(out) if out.status.success() => Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        _ => None,
+    };
+
+    let status_output = run_git_with_timeout(&project_path, &["status", "--porcelain"], GIT_TIMEOUT)?;
+    if !status_output.status.success() {
+        return Err(String::from_utf8_lossy(&status_output.stderr).trim().to_string());
+    }
+
+    Ok(GitTreeIdentity {
+        head_commit,
+        committed_at,
+        status_hash: sha256_hex(&status_output.stdout),
+    })
+}
+
+#[tauri::command]
+pub async fn git_tree_identity(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitTreeIdentity, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_tree_identity_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn git_status(
     project_path: String,
@@ -246,7 +316,7 @@ pub async fn git_diff_file(
 /// Stage (`git add`) or unstage (`git reset`) one file. The path is containment-validated and
 /// always passed after `--`, so it is a pathspec and can never be parsed as a git option.
 /// No shell is involved (argv exec), so no quoting/injection concerns.
-fn git_stage_file_inner(project_path: String, file_path: String, stage: bool) -> Result<(), String> {
+pub(crate) fn git_stage_file_inner(project_path: String, file_path: String, stage: bool) -> Result<(), String> {
     get_project_file_path(&project_path, &file_path)?;
 
     let args: &[&str] = if stage {
@@ -286,13 +356,58 @@ pub async fn git_unstage_file(
         .map_err(|e| e.to_string())?
 }
 
-fn git_commit_inner(project_path: String, message: String) -> Result<String, String> {
+/// Commit staged work. When `expected_paths` is `Some`, the index must contain exactly that
+/// path set: every requested path must be staged, and any staged path outside the reviewed set
+/// refuses the commit outright (Phase 3 - a review certifies a specific file set, so an agent
+/// sneaking an extra file into the index between review and commit must fail closed).
+pub(crate) fn git_commit_inner(project_path: String, message: String, expected_paths: Option<Vec<String>>) -> Result<String, String> {
     let msg = message.trim().to_string();
     if msg.is_empty() {
         return Err("Commit message must not be empty".to_string());
     }
+
+    // Pathspec for the scoped commit. Built from validated relative paths (containment-checked)
+    // and passed after `--` so they can never parse as options.
+    let mut args: Vec<&str> = vec!["commit", "-m", &msg];
+
+    if let Some(ref paths) = expected_paths {
+        if paths.is_empty() {
+            return Err("No reviewed files were staged; nothing to commit".to_string());
+        }
+        let status = git_status_inner(project_path.clone())?;
+        let staged: std::collections::HashSet<&str> = status
+            .iter()
+            .filter(|f| f.staged)
+            .map(|f| f.path.as_str())
+            .collect();
+
+        // Refuse unexpected staged files BEFORE committing anything.
+        let unexpected: Vec<&str> = staged
+            .iter()
+            .copied()
+            .filter(|p| !paths.iter().any(|e| e == p))
+            .collect();
+        if !unexpected.is_empty() {
+            return Err(format!(
+                "Refusing to commit: the index contains file(s) outside the reviewed set: {}",
+                unexpected.join(", ")
+            ));
+        }
+
+        for p in paths {
+            get_project_file_path(&project_path, p)?;
+            if !staged.contains(p.as_str()) {
+                return Err(format!("Refusing to commit: '{}' is not staged", p));
+            }
+        }
+        args.push("--");
+        for p in paths {
+            args.push(p);
+        }
+    }
+
     // `-m <msg>` goes through argv, never a shell, so arbitrary message content is safe.
-    let output = run_git_with_timeout(&project_path, &["commit", "-m", &msg], GIT_TIMEOUT)?;
+    let output = run_git_with_timeout(&project_path, &args, GIT_TIMEOUT)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
@@ -307,10 +422,11 @@ fn git_commit_inner(project_path: String, message: String) -> Result<String, Str
 pub async fn git_commit(
     project_path: String,
     message: String,
+    paths: Option<Vec<String>>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<String, String> {
     registry.ensure_inside_approved_root(&project_path)?;
-    tauri::async_runtime::spawn_blocking(move || git_commit_inner(project_path, message))
+    tauri::async_runtime::spawn_blocking(move || git_commit_inner(project_path, message, paths))
         .await
         .map_err(|e| e.to_string())?
 }

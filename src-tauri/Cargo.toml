@@ -63,6 +63,11 @@ sha2 = "0.10"
 # Opening the app again focuses the existing window instead of starting a second process.
 tauri-plugin-single-instance = "2"
 
+[target.'cfg(unix)'.dependencies]
+# Process-group teardown for verification/acceptance shells (proc_tree::kill_process_group):
+# a timeout or cancel must kill descendants too, not just the `sh -c` child.
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 # PTY process-tree cleanup: each shell is placed in a Job Object so closing a pane kills the
 # AI CLI (and its children), not just powershell.exe. See `proc_tree` in src/pty.rs.

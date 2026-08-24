@@ -3951,6 +3951,7 @@ version = "1.0.32"
 dependencies = [
  "ignore",
  "keyring",
+ "libc",
  "notify-debouncer-mini",
  "portable-pty",
  "rfd",

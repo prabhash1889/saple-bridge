@@ -178,13 +178,14 @@ pub async fn run_acceptance_command(
     project_path: String,
     command_str: String,
     command_hash: String,
+    cancel_token: Option<String>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<AcceptanceResult, String> {
     // An approved command must also run in an approved root: hash approval binds the
     // command bytes, this gate binds the execution directory.
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
-        run_acceptance_command_inner(project_path, command_str, command_hash)
+        run_acceptance_command_inner(project_path, command_str, command_hash, cancel_token)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -194,6 +195,7 @@ fn run_acceptance_command_inner(
     project_path: String,
     command_str: String,
     command_hash: String,
+    cancel_token: Option<String>,
 ) -> Result<AcceptanceResult, String> {
     if acceptance_command_hash(&command_str) != command_hash {
         return Err(
@@ -201,18 +203,30 @@ fn run_acceptance_command_inner(
                 .to_string(),
         );
     }
-    let (output, timed_out) =
-        crate::review::run_shell_with_timeout(&project_path, &command_str, ACCEPTANCE_TIMEOUT)?;
+    // A renderer-supplied token makes this run cancellable from the Swarm room; removed from
+    // the registry afterwards so a stale cancel can never kill a later acceptance run.
+    let cancel = cancel_token.as_deref().map(crate::review::register_cancel_token);
+    let result =
+        crate::review::run_shell_with_timeout(&project_path, &command_str, ACCEPTANCE_TIMEOUT, cancel);
+    crate::review::take_cancel_token(cancel_token.as_deref().unwrap_or(""));
+    let (output, stop) = result?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let mut combined = crate::review::truncate_output(format!("{}\n{}", stdout, stderr));
-    if timed_out {
-        combined.push_str(&format!(
-            "\n[ Saple Bridge stopped acceptance after {} seconds ]\n",
-            ACCEPTANCE_TIMEOUT.as_secs()
-        ));
+    let timed_out = stop != crate::review::ShellStop::Completed;
+    match stop {
+        crate::review::ShellStop::TimedOut => {
+            combined.push_str(&format!(
+                "\n[ Saple Bridge stopped acceptance after {} seconds ]\n",
+                ACCEPTANCE_TIMEOUT.as_secs()
+            ));
+        }
+        crate::review::ShellStop::Cancelled => {
+            combined.push_str("\n[ Saple Bridge: acceptance cancelled by operator ]\n");
+        }
+        crate::review::ShellStop::Completed => {}
     }
-    // A timed-out child was killed; its exit status is the kill, not the command's verdict.
+    // A stopped/cancelled child was killed; its exit status is the kill, not the command's verdict.
     let exit_code = if timed_out { None } else { output.status.code() };
     Ok(AcceptanceResult { exit_code, output: combined, timed_out })
 }
@@ -291,11 +305,11 @@ mod tests {
     #[test]
     fn acceptance_reports_real_exit_codes() {
         let dir = std::env::temp_dir().to_string_lossy().to_string();
-        let pass = run_acceptance_command_inner(dir.clone(), "exit 0".into(), acceptance_command_hash("exit 0")).unwrap();
+        let pass = run_acceptance_command_inner(dir.clone(), "exit 0".into(), acceptance_command_hash("exit 0"), None).unwrap();
         assert_eq!(pass.exit_code, Some(0));
         assert!(!pass.timed_out);
 
-        let fail = run_acceptance_command_inner(dir, "exit 3".into(), acceptance_command_hash("exit 3")).unwrap();
+        let fail = run_acceptance_command_inner(dir, "exit 3".into(), acceptance_command_hash("exit 3"), None).unwrap();
         assert_eq!(fail.exit_code, Some(3));
         assert!(!fail.timed_out);
     }
@@ -307,6 +321,7 @@ mod tests {
             dir,
             "echo acceptance-ran".into(),
             acceptance_command_hash("echo acceptance-ran"),
+            None,
         )
         .unwrap();
         assert!(result.output.contains("acceptance-ran"));
@@ -316,7 +331,7 @@ mod tests {
     fn unapproved_hash_refuses_execution() {
         let dir = std::env::temp_dir().to_string_lossy().to_string();
         let err =
-            run_acceptance_command_inner(dir, "exit 0".into(), "deadbeefdeadbeef".into()).unwrap_err();
+            run_acceptance_command_inner(dir, "exit 0".into(), "deadbeefdeadbeef".into(), None).unwrap_err();
         assert!(err.contains("refused"));
     }
 

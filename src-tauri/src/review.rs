@@ -4,12 +4,40 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::project::{get_project_file_path, now_iso};
-use crate::git::{git_status_inner, GitFileStatus};
+use crate::git::{git_status_inner, git_tree_identity_inner, GitFileStatus, GitTreeIdentity};
 use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_VERIFICATION_OUTPUT_BYTES: usize = 800_000;
+
+/// The exact repository state a review's evidence was captured against (Phase 3). Approval
+/// re-captures this identity and refuses when anything differs, so a review can never certify
+/// work the reviewer did not see. `default` keeps pre-Phase-3 records deserializable; those
+/// carry no evidence and stay approvable (nothing to compare against).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewedEvidence {
+    pub head_commit: Option<String>,
+    pub committed_at: Option<String>,
+    pub status_hash: String,
+}
+
+impl From<GitTreeIdentity> for ReviewedEvidence {
+    fn from(id: GitTreeIdentity) -> Self {
+        ReviewedEvidence {
+            head_commit: id.head_commit,
+            committed_at: id.committed_at,
+            status_hash: id.status_hash,
+        }
+    }
+}
+
+fn capture_reviewed_evidence(project_path: &str) -> Option<ReviewedEvidence> {
+    git_tree_identity_inner(project_path.to_string())
+        .ok()
+        .map(Into::into)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +54,9 @@ pub struct ReviewRecord {
     /// before this field existed deserializable.
     #[serde(default)]
     pub viewed_files: Vec<String>,
+    /// Tree identity the diffs/test output were captured against. `None` on legacy records.
+    #[serde(default)]
+    pub reviewed_tree: Option<ReviewedEvidence>,
     pub test_output: Option<String>,
     pub notes: Option<String>,
     pub created_at: String,
@@ -96,6 +127,22 @@ fn canonical_test_output(project_path: &str, run_id: &str) -> Option<String> {
         .and_then(|full| fs::read_to_string(full).ok())
 }
 
+/// Error flavor from loading a review record: real corruption (bytes preserved + path flagged)
+/// versus any other read/decode failure. Callers must never auto-create over `Corrupt`.
+enum ReviewLoadError {
+    Corrupt { error: String, backup_path: String },
+    Other(String),
+}
+
+impl From<ReviewLoadError> for String {
+    fn from(e: ReviewLoadError) -> String {
+        match e {
+            ReviewLoadError::Corrupt { error, .. } => error,
+            ReviewLoadError::Other(m) => m,
+        }
+    }
+}
+
 fn create_review_record_inner(
     project_path: String,
     task_id: String,
@@ -108,19 +155,27 @@ fn create_review_record_inner(
 
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
 
-    // Try to load existing review
+    // Try to load existing review. A corrupt record must never be recreated over: the loader
+    // already preserved its bytes and flagged the path, so surface the error and fail closed.
     if review_file_path.exists() {
-        let content = fs::read_to_string(&review_file_path).map_err(|e| e.to_string())?;
-        if let Ok(mut record) = serde_json::from_str::<ReviewRecord>(&content) {
-            // Update files lists
-            if let Ok(files) = git_status_inner(project_path.clone()) {
-                record.changed_files = files;
+        let mut record = match load_review_record(&review_file_path) {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(format!(
+                    "Existing review record is unreadable; refusing to overwrite it: {}",
+                    String::from(e)
+                ))
             }
-            record.updated_at = now_iso();
-            let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-            crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
-            return Ok(record);
+        };
+        // Update files lists and re-capture evidence - a refresh certifies the CURRENT tree.
+        if let Ok(files) = git_status_inner(project_path.clone()) {
+            record.changed_files = files;
         }
+        record.reviewed_tree = capture_reviewed_evidence(&project_path);
+        record.updated_at = now_iso();
+        let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+        return Ok(record);
     }
 
     // Otherwise, create a new one
@@ -176,11 +231,11 @@ fn create_review_record_inner(
         }
     }
 
-    // 3. Get changed files
+    // 3. Get changed files.
     let changed_files = git_status_inner(project_path.clone()).unwrap_or_default();
     
     let now = now_iso();
-    let record = ReviewRecord {
+    let mut record = ReviewRecord {
         task_id,
         session_id,
         title,
@@ -190,6 +245,7 @@ fn create_review_record_inner(
         role,
         changed_files,
         viewed_files: Vec::new(),
+        reviewed_tree: None,
         test_output,
         notes: None,
         created_at: now.clone(),
@@ -198,6 +254,16 @@ fn create_review_record_inner(
 
     let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
     crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+
+    // Capture the tree identity AFTER the record file exists: `git status` lists paths, and a
+    // brand-new record path changes that list. Capturing before the write would bake in a
+    // pre-record identity that no longer matches at approval time, refusing every fresh
+    // review's first approve.
+    record.reviewed_tree = capture_reviewed_evidence(&project_path);
+    if record.reviewed_tree.is_some() {
+        let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+    }
 
     Ok(record)
 }
@@ -228,30 +294,54 @@ fn load_json_array(path: &std::path::Path) -> Result<Vec<serde_json::Value>, Str
 /// Load and parse a review record, distinguishing missing/corrupt from plain IO errors. A corrupt
 /// record preserves its original bytes, flags the path (blocking writes until recovery), and never
 /// auto-recreates over the corruption.
-fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, String> {
+fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, ReviewLoadError> {
     match crate::state_load::read_json_text(path) {
         crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content).map_err(|e| {
             let err = format!("Failed to parse review record {}: {}", path.display(), e);
             match crate::state_load::preserve_and_flag_corrupt(path, &err) {
-                Ok(backup) => format!(
-                    "{}. Original bytes preserved at {} — resolve recovery before editing.",
-                    err,
-                    backup.display()
-                ),
-                Err(preserve_err) => format!("{} ({})", err, preserve_err),
+                Ok(backup) => ReviewLoadError::Corrupt {
+                    error: format!(
+                        "{}. Original bytes preserved at {} — resolve recovery before editing.",
+                        err,
+                        backup.display()
+                    ),
+                    backup_path: backup.to_string_lossy().to_string(),
+                },
+                Err(preserve_err) => ReviewLoadError::Corrupt {
+                    error: format!("{} ({})", err, preserve_err),
+                    // The original could not be preserved; nothing safe to restore.
+                    backup_path: String::new(),
+                },
             }
         }),
-        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
-        crate::state_load::JsonText::Encoding(m) => Err(m),
+        crate::state_load::JsonText::Io(e) => Err(ReviewLoadError::Other(e.to_string())),
+        crate::state_load::JsonText::Encoding(m) => Err(ReviewLoadError::Other(m)),
     }
 }
 
-fn read_review_record_inner(project_path: String, task_id: String) -> Result<ReviewRecord, String> {
+/// Structured outcome of reading a review record (Phase 3): `missing` is a fresh task the
+/// renderer may auto-create for, while `corrupt` must surface recovery UI and NEVER trigger
+/// auto-recreation over the preserved bytes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ReviewRecordLoad {
+    Missing,
+    Loaded(ReviewRecord),
+    Corrupt { error: String, backup_path: String },
+}
+
+fn read_review_record_inner(project_path: String, task_id: String) -> Result<ReviewRecordLoad, String> {
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
     if !review_file_path.exists() {
-        return Err("Review record not found".to_string());
+        return Ok(ReviewRecordLoad::Missing);
     }
-    load_review_record(&review_file_path)
+    match load_review_record(&review_file_path) {
+        Ok(record) => Ok(ReviewRecordLoad::Loaded(record)),
+        Err(ReviewLoadError::Corrupt { error, backup_path }) => {
+            Ok(ReviewRecordLoad::Corrupt { error, backup_path })
+        }
+        Err(e @ ReviewLoadError::Other(_)) => Err(String::from(e)),
+    }
 }
 
 fn submit_review_decision_inner(
@@ -279,6 +369,24 @@ fn submit_review_decision_inner(
 
     let session_id = crate::fs_lock::with_path_lock(&review_file_path, || {
         let mut record = load_review_record(&review_file_path)?;
+
+        // Phase 3: an approval certifies exactly the evidence captured with the record. If HEAD
+        // or the staged/unstaged change set moved since capture, the reviewer would be approving
+        // work they never saw - refuse and ask for a refresh instead. Rejections carry no such
+        // gate (feedback is valid regardless of later edits).
+        if decision == "approve" {
+            if let Some(evidence) = &record.reviewed_tree {
+                let current: ReviewedEvidence =
+                    git_tree_identity_inner(project_path.clone())?.into();
+                if current != *evidence {
+                    return Err(
+                        "The worktree or staged files changed since this review's evidence was \
+                         captured. Refresh the review and re-inspect before approving."
+                            .to_string(),
+                    );
+                }
+            }
+        }
 
         let session_id = record.session_id.clone();
         record.status = if decision == "approve" { "approved" } else { "rejected" }.to_string();
@@ -376,53 +484,154 @@ fn submit_review_decision_inner(
     Ok(())
 }
 
-/// Run a shell command in `project_path`, capturing stdout/stderr, killing it after `timeout`.
-/// Returns `(output, timed_out)`. On Windows this uses PowerShell (matching the interactive
-/// terminal panes in `pty.rs`) rather than `cmd.exe`, so commands behave the same whether the
-/// user types them or review verification issues them.
+/// Why a shell run ended (Phase 3). `Completed` carries the command's real exit status;
+/// `TimedOut` and `Cancelled` mean Bridge killed the whole process tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellStop {
+    Completed,
+    TimedOut,
+    Cancelled,
+}
+
+// Phase 3 cancellation registry: verification/acceptance runs mint a token the renderer passes
+// back; `cancel_run_command` flips the flag and the runner's poll loop tears the tree down.
+fn cancel_registry() -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>> {
+    static REG: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    > = std::sync::OnceLock::new();
+    REG.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub(crate) fn register_cancel_token(token: &str) -> Arc<std::sync::atomic::AtomicBool> {
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    cancel_registry()
+        .lock()
+        .unwrap()
+        .insert(token.to_string(), flag.clone());
+    flag
+}
+
+pub(crate) fn take_cancel_token(token: &str) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+    cancel_registry().lock().unwrap().remove(token)
+}
+
+#[tauri::command]
+pub async fn cancel_run_command(cancel_token: String) -> Result<bool, String> {
+    match take_cancel_token(&cancel_token) {
+        Some(flag) => {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(true)
+        }
+        None => Ok(false), // already finished - nothing to cancel
+    }
+}
+
+/// Run a shell command in `project_path`, capturing stdout/stderr, killing the WHOLE process tree
+/// after `timeout` or on `cancel`. Returns `(output, stop_reason)`.
+///
+/// Phase 3 correctness: stdout/stderr are drained by dedicated threads for as long as the child
+/// runs. Polling `try_wait` while pipes fill was a false-timeout generator - a verbose command
+/// exceeding the OS pipe buffer blocked forever on write and looked hung even though it was
+/// healthy. On Windows the child is placed in a kill-on-close Job Object; on Unix it leads its
+/// own process group - so timeout/cancel termination takes descendants too, not just the shell.
+/// On Windows this uses PowerShell (matching the interactive terminal panes in `pty.rs`) rather
+/// than `cmd.exe`, so commands behave the same whether the user types them or review verification
+/// issues them.
 pub(crate) fn run_shell_with_timeout(
     project_path: &str,
     command_str: &str,
     timeout: Duration,
-) -> Result<(Output, bool), String> {
-    let mut child = if cfg!(target_os = "windows") {
-        Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", command_str])
-            .current_dir(project_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .no_window()
-            .spawn()
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<(Output, ShellStop), String> {
+    use std::sync::atomic::Ordering;
+
+    let mut cmd = if cfg!(target_os = "windows") {
+        let mut c = Command::new("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-Command", command_str]);
+        c
     } else {
-        Command::new("sh")
-            .args(["-c", command_str])
-            .current_dir(project_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .no_window()
-            .spawn()
-    }.map_err(|e| format!("Failed to run command: {}", e))?;
+        let mut c = Command::new("sh");
+        c.args(["-c", command_str]);
+        c
+    };
+    cmd.current_dir(project_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .no_window();
+
+    // Own process group on Unix so group-kill reaches descendants spawned by the shell.
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+    #[cfg(unix)]
+    cmd.process_group(0);
+
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to run command: {}", e))?;
+    // Captured once: std's Child::id() keeps reporting the pid, but we want one value used
+    // consistently for job attachment and group-kill.
+    let child_pid = child.id();
+
+    // Windows: put the whole subtree under a kill-on-close Job Object before the shell can
+    // spawn anything. No-op (None) on Unix or when job assignment fails.
+    let job = crate::proc_tree::JobObject::attach(child_pid);
+
+    // Drain both pipes concurrently from spawn to exit. Without this, a verbose child that
+    // fills its (64 KiB-ish) pipe buffer blocks on write and never exits - the classic false
+    // timeout - and the buffers would deadlock with any wait-then-read ordering.
+    fn drain_pipe<R: std::io::Read + Send>(mut pipe: Option<R>) -> Vec<u8> {
+        let mut buf = Vec::new();
+        if let Some(p) = pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    }
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_handle = std::thread::spawn(move || drain_pipe(stdout_pipe));
+    let stderr_handle = std::thread::spawn(move || drain_pipe(stderr_pipe));
 
     let started = Instant::now();
-    // Adaptive backoff: poll quickly at first so fast verification commands return
-    // promptly, then back off to avoid busy-spinning on long-running ones. Caps at 50ms.
+    // Adaptive backoff: poll quickly at first so fast verification commands return promptly,
+    // then back off to avoid busy-spinning on long-running ones. Caps at 50ms.
     let mut backoff = Duration::from_millis(2);
-    loop {
+    let stop_reason = loop {
         if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            return child.wait_with_output().map(|output| (output, false)).map_err(|e| e.to_string());
+            break ShellStop::Completed;
         }
-
+        if let Some(ref flag) = cancel {
+            if flag.load(Ordering::SeqCst) {
+                break ShellStop::Cancelled;
+            }
+        }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let output = child.wait_with_output().map_err(|e| e.to_string())?;
-            return Ok((output, true));
+            break ShellStop::TimedOut;
         }
-
         std::thread::sleep(backoff);
         if backoff < Duration::from_millis(50) {
             backoff = (backoff * 2).min(Duration::from_millis(50));
         }
+    };
+
+    if stop_reason != ShellStop::Completed {
+        // Kill the entire tree: Job Object on Windows, process group on Unix, direct kill as
+        // the last-resort fallback for either.
+        if let Some(job) = job.as_ref() {
+            job.terminate();
+        }
+        crate::proc_tree::kill_process_group(child_pid);
+        let _ = child.kill();
     }
+    // On Completed, dropping `job` (the last handle) at scope end still fires
+    // KILL_ON_JOB_CLOSE for any descendant that outlived the exited shell - deliberate:
+    // a finished verification/acceptance run must not leak stray processes either.
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
+
+    Ok((
+        Output { status, stdout, stderr },
+        stop_reason,
+    ))
 }
 
 pub(crate) fn truncate_output(mut output: String) -> String {
@@ -447,17 +656,30 @@ fn run_verification_command_inner(
     project_path: String,
     task_id: String,
     command_str: String,
+    cancel_token: Option<String>,
 ) -> Result<String, String> {
-    let (output, timed_out) = run_shell_with_timeout(&project_path, &command_str, VERIFICATION_TIMEOUT)?;
+    // A renderer-supplied token makes this run cancellable from the UI; the flag is registered
+    // before spawn and removed afterwards so stale cancels can't hit a later run.
+    let cancel = cancel_token.as_deref().map(register_cancel_token);
+    // The token is removed regardless of outcome so stale cancels can never hit a later run.
+    let result = run_shell_with_timeout(&project_path, &command_str, VERIFICATION_TIMEOUT, cancel);
+    take_cancel_token(cancel_token.as_deref().unwrap_or(""));
+    let (output, stop) = result?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let mut combined = truncate_output(format!("{}\n{}", stdout, stderr));
-    if timed_out {
-        combined.push_str(&format!(
-            "\n[ Saple Bridge stopped verification after {} seconds ]\n",
-            VERIFICATION_TIMEOUT.as_secs()
-        ));
+    match stop {
+        ShellStop::TimedOut => {
+            combined.push_str(&format!(
+                "\n[ Saple Bridge stopped verification after {} seconds ]\n",
+                VERIFICATION_TIMEOUT.as_secs()
+            ));
+        }
+        ShellStop::Cancelled => {
+            combined.push_str("\n[ Saple Bridge: verification cancelled by operator ]\n");
+        }
+        ShellStop::Completed => {}
     }
 
     // Update the review record with test output! Best-effort: a corrupt record is left untouched
@@ -534,7 +756,7 @@ pub async fn read_review_record(
     project_path: String,
     task_id: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<ReviewRecord, String> {
+) -> Result<ReviewRecordLoad, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_review_record_inner(project_path, task_id))
         .await
@@ -560,14 +782,17 @@ pub async fn run_verification_command(
     project_path: String,
     task_id: String,
     command_str: String,
+    cancel_token: Option<String>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<String, String> {
     // Verification executes an operator-visible command inside the project directory,
     // so the project itself must be an approved root before anything runs.
     registry.ensure_inside_approved_root(&project_path)?;
-    tauri::async_runtime::spawn_blocking(move || run_verification_command_inner(project_path, task_id, command_str))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_verification_command_inner(project_path, task_id, command_str, cancel_token)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -586,6 +811,35 @@ mod tests {
         }
         fn project(&self) -> String {
             self.path.to_string_lossy().to_string()
+        }
+        /// Initialize a real git repo with one commit and a tracked file, so tree identities
+        /// are meaningful.
+        fn with_git() -> Self {
+            let p = Self::new();
+            let git = |args: &[&str]| {
+                let out = std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&p.path)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "git {:?} failed", args);
+            };
+            git(&["init", "-b", "main"]);
+            git(&["config", "user.email", "test@saple.local"]);
+            git(&["config", "user.name", "Saple Test"]);
+            fs::write(p.path.join("a.txt"), "one\n").unwrap();
+            git(&["add", "."]);
+            git(&["commit", "-m", "init"]);
+            p
+        }
+
+        fn git(&self, args: &[&str]) {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&self.path)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {:?} failed", args);
         }
     }
     impl Drop for TempProject {
@@ -646,4 +900,283 @@ mod tests {
         assert_eq!(run.get("reviewDecision").and_then(|v| v.as_str()), Some("approved"));
         assert_eq!(runs.len(), 1, "review decision must not duplicate the run");
     }
+
+    /// Phase 3 check: a verbose command producing far more output than the OS pipe buffer
+    /// completes normally instead of false-timeouting (the old wait-then-read ordering could
+    /// deadlock on a full pipe).
+    #[test]
+    fn verbose_output_exceeding_pipe_buffer_does_not_false_timeout() {
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        // ~2 MiB of stdout plus ~1 MiB of stderr: several multiples of any pipe buffer.
+        let cmd = "$n=0; while ($n -lt 30000) { 'x' * 80; $n++ }; [Console]::Error.WriteLine(('e' * 80) * 12000); exit 0";
+        let started = Instant::now();
+        let (output, stop) =
+            run_shell_with_timeout(&dir, cmd, Duration::from_secs(60), None).unwrap();
+        assert_eq!(stop, ShellStop::Completed, "a healthy verbose command must complete");
+        assert!(output.status.success());
+        assert!(output.stdout.len() > 1_500_000, "stdout must be fully drained");
+        assert!(output.stderr.len() > 500_000, "stderr must be fully drained");
+        assert!(started.elapsed() < Duration::from_secs(55));
+    }
+
+    /// Phase 3 check: the cancel token stops a run promptly.
+    #[test]
+    fn cancel_token_stops_a_running_command() {
+        use std::sync::atomic::Ordering;
+
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        let token = "cancel-test-token".to_string();
+        let flag = register_cancel_token(&token);
+        let runner_flag = flag.clone();
+        let dir_for_runner = dir.clone();
+        let handle = std::thread::spawn(move || {
+            run_shell_with_timeout(
+                &dir_for_runner,
+                "Start-Sleep -Seconds 30",
+                Duration::from_secs(60),
+                Some(runner_flag),
+            )
+        });
+        std::thread::sleep(Duration::from_millis(600)); // let the shell start
+        flag.store(true, Ordering::SeqCst); // exactly what cancel_run_command does
+        let (output, stop) = handle.join().unwrap().unwrap();
+        assert_eq!(stop, ShellStop::Cancelled);
+        assert!(!output.status.success());
+        // The runner itself leaves registry cleanup to its command wrapper (which always runs
+        // it), so simulate the wrapper here.
+        assert!(take_cancel_token(&token).is_some());
+        assert!(take_cancel_token(&token).is_none());
+    }
+
+    /// Phase 3 check: a timed-out run's DESCENDANTS are terminated too, not just the direct
+    /// child. The command spawns a detached grandchild that writes its pid and sleeps; after
+    /// the forced kill, that pid must be gone. Windows relies on the Job Object; Unix on the
+    /// process-group kill.
+    #[test]
+    fn timeout_kills_descendants_of_the_shell() {
+        let dir = std::env::temp_dir().join(format!("saple_desc_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let dir_str = dir.to_string_lossy().to_string();
+        let pid_file = dir.join("descendant.pid");
+
+        // Forward slashes avoid every backslash-quoting hazard in the nested PowerShell
+        // single-quoted argument; PS handles them natively.
+        let pid_file_arg = pid_file.to_string_lossy().replace('\\', "/");
+
+        let cmd = if cfg!(target_os = "windows") {
+            format!(
+                "$p = Start-Process powershell -ArgumentList '-NoProfile','-Command','Set-Content -LiteralPath {} -Value $PID; Start-Sleep -Seconds 30' -PassThru -WindowStyle Hidden; Wait-Process -Id $p.Id",
+                pid_file_arg
+            )
+        } else {
+            format!(
+                "sh -c 'echo $$ > {}; sleep 30' & wait",
+                pid_file.to_string_lossy()
+            )
+        };
+
+        let short = Duration::from_secs(2);
+        let (output, stop) = run_shell_with_timeout(&dir_str, &cmd, short, None).unwrap();
+        assert_eq!(stop, ShellStop::TimedOut);
+        let _ = output;
+
+        // Give the OS a moment, then confirm the descendant is dead by polling its pid file.
+        let mut alive = true;
+        for _ in 0..20 {
+            if !pid_file.exists() {
+                std::thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+            let pid_text = fs::read_to_string(&pid_file).unwrap_or_default();
+            let pid: u32 = match pid_text.trim().parse() {
+                Ok(p) => p,
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+            };
+            if process_alive(pid) {
+                std::thread::sleep(Duration::from_millis(250));
+            } else {
+                alive = false;
+                break;
+            }
+        }
+        assert!(
+            !alive,
+            "the descendant spawned by the timed-out shell must have been killed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn process_alive(pid: u32) -> bool {
+        #[cfg(windows)]
+        {
+            let out = Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "if (Get-Process -Id {} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}",
+                        pid
+                    ),
+                ])
+                .no_window()
+                .output();
+            matches!(out, Ok(o) if o.status.success())
+        }
+        #[cfg(not(windows))]
+        {
+            unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+        }
+    }
+
+
+    /// Phase 3 check: approval must fail after ANY reviewed-tree change. The record captures
+    /// evidence at creation; editing a file (or staging something new) afterwards makes the
+    /// current identity differ, and submit(approve) refuses.
+    #[test]
+    fn approval_fails_after_reviewed_tree_changes() {
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        let record = create_review_record_inner(proj.clone(), "task_1".into(), "sess_1".into()).unwrap();
+        assert!(record.reviewed_tree.is_some(), "evidence must be captured with the record");
+
+        // Unchanged tree: approval goes through the gate cleanly.
+        submit_review_decision_inner(proj.clone(), "task_1".into(), "approve".into(), None).unwrap();
+
+        // New pending record, then mutate a tracked file: approval must now be refused.
+        let _ = create_review_record_inner(proj.clone(), "task_2".into(), "sess_1".into()).unwrap();
+        fs::write(p.path.join("a.txt"), "two\n").unwrap();
+        let err = submit_review_decision_inner(proj.clone(), "task_2".into(), "approve".into(), None)
+            .unwrap_err();
+        assert!(
+            err.contains("changed since this review's evidence"),
+            "unexpected error: {}", err
+        );
+
+        // Rejections stay ungated: feedback is valid regardless of later edits.
+        submit_review_decision_inner(proj.clone(), "task_2".into(), "reject".into(), Some("needs work".into()))
+            .unwrap();
+
+        // Staging an extra file is also a tree change.
+        p.git(&["checkout", "--", "a.txt"]);
+        let _ = create_review_record_inner(proj.clone(), "task_3".into(), "sess_1".into()).unwrap();
+        fs::write(p.path.join("b.txt"), "new\n").unwrap();
+        p.git(&["add", "."]);
+        let err = submit_review_decision_inner(proj, "task_3".into(), "approve".into(), None).unwrap_err();
+        assert!(err.contains("changed since this review's evidence"), "unexpected error: {}", err);
+    }
+
+    /// Phase 3 check: a corrupt review record stays untouched - reading reports corrupt with a
+    /// preserved backup path, and re-creating refuses instead of overwriting it.
+    #[test]
+    fn corrupt_review_record_is_never_recreated() {
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        create_review_record_inner(proj.clone(), "task_1".into(), "sess_1".into()).unwrap();
+        let record_path =
+            get_project_file_path(&proj, ".saple/review/task_1.json").unwrap();
+        fs::write(&record_path, "{ definitely not json").unwrap();
+
+        // Read reports corruption (never "missing") and preserves bytes.
+        match read_review_record_inner(proj.clone(), "task_1".into()).unwrap() {
+            ReviewRecordLoad::Corrupt { error, backup_path } => {
+                assert!(!backup_path.is_empty());
+                assert_eq!(
+                    fs::read_to_string(&backup_path).unwrap(),
+                    "{ definitely not json",
+                    "original bytes must be preserved verbatim"
+                );
+                assert!(error.contains("parse") || error.contains("preserved"), "{}", error);
+            }
+            other => panic!("expected corrupt, got {:?}", other),
+        }
+
+        // Re-create refuses instead of auto-recreating over the corruption.
+        let err = create_review_record_inner(proj.clone(), "task_1".into(), "sess_1".into()).unwrap_err();
+        assert!(err.contains("refusing to overwrite"), "unexpected error: {}", err);
+        assert_eq!(fs::read_to_string(&record_path).unwrap(), "{ definitely not json");
+
+        // Clean up the corrupt flag so other tests / drops are unaffected.
+        crate::fs_lock::clear_corrupt_flag(&record_path);
+    }
+
+    /// Phase 3 check: commits are scoped to exactly the reviewed/staged path set. An unexpected
+    /// extra staged file refuses the commit; a matching set commits only those paths.
+    #[test]
+    fn commit_refuses_unexpected_staged_files_and_scopes_paths() {
+        use crate::git::{git_commit_inner, git_stage_file_inner};
+
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        fs::write(p.path.join("a.txt"), "reviewed change\n").unwrap();
+        fs::write(p.path.join("sneaky.txt"), "unreviewed\n").unwrap();
+        git_stage_file_inner(proj.clone(), "a.txt".into(), true).unwrap();
+        git_stage_file_inner(proj.clone(), "sneaky.txt".into(), true).unwrap();
+
+        // Extra staged file outside the reviewed set: refuse.
+        let err = git_commit_inner(
+            proj.clone(),
+            "commit reviewed work".into(),
+            Some(vec!["a.txt".to_string()]),
+        )
+        .unwrap_err();
+        assert!(err.contains("outside the reviewed set") && err.contains("sneaky.txt"), "{}", err);
+
+        // Unstage the extra first so the next case isolates the not-staged refusal.
+        git_stage_file_inner(proj.clone(), "sneaky.txt".into(), false).unwrap();
+
+        // A requested path that is not staged: refuse too.
+        fs::write(p.path.join("c.txt"), "unstaged\n").unwrap();
+        let err = git_commit_inner(
+            proj.clone(),
+            "commit reviewed work".into(),
+            Some(vec!["a.txt".to_string(), "c.txt".to_string()]),
+        )
+        .unwrap_err();
+        assert!(err.contains("not staged") && err.contains("c.txt"), "{}", err);
+
+        // Exactly the reviewed set: succeeds, and only those paths land in the commit.
+        git_commit_inner(
+            proj.clone(),
+            "commit reviewed work".into(),
+            Some(vec!["a.txt".to_string()]),
+        )
+        .unwrap();
+        let status = crate::git::git_status_inner(proj.clone()).unwrap();
+        let committed_a = status.iter().find(|f| f.path == "a.txt");
+        assert!(committed_a.is_none(), "a.txt was committed and must leave status");
+        let sneaky = status.iter().find(|f| f.path == "sneaky.txt").expect("sneaky still present");
+        assert!(!sneaky.staged, "sneaky.txt must remain unstaged");
+    }
+
+    /// Phase 3: the diff-cache identity changes when HEAD moves or the staged/unstaged set
+    /// changes, and is stable while nothing changed.
+    #[test]
+    fn tree_identity_tracks_head_and_status_changes() {
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        let first = crate::git::git_tree_identity_inner(proj.clone()).unwrap();
+        let again = crate::git::git_tree_identity_inner(proj.clone()).unwrap();
+        assert_eq!(first, again, "identity must be stable on an unchanged tree");
+
+        // Worktree edit changes the hash but not HEAD.
+        fs::write(p.path.join("a.txt"), "dirty\n").unwrap();
+        let dirty = crate::git::git_tree_identity_inner(proj.clone()).unwrap();
+        assert_ne!(first.status_hash, dirty.status_hash);
+
+        // Committing changes HEAD (and empties status).
+        p.git(&["add", "."]);
+        p.git(&["commit", "-m", "second"]);
+        let committed = crate::git::git_tree_identity_inner(proj).unwrap();
+        assert_ne!(committed.status_hash, dirty.status_hash);
+        assert_ne!(committed.head_commit, first.head_commit);
+        assert!(committed.committed_at.is_some());
+    }
 }
+

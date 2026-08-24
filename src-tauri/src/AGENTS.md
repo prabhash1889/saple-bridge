@@ -20,6 +20,7 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundl
 | Module | File | Responsibility |
 | --- | --- | --- |
 | PTY | `pty.rs` | Spawn, write, resize, and kill native PTY sessions; stream output to React |
+| Proc tree | `proc_tree.rs` | Whole-process-tree termination: Windows Job Objects, Unix process-group kill |
 | Project | `project.rs` | Contained project file access and MCP config wiring |
 | Memory | `memory.rs` | Parse memory markdown, graph wikilinks, manage snapshots |
 | Keychain | `keychain.rs` | OS keychain wrapper through the `keyring` crate |

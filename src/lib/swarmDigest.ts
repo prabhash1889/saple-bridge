@@ -24,15 +24,71 @@ const HEADERS: Record<DigestKind, (wave: number) => string> = {
 
 // One line per worker: `- <taskId> (<name>) [role]: status - detail`. The outcome summary wins
 // over the status reason when both exist (it is what the agent said it did; the reason is how it
-// ended).
+// ended). Worker-controlled text is sanitized + length-capped before it rides along.
 const entryLines = (entries: DigestEntry[]): string[] => {
   const lines = entries.map((e) => {
     const label = e.taskId ? `${e.taskId} (${e.name})` : e.name;
-    const detail = e.summary || e.statusReason;
+    const detail = sanitizeDigestLine(e.summary || e.statusReason, MAX_WORKER_TEXT_CHARS);
     return `- ${label} [${e.role}]: ${e.status}${detail ? ` - ${detail}` : ''}`;
   });
   return lines.length > 0 ? lines : ['- (no worker tasks yet)'];
 };
+
+// ---- Phase 3: worker-controlled text is fenced and length-capped -----------------------------
+// Outcome summaries, acceptance output, and review text are written by agents. Before any of it
+// is injected into the coordinator's PTY it must not be able to: (a) forge lifecycle markers,
+// (b) smuggle terminal control sequences or ANSI styling into the TUI input stream, or
+// (c) blow the prompt size with an unbounded blob.
+
+// Lifecycle markers are Bridge's control channel; a worker must never be able to speak them
+// through free text riding inside a digest.
+const MARKER_PATTERN = /\[(?:AGENT_DONE|AGENT_FAILED|PLAN_READY|PLAN_UPDATED|REVIEW_REQUESTED)[^\]]*\]/gi;
+// ANSI escape sequences and other C0 controls except newline/tab.
+const ESCAPE_PATTERN = /\x1B(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|[@-Z\\-_])/g;
+const CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+export const MAX_WORKER_TEXT_CHARS = 600;
+
+/** Collapse worker text to one safe, bounded line for use inside a digest bullet. */
+export function sanitizeDigestLine(text: string | undefined | null, maxChars = MAX_WORKER_TEXT_CHARS): string {
+  if (!text) return '';
+  const clean = text
+    .replace(MARKER_PATTERN, '[filtered]')
+    .replace(ESCAPE_PATTERN, '')
+    .replace(CONTROL_PATTERN, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (clean.length <= maxChars) return clean;
+  return `${clean.slice(0, maxChars)}...[truncated]`;
+}
+
+/** Sanitize multi-line agent output for embedding in a fenced digest block (keeps newlines). */
+export function sanitizeFencedBlock(text: string, maxChars: number): string {
+  const clean = text
+    .replace(MARKER_PATTERN, '[filtered]')
+    .replace(ESCAPE_PATTERN, '')
+    .replace(CONTROL_PATTERN, '');
+  // Keep the TAIL (where failures live), then bound any single pathological line by its end -
+  // test runners print the actual error at the end of long summary lines.
+  return clean
+    .slice(-maxChars)
+    .split('\n')
+    .map((l) => l.slice(-500))
+    .join('\n');
+}
+
+// The durable digest record and relaunch-prompt payload stay bounded no matter how many waves
+// run or how large individual digests grow.
+export const MAX_DIGEST_LOG_ENTRIES = 40;
+export const MAX_DIGEST_CHARS = 8000;
+export const MAX_PENDING_DIGESTS = 5;
+
+export const capDigestLog = (log: string[]): string[] => log.slice(-MAX_DIGEST_LOG_ENTRIES);
+
+export const truncateDigest = (digest: string): string =>
+  digest.length > MAX_DIGEST_CHARS
+    ? `${digest.slice(0, MAX_DIGEST_CHARS)}\n[Bridge: digest truncated]`
+    : digest;
 
 export function buildResultsDigest(
   entries: DigestEntry[],
@@ -81,7 +137,7 @@ export function buildAcceptanceDigest(
         `Then emit ${done} on its own line.`,
     ].join('\n');
   }
-  const tail = opts.output.trim().slice(-ACCEPTANCE_OUTPUT_TAIL_CHARS);
+  const tail = sanitizeFencedBlock(opts.output.trim(), ACCEPTANCE_OUTPUT_TAIL_CHARS);
   return [
     `[Bridge digest] Wave ${opts.wave} of ${opts.maxWaves}: all tasks finished but the acceptance command FAILED.`,
     `Acceptance: \`${opts.command}\` exited non-zero.`,
