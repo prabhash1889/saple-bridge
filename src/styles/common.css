@@ -1258,6 +1258,8 @@ button.text-btn:hover {
   font-size: 13.5px;
   color: var(--text-secondary);
   line-height: 1.5;
+  /* Structured confirm messages (e.g. the swarm acceptance approval) use \n line breaks. */
+  white-space: pre-line;
 }
 
 .confirm-footer {

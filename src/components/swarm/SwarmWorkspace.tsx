@@ -72,6 +72,9 @@ export const SwarmWorkspace: React.FC = () => {
   const reworkAgent = useSwarmStore((state) => state.reworkAgent);
   const loadWorkerRequests = useSwarmStore((state) => state.loadWorkerRequests);
   const resolveWorkerRequest = useSwarmStore((state) => state.resolveWorkerRequest);
+  // T2: acceptance-command approval gate surface.
+  const acceptanceStatus = useSwarmStore((state) => state.acceptanceStatus);
+  const acceptanceCommand = useSwarmStore((state) => state.plan?.acceptance?.command ?? null);
   const forceCompleteAgent = useSwarmStore((state) => state.forceCompleteAgent);
   const postToMailbox = useSwarmStore((state) => state.postToMailbox);
   const readHandoff = useSwarmStore((state) => state.readHandoff);
@@ -226,6 +229,13 @@ export const SwarmWorkspace: React.FC = () => {
     if (!currentProjectPath) return;
     void resolveWorkerRequest(currentProjectPath, req, false);
     setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+  };
+
+  // T2: re-open the acceptance approval dialog. runAcceptance is gated - for an unapproved
+  // command it shows the confirmation dialog instead of executing anything.
+  const handleReviewAcceptance = () => {
+    if (!currentProjectPath) return;
+    void useSwarmStore.getState().runAcceptance(currentProjectPath);
   };
 
   const handleAgentStop = async (agentId: string) => {
@@ -499,6 +509,33 @@ export const SwarmWorkspace: React.FC = () => {
 
         {swarmActive ? (
           <div style={swarmDashboardStyle}>
+            {/* T2: an acceptance command is parked until a human approves it. The banner shows
+                what is being held and re-opens the approval dialog (command/cwd/source/timeout). */}
+            {acceptanceStatus === 'awaiting_approval' && acceptanceCommand && (
+              <div style={approvalPanelStyle}>
+                <div style={requestsPanelHeaderStyle}>
+                  <Shield size={13} className="fg-accent" />
+                  <span>Acceptance approval required</span>
+                </div>
+                <div style={requestCardStyle}>
+                  <div style={requestBodyStyle}>
+                    <div style={requestMissionStyle}><code>{acceptanceCommand}</code></div>
+                    <div style={requestMetaStyle}>
+                      <span>directory: {currentProjectPath || 'n/a'}</span>
+                      <span>·</span>
+                      <span>source: .saple/swarm/plan.json</span>
+                      <span>·</span>
+                      <span>timeout: 600s</span>
+                    </div>
+                  </div>
+                  <button onClick={handleReviewAcceptance} style={btnRequestApproveStyle}>
+                    <CheckCircle size={12} />
+                    <span>Review &amp; approve</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* P6: pending worker requests — an agent asked for a specialist; the operator sees the
                 details and must approve before Bridge launches it. */}
             {pendingRequests.length > 0 && (
@@ -862,6 +899,13 @@ const requestsPanelStyle: React.CSSProperties = {
   borderRadius: 'var(--radius-md)',
   border: '1px solid rgba(99, 102, 241, 0.3)',
   backgroundColor: 'rgba(99, 102, 241, 0.08)',
+};
+
+// T2 acceptance-approval banner: same shape as the worker-requests panel but in warning amber.
+const approvalPanelStyle: React.CSSProperties = {
+  ...requestsPanelStyle,
+  border: '1px solid rgba(245, 158, 11, 0.35)',
+  backgroundColor: 'rgba(245, 158, 11, 0.08)',
 };
 
 const requestsPanelHeaderStyle: React.CSSProperties = {

@@ -59,12 +59,21 @@ vi.mock('../lib/desktopNotifications', () => ({
   notifyAgentStatusChanged: vi.fn(),
 }));
 
-import { useSwarmStore, recordPendingAgentExit, type SwarmAgent, type AgentStatus } from './swarmStore';
+import {
+  useSwarmStore,
+  recordPendingAgentExit,
+  hashAcceptanceCommand,
+  type SwarmAgent,
+  type AgentStatus,
+} from './swarmStore';
 import { hashAcceptanceOutput } from '../lib/swarmDigest';
 import { useProjectStore } from './projectStore';
 import type { WizardLaunchInput } from '../types/wizard';
 
 const PROJECT = 'C:/proj';
+
+// SHA-256 approval hashes are async (WebCrypto); compute the shared fixture once up front.
+const NPM_TEST_HASH = await hashAcceptanceCommand('npm test');
 
 const agent = (
   id: string,
@@ -120,6 +129,7 @@ beforeEach(() => {
     lastAcceptanceFailureHash: null,
     identicalAcceptanceFailures: 0,
     escalation: null,
+    acceptanceApprovals: null,
   });
   seed([]);
 });
@@ -792,12 +802,19 @@ describe('acceptance and repair waves (Phase 5)', () => {
   const PLAN = { version: 2, acceptance: { command: 'npm test' }, tasks: [] };
 
   // Coordinator + one finished worker, wave digest not yet delivered - the scan's wave branch.
+  // The acceptance command is pre-approved (T2 covers the unapproved path separately).
   const seedAcceptanceWave = () => {
     seed([
       agent('coordinator', [], 'running', { role: 'coordinator', provider: 'claude', terminalId: 'coord-pane', marker: 'tokcccc' }),
       agent('worker', [], 'done', { taskId: 't1' }),
     ]);
-    useSwarmStore.setState({ plan: PLAN, appliedPlanTaskIds: ['t1'], wave: 1, lastDigestWave: 0 });
+    useSwarmStore.setState({
+      plan: PLAN,
+      appliedPlanTaskIds: ['t1'],
+      wave: 1,
+      lastDigestWave: 0,
+      acceptanceApprovals: { swarmId: 'swarm-test', hashes: [NPM_TEST_HASH] },
+    });
   };
 
   // run_acceptance_command resolves with the given result; project-file reads miss (no outcomes).
@@ -937,6 +954,127 @@ describe('acceptance and repair waves (Phase 5)', () => {
     await vi.waitFor(() => expect(useSwarmStore.getState().digestLog).toHaveLength(1));
     expect(useSwarmStore.getState().digestLog[0]).toContain('all worker tasks have finished');
     expect(runs).toHaveLength(0);
+  });
+});
+
+describe('acceptance-command approval gate (T2)', () => {
+  const PLAN = { version: 2, acceptance: { command: 'npm test' }, tasks: [] };
+
+  // Same shape as seedAcceptanceWave: coordinator + finished worker at the wave branch.
+  const seedWave = (command = 'npm test') => {
+    seed([
+      agent('coordinator', [], 'running', { role: 'coordinator', provider: 'claude', terminalId: 'coord-pane', marker: 'tokcccc' }),
+      agent('worker', [], 'done', { taskId: 't1' }),
+    ]);
+    useSwarmStore.setState({
+      plan: { version: 2, acceptance: { command }, tasks: [] },
+      appliedPlanTaskIds: ['t1'],
+      wave: 1,
+      lastDigestWave: 0,
+    });
+  };
+
+  const acceptanceRuns = () => invokeMock.mock.calls.filter(([cmd]) => cmd === 'run_acceptance_command');
+
+  // run_acceptance_command resolves with the given result; project-file reads miss (no outcomes).
+  const mockAcceptanceResult = (result: { exitCode: number | null; output: string; timedOut: boolean }) => {
+    invokeMock.mockImplementation((cmd: string, _args: Record<string, unknown>) => {
+      if (cmd === 'run_acceptance_command') return Promise.resolve(result);
+      if (cmd === 'read_project_file') return Promise.reject(new Error('missing'));
+      return Promise.resolve(undefined);
+    });
+  };
+
+  it('an unapproved acceptance command never reaches the backend runner', async () => {
+    seedWave();
+    mockAcceptanceResult({ exitCode: 0, output: 'all green', timedOut: false });
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    // The wave completed, so Bridge wanted to run acceptance - but held it for approval instead.
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('awaiting_approval'));
+    expect(acceptanceRuns()).toHaveLength(0);
+    expect(addPaneMock).not.toHaveBeenCalled();
+
+    // Approving records the hash against THIS run and only then executes through the backend.
+    await useSwarmStore.getState().approveAcceptanceCommand(PROJECT);
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('passed'));
+    expect(acceptanceRuns()).toHaveLength(1);
+    expect(acceptanceRuns()[0][1]).toEqual({
+      projectPath: PROJECT,
+      commandStr: 'npm test',
+      commandHash: NPM_TEST_HASH,
+    });
+  });
+
+  it('approving one command does not approve a different command hash', async () => {
+    seedWave();
+    mockAcceptanceResult({ exitCode: 0, output: '', timedOut: false });
+    await useSwarmStore.getState().approveAcceptanceCommand(PROJECT);
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('passed'));
+    expect(acceptanceRuns()).toHaveLength(1);
+
+    // The coordinator swaps in a NEW command (a different hash) - the old approval must not
+    // cover it; the backend is never invoked for the unapproved bytes.
+    seed([
+      agent('coordinator', [], 'running', { role: 'coordinator', provider: 'claude', terminalId: 'coord-pane', marker: 'tokcccc' }),
+      agent('worker', [], 'done', { taskId: 't1' }),
+    ]);
+    useSwarmStore.setState({
+      plan: { version: 2, acceptance: { command: 'npm run evil' }, tasks: [] },
+      appliedPlanTaskIds: ['t1'],
+      wave: 1,
+      lastDigestWave: 0,
+      acceptanceStatus: 'idle',
+    });
+
+    await useSwarmStore.getState().runAcceptance(PROJECT);
+
+    expect(useSwarmStore.getState().acceptanceStatus).toBe('awaiting_approval');
+    expect(acceptanceRuns()).toHaveLength(1); // still just the original approved run
+  });
+
+  it('an approval from a previous run is not honored in a new run', async () => {
+    seedWave();
+    mockAcceptanceResult({ exitCode: 0, output: '', timedOut: false });
+    await useSwarmStore.getState().approveAcceptanceCommand(PROJECT);
+    await vi.waitFor(() => expect(useSwarmStore.getState().acceptanceStatus).toBe('passed'));
+
+    // A brand-new swarm with the SAME command: fresh swarmId invalidates every prior approval.
+    await useSwarmStore.getState().startSwarm(PROJECT, 'run it again');
+    seed([agent('coordinator', [], 'running', { role: 'coordinator', provider: 'claude', terminalId: 'coord-pane', marker: 'tokcccc' })]);
+    useSwarmStore.setState({
+      plan: PLAN,
+      appliedPlanTaskIds: [],
+      wave: 1,
+      lastDigestWave: 0,
+      acceptanceStatus: 'idle',
+    });
+
+    await useSwarmStore.getState().runAcceptance(PROJECT);
+
+    expect(useSwarmStore.getState().acceptanceStatus).toBe('awaiting_approval');
+    expect(acceptanceRuns()).toHaveLength(1); // nothing ran for the new swarm
+    // And the recorded approvals are bound to the new run id, not the approved one.
+    expect(useSwarmStore.getState().acceptanceApprovals?.swarmId).not.toBe('swarm-test');
+  });
+
+  it('approvals loaded from disk are dropped when they belong to another swarm id', async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'read_swarm_state'
+        ? Promise.resolve(JSON.stringify({
+            swarmId: 'swarm-current',
+            agents: [],
+            status: 'idle',
+            acceptanceApprovals: { swarmId: 'swarm-someone-else', hashes: ['deadbeefdeadbeef'] },
+          }))
+        : Promise.resolve(undefined),
+    );
+
+    await useSwarmStore.getState().loadSwarmState(PROJECT, true);
+
+    // Mismatched-run approvals never survive a load.
+    expect(useSwarmStore.getState().acceptanceApprovals).toBeNull();
   });
 });
 

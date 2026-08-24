@@ -1,5 +1,6 @@
 use std::fs;
 use serde::{Serialize, Deserialize};
+use sha2::{Digest, Sha256};
 
 // Mirrors the frontend SwarmAgent for `validate_dependency_graph`. The TS
 // SwarmAgent carries extra fields (provider, autoApprove) that serde silently
@@ -118,23 +119,53 @@ pub struct AcceptanceResult {
 /// than the 90s per-task review verification.
 const ACCEPTANCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
+// T2 approval gate: SHA-256 over the command's UTF-8 bytes, lowercase hex. Mirrors
+// `hashAcceptanceCommand` in src/stores/swarmStore.ts exactly - the frontend may only call this
+// runner with the hash a human approved, and re-deriving it here binds that approval to these
+// exact bytes (a mismatched hash is an unapproved invocation). SHA-256 is required, not a
+// cheaper digest: agent-authored plans are adversarial input, so the binding must not be
+// defeatable by crafting a colliding command after approval.
+fn acceptance_command_hash(command: &str) -> String {
+    let digest = Sha256::digest(command.as_bytes());
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{:02x}", byte));
+    }
+    hex
+}
+
 /// TRUST BOUNDARY: `command_str` comes from the agent-written `plan.json` acceptance contract and
 /// runs verbatim in the operator's shell inside `project_path` (same runner as review
 /// verification). This grants the swarm no capability it doesn't already have - its agents hold
 /// interactive shells in the same directory - and the mitigations mirror review verification:
 /// project cwd, hard timeout, truncated output. Bridge executes it precisely so `completed` is
-/// never an agent's self-reported claim.
+/// never an agent's self-reported claim. T2 additionally requires `command_hash` to be the hash
+/// of a command a human explicitly approved for this swarm run; anything else is rejected before
+/// a shell is ever spawned.
 #[tauri::command]
 pub async fn run_acceptance_command(
     project_path: String,
     command_str: String,
+    command_hash: String,
 ) -> Result<AcceptanceResult, String> {
-    tauri::async_runtime::spawn_blocking(move || run_acceptance_command_inner(project_path, command_str))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_acceptance_command_inner(project_path, command_str, command_hash)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn run_acceptance_command_inner(project_path: String, command_str: String) -> Result<AcceptanceResult, String> {
+fn run_acceptance_command_inner(
+    project_path: String,
+    command_str: String,
+    command_hash: String,
+) -> Result<AcceptanceResult, String> {
+    if acceptance_command_hash(&command_str) != command_hash {
+        return Err(
+            "Acceptance command hash does not match an approved command - execution refused."
+                .to_string(),
+        );
+    }
     let (output, timed_out) =
         crate::review::run_shell_with_timeout(&project_path, &command_str, ACCEPTANCE_TIMEOUT)?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -225,11 +256,11 @@ mod tests {
     #[test]
     fn acceptance_reports_real_exit_codes() {
         let dir = std::env::temp_dir().to_string_lossy().to_string();
-        let pass = run_acceptance_command_inner(dir.clone(), "exit 0".into()).unwrap();
+        let pass = run_acceptance_command_inner(dir.clone(), "exit 0".into(), acceptance_command_hash("exit 0")).unwrap();
         assert_eq!(pass.exit_code, Some(0));
         assert!(!pass.timed_out);
 
-        let fail = run_acceptance_command_inner(dir, "exit 3".into()).unwrap();
+        let fail = run_acceptance_command_inner(dir, "exit 3".into(), acceptance_command_hash("exit 3")).unwrap();
         assert_eq!(fail.exit_code, Some(3));
         assert!(!fail.timed_out);
     }
@@ -237,8 +268,36 @@ mod tests {
     #[test]
     fn acceptance_captures_command_output() {
         let dir = std::env::temp_dir().to_string_lossy().to_string();
-        let result = run_acceptance_command_inner(dir, "echo acceptance-ran".into()).unwrap();
+        let result = run_acceptance_command_inner(
+            dir,
+            "echo acceptance-ran".into(),
+            acceptance_command_hash("echo acceptance-ran"),
+        )
+        .unwrap();
         assert!(result.output.contains("acceptance-ran"));
+    }
+
+    #[test]
+    fn unapproved_hash_refuses_execution() {
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        let err =
+            run_acceptance_command_inner(dir, "exit 0".into(), "deadbeefdeadbeef".into()).unwrap_err();
+        assert!(err.contains("refused"));
+    }
+
+    #[test]
+    fn command_hash_matches_frontend_implementation() {
+        // Golden SHA-256 vectors shared with the TS `hashAcceptanceCommand`.
+        assert_eq!(
+            acceptance_command_hash(""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            acceptance_command_hash("a"),
+            "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+        );
+        assert_eq!(acceptance_command_hash("npm test"), acceptance_command_hash("npm test"));
+        assert_ne!(acceptance_command_hash("npm test"), acceptance_command_hash("npm run test"));
     }
 
     #[test]

@@ -18,6 +18,7 @@ import type {
 import { useTerminalStore, getPaneSignalTail } from './terminalStore';
 import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
+import { useConfirmStore } from './confirmStore';
 import { useModelCatalogStore } from './modelCatalogStore';
 import { parseAgentOutcome } from '../lib/controlPlane';
 import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
@@ -28,6 +29,10 @@ import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
+
+// T2 approval gate: extends the Phase 5 acceptance run state with a parked state where Bridge
+// holds the command until a human approves it in the confirmation dialog.
+export type SwarmAcceptanceStatus = AcceptanceStatus | 'awaiting_approval';
 
 export interface SwarmAgent {
   id: string;
@@ -133,16 +138,21 @@ interface SwarmState {
   coordinatorState: 'planning' | 'idle' | 'digesting';
   // Phase 5 (verified completion). `acceptanceStatus` is the run state of `plan.acceptance.command`
   // executed by Bridge - `completed` requires `passed` whenever the plan carries a command.
+  // T2 adds `awaiting_approval`: the command has not been human-approved yet, so Bridge holds it
+  // (never invoking the backend runner) until the confirmation dialog is answered.
   // `lastAcceptanceFailureHash` + `identicalAcceptanceFailures` implement the identical-failure
   // short-circuit (two consecutive failures with the same trimmed-output hash escalate).
   // `escalation` is the structured report handed to a human when repair waves are exhausted; it is
   // also written to `.saple/swarm/escalation.json`. All persisted in state.json (a stale `running`
   // reconciles to `idle` on load - the process died with the app).
-  acceptanceStatus: AcceptanceStatus;
+  acceptanceStatus: SwarmAcceptanceStatus;
   lastAcceptanceOutput: string | null;
   lastAcceptanceFailureHash: string | null;
   identicalAcceptanceFailures: number;
   escalation: SwarmEscalation | null;
+  // T2: hashes of acceptance commands a human approved, bound to the swarm run that earned them.
+  // Cleared on every new swarm and never honored across runs or projects.
+  acceptanceApprovals: AcceptanceApprovals | null;
 
   setPendingWizardMission: (mission: string | null) => void;
   loadSwarmState: (projectPath: string, force?: boolean) => Promise<void>;
@@ -175,7 +185,12 @@ interface SwarmState {
   // Phase 5: run the plan's acceptance command through Bridge (never trusting an agent's claim)
   // and route the result: pass -> synthesis digest (final report), fail -> guard rails
   // (identical-failure / maxWaves escalation) or a repair digest asking for PLAN_UPDATED tasks.
+  // T2: an unapproved command is never sent to the backend - it parks in `awaiting_approval`
+  // and opens the human-approval dialog instead.
   runAcceptance: (projectPath: string) => Promise<void>;
+  // T2: record a human approval for the plan's current acceptance command (scoped to this swarm
+  // run) and run it. Invoked by the approval dialog's Confirm.
+  approveAcceptanceCommand: (projectPath: string) => Promise<void>;
   // Phase 5: stop looping and hand the swarm to a human with a structured report (state +
   // `.saple/swarm/escalation.json`). The swarm parks as 'failed'; relaunching the coordinator or
   // editing the plan are the existing manual paths out until the Phase 7 escalation panel.
@@ -416,6 +431,34 @@ const createMarker = (): string => {
   return Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
 };
 
+// ---- T2: acceptance-command approval gate ----------------------------------------------------
+// Agent-authored acceptance commands run verbatim in the operator's shell, so every distinct
+// command needs explicit human approval before its first execution. Approvals are recorded
+// against a hash of the exact command text (SHA-256 hex, mirrored by `acceptance_command_hash`
+// in src-tauri/src/swarm.rs so the backend re-verifies it) and are scoped hard to the swarm
+// run (`swarmId`) that earned them: a new swarm, a different project, or a restored old state
+// never honors them. The digest must be collision-resistant - agent-authored plans are
+// adversarial input, and a forgeable hash would let an agent swap the approved command for a
+// colliding malicious one after approval.
+
+export interface AcceptanceApprovals {
+  // The swarm run these approvals belong to. null never matches a live run.
+  swarmId: string | null;
+  hashes: string[];
+}
+
+export const hashAcceptanceCommand = async (command: string): Promise<string> => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(command));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+export const isAcceptanceCommandApproved = (
+  swarmId: string | null,
+  approvals: AcceptanceApprovals | null,
+  commandHash: string,
+): boolean =>
+  !!swarmId && approvals?.swarmId === swarmId && approvals.hashes.includes(commandHash);
+
 // P13: pty-exits for panes whose project isn't the loaded one, recorded by terminalStore and
 // replayed by loadSwarmState (after the marker-tail check, which wins when both exist). In-memory
 // on purpose: the switch-and-return scenario lives within one app session; across a restart the
@@ -538,6 +581,32 @@ const collectDigestEntries = async (projectPath: string): Promise<DigestEntry[]>
 // verdicts/* watcher event can fire for the same file back to back; without this, both could read
 // the same reject and rework the builder twice.
 const verdictsInFlight = new Set<string>();
+
+// T2: the human-approval dialog for an acceptance command. Shows exactly what will run, where,
+// where it came from, and its leash - then records a run-scoped approval on Confirm. Deny leaves
+// the swarm parked in `awaiting_approval`; the Swarm room banner re-opens this dialog.
+const ACCEPTANCE_TIMEOUT_SECS = 600;
+const requestAcceptanceApproval = (projectPath: string, command: string) => {
+  useConfirmStore.getState().confirm({
+    title: 'Run swarm acceptance command?',
+    message: [
+      'The agent-written plan asks Bridge to run this command to verify completion:',
+      '',
+      command,
+      '',
+      `Directory: ${projectPath}`,
+      'Source: .saple/swarm/plan.json acceptance contract',
+      `Timeout: ${ACCEPTANCE_TIMEOUT_SECS} seconds`,
+      '',
+      'Approval covers this exact command for this swarm run only.',
+    ].join('\n'),
+    confirmLabel: 'Approve & run',
+    cancelLabel: 'Deny',
+    onConfirm: () => {
+      void useSwarmStore.getState().approveAcceptanceCommand(projectPath);
+    },
+  });
+};
 
 // Serializes checkAndRunNextAgents: it awaits saves mid-scan, and a PTY-driven
 // updateAgentStatus arriving during that await would re-enter with the same stale snapshot and
@@ -669,6 +738,7 @@ export const useSwarmStore = create<SwarmState>()(
       lastAcceptanceFailureHash: null,
       identicalAcceptanceFailures: 0,
       escalation: null,
+      acceptanceApprovals: null,
 
       setPendingWizardMission: (mission) => set({ pendingWizardMission: mission }),
 
@@ -768,6 +838,12 @@ export const useSwarmStore = create<SwarmState>()(
             lastAcceptanceFailureHash: parsed.lastAcceptanceFailureHash || null,
             identicalAcceptanceFailures: parsed.identicalAcceptanceFailures || 0,
             escalation: parsed.escalation || null,
+            // T2: approvals only survive a reload while they still belong to THIS run - a state
+            // file whose approvals point at another swarm id (or none) loads with none.
+            acceptanceApprovals:
+              parsed.acceptanceApprovals?.swarmId === (parsed.swarmId || null)
+                ? parsed.acceptanceApprovals
+                : null,
             activeAgents: reconciledAgents,
           });
           if (orphaned) {
@@ -792,7 +868,7 @@ export const useSwarmStore = create<SwarmState>()(
           }
         } catch {
           // Reset if file not found
-          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle', acceptanceStatus: 'idle', lastAcceptanceOutput: null, lastAcceptanceFailureHash: null, identicalAcceptanceFailures: 0, escalation: null });
+          set({ loadedProjectPath: projectPath, activeAgents: [], swarmActive: false, status: 'idle', swarmId: null, swarmName: '', mission: '', skills: [], contextFiles: [], activeTemplateId: null, swarmWorkspaceId: null, resolvedWorkerRequests: [], plan: null, appliedPlanTaskIds: [], autonomy: 'gated', wave: 1, maxWaves: 3, maxParallel: 0, digestLog: [], coordinatorCrashes: 0, lastDigestWave: 0, coordinatorState: 'idle', acceptanceStatus: 'idle', lastAcceptanceOutput: null, lastAcceptanceFailureHash: null, identicalAcceptanceFailures: 0, escalation: null, acceptanceApprovals: null });
         }
         // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
         // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
@@ -825,6 +901,7 @@ export const useSwarmStore = create<SwarmState>()(
             lastAcceptanceFailureHash: get().lastAcceptanceFailureHash,
             identicalAcceptanceFailures: get().identicalAcceptanceFailures,
             escalation: get().escalation,
+            acceptanceApprovals: get().acceptanceApprovals,
             agents: get().activeAgents,
             status: get().status,
             active: get().status === 'running' || get().status === 'paused'
@@ -907,6 +984,8 @@ export const useSwarmStore = create<SwarmState>()(
           digestLog: [],
           coordinatorCrashes: 0,
           lastDigestWave: 0,
+          // T2: approvals never carry into a fresh run.
+          acceptanceApprovals: null,
         });
 
         await get().saveSwarmState(projectPath);
@@ -980,6 +1059,7 @@ export const useSwarmStore = create<SwarmState>()(
           lastAcceptanceFailureHash: null,
           identicalAcceptanceFailures: 0,
           escalation: null,
+          acceptanceApprovals: null,
         });
 
         await get().saveSwarmState(projectPath);
@@ -1191,8 +1271,22 @@ export const useSwarmStore = create<SwarmState>()(
       runAcceptance: async (projectPath) => {
         if (get().loadedProjectPath !== projectPath) return;
         const command = get().plan?.acceptance?.command;
-        if (!command || get().acceptanceStatus === 'running') return;
+        // A passed acceptance is final for this run: later scheduler re-scans must not
+        // re-execute the (approved) command.
+        if (!command || get().acceptanceStatus === 'running' || get().acceptanceStatus === 'passed') return;
         const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
+
+        // T2 approval gate. An acceptance command the human has not approved in THIS swarm run
+        // is never sent to the backend runner: park the swarm and ask. The dialog carries the
+        // full command, cwd, source, and timeout; Confirm records a run-scoped approval.
+        const commandHash = await hashAcceptanceCommand(command);
+        if (!isAcceptanceCommandApproved(get().swarmId, get().acceptanceApprovals, commandHash)) {
+          set({ acceptanceStatus: 'awaiting_approval' });
+          await get().saveSwarmState(projectPath);
+          requestAcceptanceApproval(projectPath, command);
+          return;
+        }
+
         set({ acceptanceStatus: 'running' });
         await get().saveSwarmState(projectPath);
 
@@ -1201,7 +1295,7 @@ export const useSwarmStore = create<SwarmState>()(
         try {
           const result = await invoke<{ exitCode: number | null; output: string; timedOut: boolean }>(
             'run_acceptance_command',
-            { projectPath, commandStr: command },
+            { projectPath, commandStr: command, commandHash },
           );
           exitCode = result.timedOut ? null : result.exitCode;
           output = result.output;
@@ -1257,6 +1351,25 @@ export const useSwarmStore = create<SwarmState>()(
         }
         const digest = buildAcceptanceDigest(entries, { ...digestOpts, passed: false });
         await get().notifyCoordinator(projectPath, digest);
+      },
+
+      approveAcceptanceCommand: async (projectPath) => {
+        if (get().loadedProjectPath !== projectPath) return;
+        const command = get().plan?.acceptance?.command;
+        const swarmId = get().swarmId;
+        if (!command || !swarmId) return;
+
+        // Record the approval bound to THIS swarm run, then run it - the approval alone must
+        // never execute anything; execution still flows through the gated runAcceptance path.
+        const hash = await hashAcceptanceCommand(command);
+        const existing = get().acceptanceApprovals;
+        if (!isAcceptanceCommandApproved(swarmId, existing, hash)) {
+          // Approvals from a previous run (or another project's state) are dropped here.
+          const hashes = existing?.swarmId === swarmId ? existing.hashes : [];
+          set({ acceptanceApprovals: { swarmId, hashes: [...hashes, hash] } });
+          await get().saveSwarmState(projectPath);
+        }
+        await get().runAcceptance(projectPath);
       },
 
       escalateSwarm: async (projectPath, reason) => {
@@ -1319,6 +1432,8 @@ export const useSwarmStore = create<SwarmState>()(
           status: 'stopped',
           swarmActive: false,
           coordinatorState: 'idle',
+          // T2: the run is over - its approvals die with it.
+          acceptanceApprovals: null,
           activeAgents: get().activeAgents.map(a => ({ ...a, status: 'stopped' }))
         });
 
@@ -1590,6 +1705,8 @@ export const useSwarmStore = create<SwarmState>()(
               void get().runAcceptance(projectPath);
             }
             // 'running': the in-flight acceptance decides what happens next.
+            // T2 'awaiting_approval': Bridge is holding the command for a human decision - the
+            // Swarm room banner re-opens the approval dialog. Never run it unprompted.
             return;
           }
           set({ status: 'completed' });
