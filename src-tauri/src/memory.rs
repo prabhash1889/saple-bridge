@@ -50,6 +50,75 @@ pub fn get_memory_dir(project_path: &str) -> PathBuf {
     }
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let dest_path = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest_path)?;
+        } else {
+            fs::copy(&path, &dest_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Verify a freshly created snapshot actually captured every file under `src`:
+/// each source file must exist in the snapshot and be byte-for-byte identical.
+/// This proves a valid backup exists before any destructive step runs.
+fn verify_snapshot_copies_source(src: &Path, snapshot: &Path) -> Result<(), String> {
+    fn walk(src: &Path, snap: &Path, rel: &Path) -> Result<(), String> {
+        for entry in fs::read_dir(src).map_err(|e| format!("reading {}: {}", src.display(), e))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let child_rel = rel.join(entry.file_name());
+            if path.is_dir() {
+                walk(&path, &snap.join(entry.file_name()), &child_rel)?;
+            } else {
+                let snap_path = snap.join(entry.file_name());
+                let expected = fs::read(&path)
+                    .map_err(|e| format!("reading source {}: {}", path.display(), e))?;
+                let actual = fs::read(&snap_path).map_err(|e| {
+                    format!(
+                        "reading snapshot copy {} of {}: {}",
+                        snap_path.display(),
+                        child_rel.display(),
+                        e
+                    )
+                })?;
+                if actual != expected {
+                    return Err(format!(
+                        "snapshot copy of {} does not match the source file",
+                        child_rel.display()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    walk(src, snapshot, Path::new(""))
+}
+
+/// True if `dir` (recursively) contains at least one regular file.
+fn dir_contains_any_file(dir: &Path) -> bool {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if dir_contains_any_file(&path) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn now_iso() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -440,22 +509,7 @@ fn create_memory_snapshot_inner(project_path: String, name: String) -> Result<()
         fs::remove_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
     }
     fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
-    
-    fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
-        fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-        for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            let dest_path = dst.join(entry.file_name());
-            if path.is_dir() {
-                copy_dir_all(&path, &dest_path)?;
-            } else {
-                fs::copy(&path, &dest_path).map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
-    }
-    
+
     copy_dir_all(&memory_dir, &snapshot_dir)
 }
 
@@ -477,17 +531,30 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
     if !snapshot_dir.exists() {
         return Err(format!("Snapshot {} not found", name));
     }
-    
+
     let memory_dir = get_memory_dir(&project_path);
-    if memory_dir.exists() {
-        if let Ok(mut entries) = fs::read_dir(&memory_dir) {
-            if entries.next().is_some() {
-                let backup_name = format!("pre-restore-{}", now_iso().replace(':', "-"));
-                let _ = create_memory_snapshot_inner(project_path.clone(), backup_name);
-            }
-        }
+    if memory_dir.exists() && dir_contains_any_file(&memory_dir) {
+        // Safety snapshot FIRST. Live memory must not be touched until a verified
+        // valid backup exists; any failure here aborts the whole restore.
+        let backup_name = format!("pre-restore-{}", now_iso().replace(':', "-"));
+        create_memory_snapshot_inner(project_path.clone(), backup_name.clone()).map_err(|e| {
+            format!(
+                "Restore aborted: pre-restore safety snapshot failed ({}). Live memory was left untouched.",
+                e
+            )
+        })?;
+        let backup_dir = Path::new(&project_path)
+            .join(".saple")
+            .join("snapshots")
+            .join(&backup_name);
+        verify_snapshot_copies_source(&memory_dir, &backup_dir).map_err(|e| {
+            format!(
+                "Restore aborted: pre-restore safety snapshot could not be verified ({}). Live memory was left untouched.",
+                e
+            )
+        })?;
     }
-    
+
     let mode = get_memory_mode(&project_path);
     let write_dirs = if mode == "bridge-compatible" {
         vec![Path::new(&project_path).join(".bridgememory")]
@@ -499,22 +566,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
     } else {
         vec![Path::new(&project_path).join(".saple").join("memory")]
     };
-    
-    fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
-        fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-        for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            let dest_path = dst.join(entry.file_name());
-            if path.is_dir() {
-                copy_dir_all(&path, &dest_path)?;
-            } else {
-                fs::copy(&path, &dest_path).map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
-    }
-    
+
     for dir in write_dirs {
         if dir.exists() {
             fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1254,5 +1306,113 @@ Inline `[[inline-code]]` should not count either.
         let hay2: Vec<char> = "subtokenization".chars().collect();
         let needle2: Vec<char> = "token".chars().collect();
         assert_eq!(find_whole_word(&hay2, &needle2), None);
+    }
+
+    fn setup_restore_project(tag: &str) -> (PathBuf, PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-mem-restore-{}-{}-{}",
+            tag,
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let memory_dir = dir.join(".saple").join("memory").join("general");
+        fs::create_dir_all(&memory_dir).unwrap();
+        let note_path = memory_dir.join("note.md");
+        fs::write(&note_path, b"").unwrap();
+        let project_str = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        (dir.join(".saple/memory/general/note.md"), dir, project_str)
+    }
+
+    #[test]
+    fn restore_aborts_and_keeps_live_memory_when_backup_fails() {
+        let (note_path, project, project_str) = setup_restore_project("failbackup");
+
+        // Seed live memory and snapshot it as the restore target.
+        fs::write(&note_path, "snapshot content v1").unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string()).unwrap();
+
+        // Change live memory after the snapshot so we can prove it survives untouched.
+        fs::write(&note_path, "live content v2 - must survive").unwrap();
+
+        // Simulate an un-copyable file so the safety snapshot fails:
+        // on Windows, hold the note open with no sharing flags -> fs::copy hits a
+        // sharing violation. On Unix, make the source unreadable.
+        #[cfg(windows)]
+        let _lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&note_path)
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&note_path).unwrap().permissions();
+            perms.set_mode(0o000);
+            fs::set_permissions(&note_path, perms).unwrap();
+        }
+
+        let result =
+            restore_memory_snapshot_inner(project_str.clone(), "target".to_string());
+
+        #[cfg(windows)]
+        drop(_lock);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&note_path).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&note_path, perms).unwrap();
+        }
+
+        let err = result.expect_err("restore must abort when the pre-restore backup fails");
+        assert!(
+            err.contains("pre-restore safety snapshot failed"),
+            "got: {}",
+            err
+        );
+        // Live memory is completely untouched.
+        let live = fs::read_to_string(&note_path).unwrap();
+        assert_eq!(live, "live content v2 - must survive");
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn restore_succeeds_after_valid_backup_end_to_end() {
+        let (note_path, project, project_str) = setup_restore_project("happybackup");
+
+        // Live state that will be snapshotted as the restore target.
+        fs::write(&note_path, "snapshot content v1").unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string()).unwrap();
+
+        // Diverge live memory; restore must bring back v1 and keep v2 in a pre-restore backup.
+        fs::write(&note_path, "live content v2").unwrap();
+
+        restore_memory_snapshot_inner(project_str, "target".to_string())
+            .expect("restore should succeed after a valid pre-restore backup");
+
+        let restored = fs::read_to_string(&note_path).unwrap();
+        assert_eq!(restored, "snapshot content v1");
+
+        // A verified pre-restore backup of the diverged live state exists.
+        let snapshots_dir = project.join(".saple").join("snapshots");
+        let backups: Vec<PathBuf> = fs::read_dir(&snapshots_dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with("pre-restore-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "expected exactly one pre-restore backup");
+        let backed_up = fs::read_to_string(backups[0].join("general").join("note.md")).unwrap();
+        assert_eq!(backed_up, "live content v2");
+
+        let _ = fs::remove_dir_all(&project);
     }
 }
