@@ -695,6 +695,7 @@ fn read_memory_file_inner(project_path: String, file_path: String) -> Result<Str
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn save_memory_node(
     project_path: String,
@@ -733,6 +734,7 @@ fn validate_note_path_component(value: &str, what: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn save_memory_node_inner(
     project_path: String,
     id: String,

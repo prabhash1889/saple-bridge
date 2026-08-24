@@ -3,6 +3,7 @@
 // into an agent terminal. The agent resumes via the structured rejected-state
 // transition (task/session reload) or explicit operator action in its pane.
 
+// eslint-disable-next-line no-control-regex -- matching control characters is exactly the purpose of this pattern
 const UNSAFE_PTY_PATTERN = /\$\(|`|&&|[\0-\x08\x0B\x0C\x0E-\x1F\x7F]/;
 
 /**

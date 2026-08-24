@@ -378,14 +378,11 @@ fn restrict_discovery_record_to_owner(path: &std::path::Path) {
 /// True when a discovery record with this content was written by a process other than ours
 /// (including unreadable or pid-less records - those can only mislead June).
 fn is_stale_record(content: &str) -> bool {
-    match serde_json::from_str::<Value>(content)
+    serde_json::from_str::<Value>(content)
         .ok()
         .and_then(|v| v["pid"].as_u64())
         .map(|p| p as u32)
-    {
-        Some(pid) => pid != std::process::id(),
-        None => true,
-    }
+        .is_none_or(|pid| pid != std::process::id())
 }
 
 /// Remove a discovery record left behind by a dead previous run. Called unconditionally at
@@ -393,15 +390,12 @@ fn is_stale_record(content: &str) -> bool {
 /// record is re-written right after by [`start`].
 pub fn remove_stale_discovery_record() {
     let Some(path) = discovery_path() else { return };
-    match std::fs::read_to_string(&path) {
-        // Absent/unreadable records are useless for June but harmless; leave removal of
-        // those to the clean-shutdown path rather than deleting files we cannot parse.
-        Ok(content) => {
-            if is_stale_record(&content) {
-                let _ = std::fs::remove_file(&path);
-            }
+    // Absent/unreadable records are useless for June but harmless; leave removal of
+    // those to the clean-shutdown path rather than deleting files we cannot parse.
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if is_stale_record(&content) {
+            let _ = std::fs::remove_file(&path);
         }
-        Err(_) => {}
     }
 }
 

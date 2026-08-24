@@ -9,8 +9,9 @@ use std::sync::Mutex;
 /// this registry is the anchor the privileged-command trust boundary (sub-phase 1B)
 /// will check against. Roots enter it only through two paths:
 ///   * a successful native directory selection (`select_directory` in `lib.rs`), or
-///   * validated restoration of a previously approved project — an existing,
+///   * validated restoration of a previously approved project - an existing,
 ///     readable directory handed back from persisted recents.
+///
 /// Raw renderer strings are never trusted as trust anchors; everything is
 /// canonicalized before it is stored or compared.
 pub struct ProjectRootRegistry {
