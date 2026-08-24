@@ -157,6 +157,7 @@ pub fn run() {
             git::git_commit,
             git::git_list_branches,
             git::git_checkout_branch,
+            git::ensure_saple_git_excluded,
             review::create_review_record,
             review::read_review_record,
             review::submit_review_decision,
