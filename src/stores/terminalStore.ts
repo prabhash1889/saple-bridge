@@ -126,6 +126,14 @@ const MAX_COMMAND_BLOCKS = 20;
 const outputListeners = new Map<string, Set<TerminalOutputListener>>();
 const pendingOutputChunks = new Map<string, string[]>();
 
+// Phase 3 spawn tombstones: `addPane`/`splitPane` return before `spawn_pty` resolves, so a pane
+// closed in that window would leave Rust spawning a PTY child nobody owns (an orphan process
+// with a registry entry that nothing will ever kill). Panes removed while their spawn is in
+// flight are recorded here; when the spawn settles, the just-registered session is killed
+// immediately.
+const spawningPanes = new Set<string>();
+const spawnTombstones = new Set<string>();
+
 // Live terminal output is kept in plain module-level maps rather than reactive Zustand
 // state. xterm panes render via the `subscribeOutput` listener path (see TerminalPane),
 // and the only readers of the buffer/sequence are TerminalPane's mount-time replay
@@ -397,7 +405,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       if (ptyListenerStartPromise) return ptyListenerStartPromise;
 
       ptyListenerStartPromise = (async () => {
-      ptyOutputUnlisten = await listen<{ id: string; data: string }>('pty-output', (event) => {
+        // Register BOTH listeners before marking initialization complete. If the second
+        // registration fails, the first is unwound so a retry doesn't double-register output
+        // handling - and `ptyOutputListenerStarted` only flips once both are live.
+        try {
+          ptyOutputUnlisten = await listen<{ id: string; data: string }>('pty-output', (event) => {
         const { id, data } = event.payload;
         get().appendOutput(id, data);
 
@@ -513,8 +525,22 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
             recordPendingTaskReview(projectPath, id); // applied by loadTasks when the project opens (P13)
           }
         }
-      });
-      set({ ptyOutputListenerStarted: true });
+          });
+        } catch (err) {
+          // A registration failed: unwind the first so a retry can't double-deliver output,
+          // and leave `ptyOutputListenerStarted` false - initialization never happened.
+          if (ptyOutputUnlisten) {
+            try {
+              ptyOutputUnlisten();
+            } catch {
+              // already gone
+            }
+            ptyOutputUnlisten = null;
+          }
+          ptyExitUnlisten = null;
+          throw err;
+        }
+        set({ ptyOutputListenerStarted: true });
       })();
 
       try {
@@ -610,9 +636,23 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         return id;
       }
 
-      invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand, sessionUuid: claudeSessionId, interactivePrompt }).catch((err) => {
-        failPaneSpawn(id, err);
-      });
+      // Phase 3: mark the spawn in flight so a concurrent removePane can tombstone it, and
+      // settle the promise explicitly - a pane closed before spawn_pty resolved gets its
+      // freshly-registered PTY killed right away instead of leaking an orphaned child.
+      spawningPanes.add(id);
+      const settleSpawn = (err?: unknown) => {
+        spawningPanes.delete(id);
+        if (spawnTombstones.has(id)) {
+          spawnTombstones.delete(id);
+          void invoke('kill_pty', { id }).catch(() => {});
+          return;
+        }
+        if (err !== undefined) failPaneSpawn(id, err);
+      };
+      invoke('spawn_pty', { id, cwd, env: {}, aiProvider, model, promptFile, customCommand, sessionUuid: claudeSessionId, interactivePrompt }).then(
+        () => settleSpawn(),
+        (err) => settleSpawn(err),
+      );
 
       captureLayout(workspaceKey, workspacePath);
       return id;
@@ -678,6 +718,17 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         return id;
       }
 
+      // Phase 3: same tombstoned spawn handling as addPane.
+      spawningPanes.add(id);
+      const settleSpawn = (err?: unknown) => {
+        spawningPanes.delete(id);
+        if (spawnTombstones.has(id)) {
+          spawnTombstones.delete(id);
+          void invoke('kill_pty', { id }).catch(() => {});
+          return;
+        }
+        if (err !== undefined) failPaneSpawn(id, err);
+      };
       invoke('spawn_pty', {
         id,
         cwd: newSession.cwd,
@@ -686,9 +737,10 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         model: newSession.model,
         customCommand: newSession.customCommand,
         sessionUuid: claudeSessionId,
-      }).catch((err) => {
-        failPaneSpawn(id, err);
-      });
+      }).then(
+        () => settleSpawn(),
+        (err) => settleSpawn(err),
+      );
 
       captureLayout(workspaceKey, workspacePath);
       return id;
@@ -746,9 +798,18 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       const session = get().sessions[paneId];
       const workspaceKey = getWorkspaceKeyForPane(session);
 
+      // Phase 3 spawn tombstone: the PTY child may not exist yet (spawn_pty still in flight),
+      // so kill_pty below would miss it entirely. Record the tombstone; the moment the spawn
+      // settles it kills the just-registered session instead of orphaning the process.
+      if (spawningPanes.has(paneId)) {
+        spawnTombstones.add(paneId);
+      }
+
       try {
         await invoke('kill_pty', { id: paneId });
       } catch (err) {
+        // Expected when the spawn is still in flight (nothing registered yet) - the
+        // tombstone above covers that case.
         console.error(`Error killing PTY session ${paneId}:`, err);
       }
 

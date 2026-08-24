@@ -209,6 +209,9 @@ interface SwarmState {
   // T2: record a human approval for the plan's current acceptance command (scoped to this swarm
   // run) and run it. Invoked by the approval dialog's Confirm.
   approveAcceptanceCommand: (projectPath: string) => Promise<void>;
+  // Phase 3 cancel control: abort an in-flight acceptance run through its Rust cancel token.
+  // No-op when nothing is running.
+  cancelAcceptance: () => Promise<void>;
   // Phase 5: stop looping and hand the swarm to a human with a structured report (state +
   // `.saple/swarm/escalation.json`). The swarm parks as 'failed'; relaunching the coordinator or
   // editing the plan are the existing manual paths out until the Phase 7 escalation panel.
@@ -561,17 +564,25 @@ const pumpDigests = () => {
     useSwarmStore.setState({ coordinatorState: 'digesting' });
     try {
       // Bracketed paste so the TUI treats embedded newlines as pasted text; Enter follows as its
-      // own keypress (mirrors the Rust-side interactive prompt delivery).
-      await invoke('write_pty', { id: paneId, data: `\u001b[200~${digest}\u001b[201~` });
+      // own keypress (mirrors the Rust-side interactive prompt delivery). write_pty reports
+      // `accepted: false` when the pane's input queue is full and the bytes were dropped -
+      // structured payloads must never be silently lost, so a drop keeps the digest queued.
+      const paste = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: `\u001b[200~${digest}\u001b[201~` });
+      if (!paste?.accepted) {
+        scheduleDigestRetry();
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, DIGEST_ENTER_DELAY_MS));
-      await invoke('write_pty', { id: paneId, data: '\r' });
+      const enter = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: '\r' });
+      if (enter?.accepted) {
+        // Delivered (paste AND submit both landed): pop only now.
+        useSwarmStore.setState((s) => ({ pendingDigests: s.pendingDigests.slice(1) }));
+      }
     } catch (error) {
       console.error('Failed to inject digest into coordinator PTY:', error);
       scheduleDigestRetry(); // keep the digest queued; try again after the next quiet window
       return;
     }
-    // Delivered: pop only now.
-    useSwarmStore.setState((s) => ({ pendingDigests: s.pendingDigests.slice(1) }));
     coordinatorLastOutputAt = Date.now(); // injection counts as activity: wait for quiet again
     scheduleDigestRetry();
   };
@@ -682,6 +693,9 @@ const requestAcceptanceApproval = (projectPath: string, command: string) => {
 // re-run that re-reads fresh state.
 let agentScanInFlight = false;
 let agentScanQueued = false;
+
+// Phase 3 cancel control: the Rust cancel token of the acceptance run currently in flight.
+let activeAcceptanceCancelToken: string | null = null;
 
 const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
   const { updateAgentStatus } = useSwarmStore.getState();
@@ -1448,7 +1462,6 @@ export const useSwarmStore = create<SwarmState>()(
         // re-execute the (approved) command.
         if (!command || get().acceptanceStatus === 'running' || get().acceptanceStatus === 'passed') return;
         const coordinator = get().activeAgents.find((a) => a.role === 'coordinator');
-
         // T2 approval gate. An acceptance command the human has not approved in THIS swarm run
         // is never sent to the backend runner: park the swarm and ask. The dialog carries the
         // full command, cwd, source, and timeout; Confirm records a run-scoped approval.
@@ -1463,18 +1476,23 @@ export const useSwarmStore = create<SwarmState>()(
         set({ acceptanceStatus: 'running' });
         await get().saveSwarmState(projectPath);
 
+        // Phase 3: mint a cancel token for THIS run so the operator can stop a hung command.
+        activeAcceptanceCancelToken = createId('cancel');
+
         let exitCode: number | null = null;
         let output = '';
         try {
           const result = await invoke<{ exitCode: number | null; output: string; timedOut: boolean }>(
             'run_acceptance_command',
-            { projectPath, commandStr: command, commandHash },
+            { projectPath, commandStr: command, commandHash, cancelToken: activeAcceptanceCancelToken },
           );
           exitCode = result.timedOut ? null : result.exitCode;
           output = result.output;
         } catch (error) {
           // Bridge couldn't even run it (bad shell, dead project dir): a failure, not a pass.
           output = `Bridge could not run the acceptance command: ${error}`;
+        } finally {
+          activeAcceptanceCancelToken = null;
         }
 
         const entries = await collectDigestEntries(projectPath);
@@ -1524,6 +1542,16 @@ export const useSwarmStore = create<SwarmState>()(
         }
         const digest = buildAcceptanceDigest(entries, { ...digestOpts, passed: false });
         await get().notifyCoordinator(projectPath, digest);
+      },
+
+      cancelAcceptance: async () => {
+        const token = activeAcceptanceCancelToken;
+        if (!token) return; // nothing in flight
+        try {
+          await invoke('cancel_run_command', { cancelToken: token });
+        } catch (error) {
+          console.error('Failed to cancel acceptance run:', error);
+        }
       },
 
       approveAcceptanceCommand: async (projectPath) => {

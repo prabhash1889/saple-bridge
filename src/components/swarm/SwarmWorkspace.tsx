@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send, Terminal as TerminalIcon, UserPlus, X } from 'lucide-react';
+import { Play, Pause, Square, Shield, Edit, Bot, CheckCircle, Clock, Settings, Layers, LayoutGrid, Activity, AlertTriangle, Send, Terminal as TerminalIcon, UserPlus, X, XCircle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSwarmStore } from '../../stores/swarmStore';
 import type { WorkerRequest } from '../../stores/swarmStore';
@@ -544,6 +544,30 @@ export const SwarmWorkspace: React.FC = () => {
                   <button onClick={handleReviewAcceptance} style={btnRequestApproveStyle}>
                     <CheckCircle size={12} />
                     <span>Review &amp; approve</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Phase 3: a running acceptance command can be cancelled by the operator - the
+                Rust-side cancel flag kills the command's whole process tree. */}
+            {acceptanceStatus === 'running' && (
+              <div style={approvalPanelStyle}>
+                <div style={requestsPanelHeaderStyle}>
+                  <Shield size={13} className="fg-accent" />
+                  <span>Acceptance running</span>
+                </div>
+                <div style={requestCardStyle}>
+                  <div style={requestBodyStyle}>
+                    <div style={requestMetaStyle}>
+                      <span>Verifying the mission's completion command...</span>
+                      {acceptanceCommand && <span> · </span>}
+                      {acceptanceCommand && <span><code>{acceptanceCommand}</code></span>}
+                    </div>
+                  </div>
+                  <button onClick={() => void useSwarmStore.getState().cancelAcceptance()} style={btnRequestApproveStyle}>
+                    <XCircle size={12} />
+                    <span>Cancel</span>
                   </button>
                 </div>
               </div>

@@ -7,98 +7,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-// On Windows, killing a PTY's immediate child (powershell.exe) with TerminateProcess does NOT
-// terminate the processes it spawned — the AI CLI (node/claude/python/…) and its own children
-// are orphaned and keep holding RAM across open/close cycles. We fix this by placing each shell
-// in a Job Object configured with KILL_ON_JOB_CLOSE: terminating the job (or just dropping its
-// last handle) kills the entire process subtree. Descendants the shell spawns *after* assignment
-// inherit job membership automatically (Win8+), and the shell needs hundreds of ms to start its
-// CLI, so the assign-after-spawn race is not a problem in practice.
-#[cfg(windows)]
-mod proc_tree {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, TerminateJobObject,
-        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
 
-    /// A Job Object owning a process subtree. `terminate()` kills the tree eagerly; dropping the
-    /// handle kills it as a safety net (KILL_ON_JOB_CLOSE). Stored as `isize` so it's trivially
-    /// `Send`/`Sync` (it's just an OS handle).
-    pub struct JobObject(isize);
-
-    unsafe impl Send for JobObject {}
-    unsafe impl Sync for JobObject {}
-
-    impl JobObject {
-        /// Create a kill-on-close job and assign `pid` (and thus its future descendants) to it.
-        /// Returns `None` if any step fails — callers then fall back to killing the child directly.
-        pub fn attach(pid: u32) -> Option<JobObject> {
-            unsafe {
-                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if job.is_null() {
-                    return None;
-                }
-                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                if SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                ) == 0
-                {
-                    CloseHandle(job);
-                    return None;
-                }
-                let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
-                if process.is_null() {
-                    CloseHandle(job);
-                    return None;
-                }
-                let assigned = AssignProcessToJobObject(job, process);
-                CloseHandle(process);
-                if assigned == 0 {
-                    CloseHandle(job);
-                    return None;
-                }
-                Some(JobObject(job as isize))
-            }
-        }
-
-        /// Kill every process in the job (shell + all descendants) immediately.
-        pub fn terminate(&self) {
-            unsafe {
-                TerminateJobObject(self.0 as _, 1);
-            }
-        }
-    }
-
-    impl Drop for JobObject {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0 as _);
-            }
-        }
-    }
-}
-
-/// Inert placeholder on non-Windows: Unix process cleanup goes through the existing
-/// `child.kill()` path. `attach` never produces a job, so `terminate()` is unused.
-#[cfg(not(windows))]
-mod proc_tree {
-    pub struct JobObject;
-
-    impl JobObject {
-        pub fn attach(_pid: u32) -> Option<JobObject> {
-            None
-        }
-
-        pub fn terminate(&self) {}
-    }
-}
+// Process-tree cleanup moved to the shared proc_tree module (Phase 3): review verification and
+// acceptance runners need the same Job Object / process-group teardown as PTY panes.
+use crate::proc_tree::JobObject;
 
 // How often the emitter thread coalesces PTY output before sending a `pty-output`
 // event to the webview. Without this, a chatty process (AI CLIs streaming tokens,
@@ -135,7 +47,7 @@ pub struct PtySession {
     // Windows: Job Object owning the shell + its descendant process tree, so closing a pane
     // kills the AI CLI (and its children), not just powershell.exe. `None` on non-Windows or
     // if job assignment failed — in which case we fall back to `child.kill()` alone.
-    pub job: Option<proc_tree::JobObject>,
+    pub job: Option<crate::proc_tree::JobObject>,
 }
 
 pub struct PtyRegistry {
@@ -419,7 +331,7 @@ pub async fn spawn_pty(
         PtyPair,
         Box<dyn Child + Send + Sync>,
         Box<dyn Read + Send>,
-        Option<proc_tree::JobObject>,
+        Option<crate::proc_tree::JobObject>,
         Option<String>,
     );
     let (writer, pair, child, mut reader, job, injected_prompt) =
@@ -654,7 +566,7 @@ pub async fn spawn_pty(
     // Put the shell (and the descendants it will spawn) into a kill-on-close Job Object so
     // closing the pane tears down the whole process tree, not just powershell.exe. Done right
     // after spawn, before the shell has had time to launch the AI CLI. No-op on non-Windows.
-    let job = child.process_id().and_then(proc_tree::JobObject::attach);
+    let job = child.process_id().and_then(crate::proc_tree::JobObject::attach);
 
     // 6. Split reader & writer
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -855,12 +767,22 @@ pub async fn spawn_pty(
     Ok(())
 }
 
+/// Outcome of a `write_pty` call (Phase 3). `accepted: false` means the child stopped draining
+/// its stdin and the 256-deep input queue is FULL - this input was DROPPED, not queued.
+/// Structured payloads (digests, prompts) must check it and re-deliver; interactive keystrokes
+/// can ignore it exactly as they ignored the old silent drop.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyWriteOutcome {
+    pub accepted: bool,
+}
+
 #[tauri::command]
 pub async fn write_pty(
     id: String,
     data: String,
     registry: State<'_, PtyRegistry>,
-) -> Result<(), String> {
+) -> Result<PtyWriteOutcome, String> {
     // Clone the sender under the lock, then release it — we never block while holding the mutex,
     // and the actual write happens on the per-session writer thread. This is what lets a wedged
     // child (one that stopped reading its stdin) still be closed: a stuck write can no longer pin
@@ -877,11 +799,13 @@ pub async fn write_pty(
             .ok_or_else(|| format!("PTY session {} is closing", id))?
     };
 
-    // `try_send`, never `send`: if the child has stalled and the 256-deep buffer is full, drop the
-    // input rather than block. A wedged child wouldn't read it anyway, and never blocking here is
-    // what keeps the UI responsive.
+    // `try_send`, never `send`: if the child has stalled and the 256-deep buffer is full, drop
+    // the input rather than block - but REPORT the drop instead of pretending nothing happened.
+    // A wedged child wouldn't read the bytes anyway, and never blocking here is what keeps the
+    // UI responsive and kill_pty able to run.
     match writer_tx.try_send(data.into_bytes()) {
-        Ok(()) | Err(mpsc::TrySendError::Full(_)) => Ok(()),
+        Ok(()) => Ok(PtyWriteOutcome { accepted: true }),
+        Err(mpsc::TrySendError::Full(_)) => Ok(PtyWriteOutcome { accepted: false }),
         Err(mpsc::TrySendError::Disconnected(_)) => {
             Err(format!("PTY session {} writer closed", id))
         }

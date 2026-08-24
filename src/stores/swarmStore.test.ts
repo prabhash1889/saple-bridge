@@ -1007,6 +1007,8 @@ describe('acceptance-command approval gate (T2)', () => {
       projectPath: PROJECT,
       commandStr: 'npm test',
       commandHash: NPM_TEST_HASH,
+      // Phase 3: each run mints a cancel token so the operator can stop a hung command.
+      cancelToken: expect.any(String),
     });
   });
 

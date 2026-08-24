@@ -124,6 +124,7 @@ export const ReviewWorkspace: React.FC = () => {
   const [submittingDecision, setSubmittingDecision] = useState(false);
 
   const [verificationCmd, setVerificationCmd] = useState('npm test');
+  const [verificationCancelToken, setVerificationCancelToken] = useState<string | null>(null);
   // Phase 3: once the reviewer types their own command, background record refreshes (which
   // produce a fresh activeRecord object and re-run the auto-detect effect below) must never
   // clobber it. Cleared when the task changes.
@@ -417,13 +418,18 @@ export const ReviewWorkspace: React.FC = () => {
   // visibility; never auto-run a command sourced from project files.
   const handleRunVerification = async () => {
     if (!currentProjectPath || !activeTaskId) return;
+    // Phase 3 cancel control: mint a per-run token so the operator can stop a hung command
+    // through the Rust-side cancel flag (which kills the whole process tree).
+    const cancelToken = crypto.randomUUID();
     setRunningVerification(true);
     setVerificationResult(null);
+    setVerificationCancelToken(cancelToken);
     try {
       const output = await invoke<string>('run_verification_command', {
         projectPath: currentProjectPath,
         taskId: activeTaskId,
         commandStr: verificationCmd,
+        cancelToken,
       });
       setVerificationResult(output);
       // Reload review record to update test output in store
@@ -432,6 +438,16 @@ export const ReviewWorkspace: React.FC = () => {
       setVerificationResult(`Execution failed: ${err}`);
     } finally {
       setRunningVerification(false);
+      setVerificationCancelToken(null);
+    }
+  };
+
+  const handleCancelVerification = async () => {
+    if (!verificationCancelToken) return;
+    try {
+      await invoke('cancel_run_command', { cancelToken: verificationCancelToken });
+    } catch (err) {
+      useNotificationStore.getState().error('Failed to cancel verification', String(err));
     }
   };
 
@@ -817,6 +833,15 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                         </>
                       )}
                     </button>
+                    {runningVerification && verificationCancelToken && (
+                      <button
+                        className="diff-subtab-btn"
+                        onClick={() => void handleCancelVerification()}
+                        title="Stop the running verification command (kills its whole process tree)"
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
 
                   <div className="test-output-terminal">
