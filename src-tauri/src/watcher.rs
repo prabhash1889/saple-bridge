@@ -274,12 +274,16 @@ mod tests {
             swarm_rel_path(dir, Path::new("/home/u/proj/.saple/swarm/verdicts/fe_auth.json")).as_deref(),
             Some("verdicts/fe_auth.json")
         );
-        // Windows separators normalize to forward slashes.
-        let win = Path::new(r"C:\proj\.saple\swarm");
-        assert_eq!(
-            swarm_rel_path(win, Path::new(r"C:\proj\.saple\swarm\mailbox\a.md")).as_deref(),
-            Some("mailbox/a.md")
-        );
+        // Backslash separators normalize to forward slashes - a Windows-only property,
+        // since on Unix a `\` is just a filename character.
+        #[cfg(windows)]
+        {
+            let win = Path::new(r"C:\proj\.saple\swarm");
+            assert_eq!(
+                swarm_rel_path(win, Path::new(r"C:\proj\.saple\swarm\mailbox\a.md")).as_deref(),
+                Some("mailbox/a.md")
+            );
+        }
         // The dir itself and paths outside it yield nothing.
         assert_eq!(swarm_rel_path(dir, dir), None);
         assert_eq!(swarm_rel_path(dir, Path::new("/home/u/proj/.saple/tasks.json")), None);
