@@ -223,7 +223,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
     void useTerminalStore.getState().closeWorkspaceTerminals(id);
     // Same for its embedded-browser webviews and persisted browser session.
     void useBrowserStore.getState().closeWorkspaceBrowser(id);
+    const closing = useProjectStore.getState().openWorkspaces.find((w) => w.id === id);
     closeWorkspace(id);
+    // Drop this instance's reference on the Rust-side approved-roots registry. Rust
+    // keeps the root while any other open instance still uses it; failures (already
+    // gone, never registered) are safe to ignore here.
+    if (closing) {
+      void invoke('release_project_root', { path: closing.path }).catch(() => {});
+    }
   };
 
   const handleToggleBrowser = () => {

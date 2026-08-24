@@ -14,15 +14,26 @@ mod files;
 mod diagnostics;
 mod process_ext;
 mod fs_lock;
+mod project_roots;
 mod watcher;
 
+use project_roots::ProjectRootRegistry;
+
 #[tauri::command]
-fn select_directory() -> Option<String> {
+fn select_directory(registry: tauri::State<ProjectRootRegistry>) -> Option<String> {
     let folder = rfd::FileDialog::new()
         .set_title("Select Project Directory")
         .pick_folder();
-        
-    folder.map(|path| path.to_string_lossy().to_string())
+
+    // The native dialog is one of only two ways a root becomes trusted. Register
+    // canonically before handing the path back to the renderer; on any registration
+    // failure the selection is treated as cancelled rather than returned untrusted.
+    folder.and_then(|path| {
+        registry
+            .register_root(&path)
+            .ok()
+            .map(|_| path.to_string_lossy().to_string())
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,6 +80,10 @@ pub fn run() {
             // June control endpoint: a per-process token, then start the loopback server only if the
             // user opted in (default off, no open port). See june_control.rs.
             app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
+            // Registry of approved project roots (canonical absolute paths). Lives only in
+            // Rust memory: roots are added by native directory selection or validated
+            // restoration, and privileged commands will verify against it (sub-phase 1B).
+            app.manage(project_roots::ProjectRootRegistry::new());
             june_control::start(app.handle().clone());
             Ok(())
         })
@@ -97,6 +112,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             select_directory,
+            project_roots::register_project_root,
+            project_roots::release_project_root,
+            project_roots::list_project_roots,
             pty::spawn_pty,
             claude_context::get_claude_context_usage,
             pty::write_pty,
