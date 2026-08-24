@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GitPullRequest, RotateCcw, CheckCircle2, AlertTriangle, Play, RefreshCw, GitBranch
 } from 'lucide-react';
@@ -98,6 +98,7 @@ export const ReviewWorkspace: React.FC = () => {
     reviews,
     activeTaskId,
     loading: reviewLoading,
+    corruptState: reviewCorruptState,
     loadReviewRecord,
     createReviewRecord,
     refreshReviewRecord,
@@ -123,6 +124,10 @@ export const ReviewWorkspace: React.FC = () => {
   const [submittingDecision, setSubmittingDecision] = useState(false);
 
   const [verificationCmd, setVerificationCmd] = useState('npm test');
+  // Phase 3: once the reviewer types their own command, background record refreshes (which
+  // produce a fresh activeRecord object and re-run the auto-detect effect below) must never
+  // clobber it. Cleared when the task changes.
+  const verificationCmdEditedRef = useRef(false);
   const [runningVerification, setRunningVerification] = useState(false);
   const [verificationResult, setVerificationResult] = useState<string | null>(null);
   const [memoryCreated, setMemoryCreated] = useState(false);
@@ -157,9 +162,11 @@ export const ReviewWorkspace: React.FC = () => {
     const timeoutId = window.setTimeout(() => {
       if (cancelled) return;
       loadReviewRecord(currentProjectPath, activeTaskId)
-        .catch(async () => {
+        .then(async (outcome) => {
           if (cancelled) return;
-          // If not found, attempt to auto-create review record from session
+          // Only a genuinely MISSING record is auto-created. A corrupt one keeps its flag in
+          // the store and surfaces recovery UI below - recreating would erase the evidence.
+          if (outcome !== 'missing') return;
           if (activeTaskSessionId) {
             try {
               await createReviewRecord(currentProjectPath, activeTaskId, activeTaskSessionId);
@@ -167,7 +174,8 @@ export const ReviewWorkspace: React.FC = () => {
               console.error("Failed to auto-create review record:", err);
             }
           }
-        });
+        })
+        .catch((err) => console.error('Failed to load review record:', err));
     }, 0);
 
     // Reset state immediately so the room can paint before git/review work starts.
@@ -181,6 +189,7 @@ export const ReviewWorkspace: React.FC = () => {
     setMemoryCreated(false);
     setRejecting(false);
     setNotes('');
+    verificationCmdEditedRef.current = false;
 
     return () => {
       cancelled = true;
@@ -258,7 +267,7 @@ export const ReviewWorkspace: React.FC = () => {
     useProjectStore((state) => state.workspaceConfig?.verificationPresets) ?? NO_PRESETS;
 
   useEffect(() => {
-    if (!activeRecord) return;
+    if (!activeRecord || verificationCmdEditedRef.current) return;
     if (verificationPresets.length > 0) {
       setVerificationCmd(verificationPresets[0]);
       return;
@@ -386,10 +395,10 @@ export const ReviewWorkspace: React.FC = () => {
   };
 
   const handleCommit = async () => {
-    if (!currentProjectPath || !commitMessage.trim() || stagedCount === 0) return;
+    if (!currentProjectPath || !activeTaskId || !commitMessage.trim() || stagedCount === 0) return;
     setCommitting(true);
     try {
-      const summary = await commitStaged(currentProjectPath, commitMessage.trim());
+      const summary = await commitStaged(currentProjectPath, activeTaskId, commitMessage.trim());
       useNotificationStore.getState().success('Committed staged changes.', summary);
       setCommitMessage('');
       // Re-pull git status so committed files drop out of the changed list.
@@ -632,6 +641,22 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
             </div>
           ) : reviewLoading && !activeRecord ? (
             <div className="compact-empty">Loading review record...</div>
+          ) : reviewCorruptState ? (
+            // Corrupt review record: fail closed with recovery guidance. The preserved bytes
+            // sit next to the record; nothing here recreates or overwrites them.
+            <div className="warning-banner">
+              <div className="review-verify-heading">
+                <AlertTriangle size={14} />
+                <span>Review record is corrupt</span>
+              </div>
+              <span>
+                {reviewCorruptState.error}
+                <br />
+                Fix the file at <code>{reviewCorruptState.filePath}</code> (a preserved copy of the
+                original bytes is at <code>{reviewCorruptState.backupPath || 'n/a'}</code>) and
+                reload, or delete it explicitly to start a fresh review.
+              </span>
+            </div>
           ) : (
             <>
               <div className="review-detail-header">
@@ -771,7 +796,10 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
                     <input
                       type="text"
                       value={verificationCmd}
-                      onChange={(e) => setVerificationCmd(e.target.value)}
+                      onChange={(e) => {
+                        verificationCmdEditedRef.current = true;
+                        setVerificationCmd(e.target.value);
+                      }}
                       placeholder="e.g. npm test, cargo check"
                       disabled={runningVerification}
                     />

@@ -4,12 +4,40 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::project::{get_project_file_path, now_iso};
-use crate::git::{git_status_inner, GitFileStatus};
+use crate::git::{git_status_inner, git_tree_identity_inner, GitFileStatus, GitTreeIdentity};
 use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_VERIFICATION_OUTPUT_BYTES: usize = 800_000;
+
+/// The exact repository state a review's evidence was captured against (Phase 3). Approval
+/// re-captures this identity and refuses when anything differs, so a review can never certify
+/// work the reviewer did not see. `default` keeps pre-Phase-3 records deserializable; those
+/// carry no evidence and stay approvable (nothing to compare against).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewedEvidence {
+    pub head_commit: Option<String>,
+    pub committed_at: Option<String>,
+    pub status_hash: String,
+}
+
+impl From<GitTreeIdentity> for ReviewedEvidence {
+    fn from(id: GitTreeIdentity) -> Self {
+        ReviewedEvidence {
+            head_commit: id.head_commit,
+            committed_at: id.committed_at,
+            status_hash: id.status_hash,
+        }
+    }
+}
+
+fn capture_reviewed_evidence(project_path: &str) -> Option<ReviewedEvidence> {
+    git_tree_identity_inner(project_path.to_string())
+        .ok()
+        .map(Into::into)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +54,9 @@ pub struct ReviewRecord {
     /// before this field existed deserializable.
     #[serde(default)]
     pub viewed_files: Vec<String>,
+    /// Tree identity the diffs/test output were captured against. `None` on legacy records.
+    #[serde(default)]
+    pub reviewed_tree: Option<ReviewedEvidence>,
     pub test_output: Option<String>,
     pub notes: Option<String>,
     pub created_at: String,
@@ -96,6 +127,22 @@ fn canonical_test_output(project_path: &str, run_id: &str) -> Option<String> {
         .and_then(|full| fs::read_to_string(full).ok())
 }
 
+/// Error flavor from loading a review record: real corruption (bytes preserved + path flagged)
+/// versus any other read/decode failure. Callers must never auto-create over `Corrupt`.
+enum ReviewLoadError {
+    Corrupt { error: String, backup_path: String },
+    Other(String),
+}
+
+impl From<ReviewLoadError> for String {
+    fn from(e: ReviewLoadError) -> String {
+        match e {
+            ReviewLoadError::Corrupt { error, .. } => error,
+            ReviewLoadError::Other(m) => m,
+        }
+    }
+}
+
 fn create_review_record_inner(
     project_path: String,
     task_id: String,
@@ -108,19 +155,27 @@ fn create_review_record_inner(
 
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
 
-    // Try to load existing review
+    // Try to load existing review. A corrupt record must never be recreated over: the loader
+    // already preserved its bytes and flagged the path, so surface the error and fail closed.
     if review_file_path.exists() {
-        let content = fs::read_to_string(&review_file_path).map_err(|e| e.to_string())?;
-        if let Ok(mut record) = serde_json::from_str::<ReviewRecord>(&content) {
-            // Update files lists
-            if let Ok(files) = git_status_inner(project_path.clone()) {
-                record.changed_files = files;
+        let mut record = match load_review_record(&review_file_path) {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(format!(
+                    "Existing review record is unreadable; refusing to overwrite it: {}",
+                    String::from(e)
+                ))
             }
-            record.updated_at = now_iso();
-            let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-            crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
-            return Ok(record);
+        };
+        // Update files lists and re-capture evidence - a refresh certifies the CURRENT tree.
+        if let Ok(files) = git_status_inner(project_path.clone()) {
+            record.changed_files = files;
         }
+        record.reviewed_tree = capture_reviewed_evidence(&project_path);
+        record.updated_at = now_iso();
+        let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+        return Ok(record);
     }
 
     // Otherwise, create a new one
@@ -176,11 +231,11 @@ fn create_review_record_inner(
         }
     }
 
-    // 3. Get changed files
+    // 3. Get changed files.
     let changed_files = git_status_inner(project_path.clone()).unwrap_or_default();
     
     let now = now_iso();
-    let record = ReviewRecord {
+    let mut record = ReviewRecord {
         task_id,
         session_id,
         title,
@@ -190,6 +245,7 @@ fn create_review_record_inner(
         role,
         changed_files,
         viewed_files: Vec::new(),
+        reviewed_tree: None,
         test_output,
         notes: None,
         created_at: now.clone(),
@@ -198,6 +254,16 @@ fn create_review_record_inner(
 
     let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
     crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+
+    // Capture the tree identity AFTER the record file exists: `git status` lists paths, and a
+    // brand-new record path changes that list. Capturing before the write would bake in a
+    // pre-record identity that no longer matches at approval time, refusing every fresh
+    // review's first approve.
+    record.reviewed_tree = capture_reviewed_evidence(&project_path);
+    if record.reviewed_tree.is_some() {
+        let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+        crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+    }
 
     Ok(record)
 }
@@ -228,30 +294,54 @@ fn load_json_array(path: &std::path::Path) -> Result<Vec<serde_json::Value>, Str
 /// Load and parse a review record, distinguishing missing/corrupt from plain IO errors. A corrupt
 /// record preserves its original bytes, flags the path (blocking writes until recovery), and never
 /// auto-recreates over the corruption.
-fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, String> {
+fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, ReviewLoadError> {
     match crate::state_load::read_json_text(path) {
         crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content).map_err(|e| {
             let err = format!("Failed to parse review record {}: {}", path.display(), e);
             match crate::state_load::preserve_and_flag_corrupt(path, &err) {
-                Ok(backup) => format!(
-                    "{}. Original bytes preserved at {} — resolve recovery before editing.",
-                    err,
-                    backup.display()
-                ),
-                Err(preserve_err) => format!("{} ({})", err, preserve_err),
+                Ok(backup) => ReviewLoadError::Corrupt {
+                    error: format!(
+                        "{}. Original bytes preserved at {} — resolve recovery before editing.",
+                        err,
+                        backup.display()
+                    ),
+                    backup_path: backup.to_string_lossy().to_string(),
+                },
+                Err(preserve_err) => ReviewLoadError::Corrupt {
+                    error: format!("{} ({})", err, preserve_err),
+                    // The original could not be preserved; nothing safe to restore.
+                    backup_path: String::new(),
+                },
             }
         }),
-        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
-        crate::state_load::JsonText::Encoding(m) => Err(m),
+        crate::state_load::JsonText::Io(e) => Err(ReviewLoadError::Other(e.to_string())),
+        crate::state_load::JsonText::Encoding(m) => Err(ReviewLoadError::Other(m)),
     }
 }
 
-fn read_review_record_inner(project_path: String, task_id: String) -> Result<ReviewRecord, String> {
+/// Structured outcome of reading a review record (Phase 3): `missing` is a fresh task the
+/// renderer may auto-create for, while `corrupt` must surface recovery UI and NEVER trigger
+/// auto-recreation over the preserved bytes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ReviewRecordLoad {
+    Missing,
+    Loaded(ReviewRecord),
+    Corrupt { error: String, backup_path: String },
+}
+
+fn read_review_record_inner(project_path: String, task_id: String) -> Result<ReviewRecordLoad, String> {
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
     if !review_file_path.exists() {
-        return Err("Review record not found".to_string());
+        return Ok(ReviewRecordLoad::Missing);
     }
-    load_review_record(&review_file_path)
+    match load_review_record(&review_file_path) {
+        Ok(record) => Ok(ReviewRecordLoad::Loaded(record)),
+        Err(ReviewLoadError::Corrupt { error, backup_path }) => {
+            Ok(ReviewRecordLoad::Corrupt { error, backup_path })
+        }
+        Err(e @ ReviewLoadError::Other(_)) => Err(String::from(e)),
+    }
 }
 
 fn submit_review_decision_inner(
@@ -279,6 +369,24 @@ fn submit_review_decision_inner(
 
     let session_id = crate::fs_lock::with_path_lock(&review_file_path, || {
         let mut record = load_review_record(&review_file_path)?;
+
+        // Phase 3: an approval certifies exactly the evidence captured with the record. If HEAD
+        // or the staged/unstaged change set moved since capture, the reviewer would be approving
+        // work they never saw - refuse and ask for a refresh instead. Rejections carry no such
+        // gate (feedback is valid regardless of later edits).
+        if decision == "approve" {
+            if let Some(evidence) = &record.reviewed_tree {
+                let current: ReviewedEvidence =
+                    git_tree_identity_inner(project_path.clone())?.into();
+                if current != *evidence {
+                    return Err(
+                        "The worktree or staged files changed since this review's evidence was \
+                         captured. Refresh the review and re-inspect before approving."
+                            .to_string(),
+                    );
+                }
+            }
+        }
 
         let session_id = record.session_id.clone();
         record.status = if decision == "approve" { "approved" } else { "rejected" }.to_string();
@@ -534,7 +642,7 @@ pub async fn read_review_record(
     project_path: String,
     task_id: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<ReviewRecord, String> {
+) -> Result<ReviewRecordLoad, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_review_record_inner(project_path, task_id))
         .await
@@ -586,6 +694,35 @@ mod tests {
         }
         fn project(&self) -> String {
             self.path.to_string_lossy().to_string()
+        }
+        /// Initialize a real git repo with one commit and a tracked file, so tree identities
+        /// are meaningful.
+        fn with_git() -> Self {
+            let p = Self::new();
+            let git = |args: &[&str]| {
+                let out = std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&p.path)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "git {:?} failed", args);
+            };
+            git(&["init", "-b", "main"]);
+            git(&["config", "user.email", "test@saple.local"]);
+            git(&["config", "user.name", "Saple Test"]);
+            fs::write(p.path.join("a.txt"), "one\n").unwrap();
+            git(&["add", "."]);
+            git(&["commit", "-m", "init"]);
+            p
+        }
+
+        fn git(&self, args: &[&str]) {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&self.path)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {:?} failed", args);
         }
     }
     impl Drop for TempProject {
@@ -646,4 +783,152 @@ mod tests {
         assert_eq!(run.get("reviewDecision").and_then(|v| v.as_str()), Some("approved"));
         assert_eq!(runs.len(), 1, "review decision must not duplicate the run");
     }
+
+    /// Phase 3 check: approval must fail after ANY reviewed-tree change. The record captures
+    /// evidence at creation; editing a file (or staging something new) afterwards makes the
+    /// current identity differ, and submit(approve) refuses.
+    #[test]
+    fn approval_fails_after_reviewed_tree_changes() {
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        let record = create_review_record_inner(proj.clone(), "task_1".into(), "sess_1".into()).unwrap();
+        assert!(record.reviewed_tree.is_some(), "evidence must be captured with the record");
+
+        // Unchanged tree: approval goes through the gate cleanly.
+        submit_review_decision_inner(proj.clone(), "task_1".into(), "approve".into(), None).unwrap();
+
+        // New pending record, then mutate a tracked file: approval must now be refused.
+        let _ = create_review_record_inner(proj.clone(), "task_2".into(), "sess_1".into()).unwrap();
+        fs::write(p.path.join("a.txt"), "two\n").unwrap();
+        let err = submit_review_decision_inner(proj.clone(), "task_2".into(), "approve".into(), None)
+            .unwrap_err();
+        assert!(
+            err.contains("changed since this review's evidence"),
+            "unexpected error: {}", err
+        );
+
+        // Rejections stay ungated: feedback is valid regardless of later edits.
+        submit_review_decision_inner(proj.clone(), "task_2".into(), "reject".into(), Some("needs work".into()))
+            .unwrap();
+
+        // Staging an extra file is also a tree change.
+        p.git(&["checkout", "--", "a.txt"]);
+        let _ = create_review_record_inner(proj.clone(), "task_3".into(), "sess_1".into()).unwrap();
+        fs::write(p.path.join("b.txt"), "new\n").unwrap();
+        p.git(&["add", "."]);
+        let err = submit_review_decision_inner(proj, "task_3".into(), "approve".into(), None).unwrap_err();
+        assert!(err.contains("changed since this review's evidence"), "unexpected error: {}", err);
+    }
+
+    /// Phase 3 check: a corrupt review record stays untouched - reading reports corrupt with a
+    /// preserved backup path, and re-creating refuses instead of overwriting it.
+    #[test]
+    fn corrupt_review_record_is_never_recreated() {
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        create_review_record_inner(proj.clone(), "task_1".into(), "sess_1".into()).unwrap();
+        let record_path =
+            get_project_file_path(&proj, ".saple/review/task_1.json").unwrap();
+        fs::write(&record_path, "{ definitely not json").unwrap();
+
+        // Read reports corruption (never "missing") and preserves bytes.
+        match read_review_record_inner(proj.clone(), "task_1".into()).unwrap() {
+            ReviewRecordLoad::Corrupt { error, backup_path } => {
+                assert!(!backup_path.is_empty());
+                assert_eq!(
+                    fs::read_to_string(&backup_path).unwrap(),
+                    "{ definitely not json",
+                    "original bytes must be preserved verbatim"
+                );
+                assert!(error.contains("parse") || error.contains("preserved"), "{}", error);
+            }
+            other => panic!("expected corrupt, got {:?}", other),
+        }
+
+        // Re-create refuses instead of auto-recreating over the corruption.
+        let err = create_review_record_inner(proj.clone(), "task_1".into(), "sess_1".into()).unwrap_err();
+        assert!(err.contains("refusing to overwrite"), "unexpected error: {}", err);
+        assert_eq!(fs::read_to_string(&record_path).unwrap(), "{ definitely not json");
+
+        // Clean up the corrupt flag so other tests / drops are unaffected.
+        crate::fs_lock::clear_corrupt_flag(&record_path);
+    }
+
+    /// Phase 3 check: commits are scoped to exactly the reviewed/staged path set. An unexpected
+    /// extra staged file refuses the commit; a matching set commits only those paths.
+    #[test]
+    fn commit_refuses_unexpected_staged_files_and_scopes_paths() {
+        use crate::git::{git_commit_inner, git_stage_file_inner};
+
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        fs::write(p.path.join("a.txt"), "reviewed change\n").unwrap();
+        fs::write(p.path.join("sneaky.txt"), "unreviewed\n").unwrap();
+        git_stage_file_inner(proj.clone(), "a.txt".into(), true).unwrap();
+        git_stage_file_inner(proj.clone(), "sneaky.txt".into(), true).unwrap();
+
+        // Extra staged file outside the reviewed set: refuse.
+        let err = git_commit_inner(
+            proj.clone(),
+            "commit reviewed work".into(),
+            Some(vec!["a.txt".to_string()]),
+        )
+        .unwrap_err();
+        assert!(err.contains("outside the reviewed set") && err.contains("sneaky.txt"), "{}", err);
+
+        // Unstage the extra first so the next case isolates the not-staged refusal.
+        git_stage_file_inner(proj.clone(), "sneaky.txt".into(), false).unwrap();
+
+        // A requested path that is not staged: refuse too.
+        fs::write(p.path.join("c.txt"), "unstaged\n").unwrap();
+        let err = git_commit_inner(
+            proj.clone(),
+            "commit reviewed work".into(),
+            Some(vec!["a.txt".to_string(), "c.txt".to_string()]),
+        )
+        .unwrap_err();
+        assert!(err.contains("not staged") && err.contains("c.txt"), "{}", err);
+
+        // Exactly the reviewed set: succeeds, and only those paths land in the commit.
+        git_commit_inner(
+            proj.clone(),
+            "commit reviewed work".into(),
+            Some(vec!["a.txt".to_string()]),
+        )
+        .unwrap();
+        let status = crate::git::git_status_inner(proj.clone()).unwrap();
+        let committed_a = status.iter().find(|f| f.path == "a.txt");
+        assert!(committed_a.is_none(), "a.txt was committed and must leave status");
+        let sneaky = status.iter().find(|f| f.path == "sneaky.txt").expect("sneaky still present");
+        assert!(!sneaky.staged, "sneaky.txt must remain unstaged");
+    }
+
+    /// Phase 3: the diff-cache identity changes when HEAD moves or the staged/unstaged set
+    /// changes, and is stable while nothing changed.
+    #[test]
+    fn tree_identity_tracks_head_and_status_changes() {
+        let p = TempProject::with_git();
+        let proj = p.project();
+
+        let first = crate::git::git_tree_identity_inner(proj.clone()).unwrap();
+        let again = crate::git::git_tree_identity_inner(proj.clone()).unwrap();
+        assert_eq!(first, again, "identity must be stable on an unchanged tree");
+
+        // Worktree edit changes the hash but not HEAD.
+        fs::write(p.path.join("a.txt"), "dirty\n").unwrap();
+        let dirty = crate::git::git_tree_identity_inner(proj.clone()).unwrap();
+        assert_ne!(first.status_hash, dirty.status_hash);
+
+        // Committing changes HEAD (and empties status).
+        p.git(&["add", "."]);
+        p.git(&["commit", "-m", "second"]);
+        let committed = crate::git::git_tree_identity_inner(proj).unwrap();
+        assert_ne!(committed.status_hash, dirty.status_hash);
+        assert_ne!(committed.head_commit, first.head_commit);
+        assert!(committed.committed_at.is_some());
+    }
 }
+

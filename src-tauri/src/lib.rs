@@ -155,6 +155,7 @@ pub fn run() {
             git::git_stage_file,
             git::git_unstage_file,
             git::git_commit,
+            git::git_tree_identity,
             git::git_list_branches,
             git::git_checkout_branch,
             git::ensure_saple_git_excluded,
