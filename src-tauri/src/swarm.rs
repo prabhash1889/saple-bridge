@@ -1,6 +1,8 @@
 use std::fs;
+use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use sha2::{Digest, Sha256};
+use crate::project_roots::ProjectRootRegistry;
 
 // Mirrors the frontend SwarmAgent for `validate_dependency_graph`. The TS
 // SwarmAgent carries extra fields (provider, autoApprove) that serde silently
@@ -21,7 +23,11 @@ pub struct SwarmAgentRust {
 }
 
 #[tauri::command]
-pub async fn read_swarm_state(project_path: String) -> Result<String, String> {
+pub async fn read_swarm_state(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_swarm_state_inner(project_path))
         .await
         .map_err(|e| e.to_string())?
@@ -36,7 +42,12 @@ fn read_swarm_state_inner(project_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn write_swarm_state(project_path: String, state_json: String) -> Result<(), String> {
+pub async fn write_swarm_state(
+    project_path: String,
+    state_json: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || write_swarm_state_inner(project_path, state_json))
         .await
         .map_err(|e| e.to_string())?
@@ -48,7 +59,12 @@ fn write_swarm_state_inner(project_path: String, state_json: String) -> Result<(
 }
 
 #[tauri::command]
-pub async fn read_mailbox_file(project_path: String, agent_id: String) -> Result<String, String> {
+pub async fn read_mailbox_file(
+    project_path: String,
+    agent_id: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_mailbox_file_inner(project_path, agent_id))
         .await
         .map_err(|e| e.to_string())?
@@ -64,7 +80,13 @@ fn read_mailbox_file_inner(project_path: String, agent_id: String) -> Result<Str
 }
 
 #[tauri::command]
-pub async fn write_mailbox_file(project_path: String, agent_id: String, content: String) -> Result<(), String> {
+pub async fn write_mailbox_file(
+    project_path: String,
+    agent_id: String,
+    content: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || write_mailbox_file_inner(project_path, agent_id, content))
         .await
         .map_err(|e| e.to_string())?
@@ -77,7 +99,13 @@ fn write_mailbox_file_inner(project_path: String, agent_id: String, content: Str
 }
 
 #[tauri::command]
-pub async fn read_handoff_file(project_path: String, from_agent: String, to_agent: String) -> Result<String, String> {
+pub async fn read_handoff_file(
+    project_path: String,
+    from_agent: String,
+    to_agent: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_handoff_file_inner(project_path, from_agent, to_agent))
         .await
         .map_err(|e| e.to_string())?
@@ -93,7 +121,14 @@ fn read_handoff_file_inner(project_path: String, from_agent: String, to_agent: S
 }
 
 #[tauri::command]
-pub async fn write_handoff_file(project_path: String, from_agent: String, to_agent: String, content: String) -> Result<(), String> {
+pub async fn write_handoff_file(
+    project_path: String,
+    from_agent: String,
+    to_agent: String,
+    content: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || write_handoff_file_inner(project_path, from_agent, to_agent, content))
         .await
         .map_err(|e| e.to_string())?
@@ -147,7 +182,11 @@ pub async fn run_acceptance_command(
     project_path: String,
     command_str: String,
     command_hash: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<AcceptanceResult, String> {
+    // An approved command must also run in an approved root: hash approval binds the
+    // command bytes, this gate binds the execution directory.
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         run_acceptance_command_inner(project_path, command_str, command_hash)
     })

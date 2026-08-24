@@ -1,10 +1,12 @@
 use std::fs;
 use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::project::{get_project_file_path, now_iso};
 use crate::git::{git_status_inner, GitFileStatus};
 use crate::process_ext::CommandNoWindow;
+use crate::project_roots::ProjectRootRegistry;
 
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_VERIFICATION_OUTPUT_BYTES: usize = 800_000;
@@ -451,7 +453,9 @@ pub async fn set_file_viewed(
     task_id: String,
     file_path: String,
     viewed: bool,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || set_file_viewed_inner(project_path, task_id, file_path, viewed))
         .await
         .map_err(|e| e.to_string())?
@@ -462,14 +466,21 @@ pub async fn create_review_record(
     project_path: String,
     task_id: String,
     session_id: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<ReviewRecord, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || create_review_record_inner(project_path, task_id, session_id))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn read_review_record(project_path: String, task_id: String) -> Result<ReviewRecord, String> {
+pub async fn read_review_record(
+    project_path: String,
+    task_id: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<ReviewRecord, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_review_record_inner(project_path, task_id))
         .await
         .map_err(|e| e.to_string())?
@@ -481,7 +492,9 @@ pub async fn submit_review_decision(
     task_id: String,
     decision: String,
     notes: Option<String>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || submit_review_decision_inner(project_path, task_id, decision, notes))
         .await
         .map_err(|e| e.to_string())?
@@ -492,7 +505,11 @@ pub async fn run_verification_command(
     project_path: String,
     task_id: String,
     command_str: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<String, String> {
+    // Verification executes an operator-visible command inside the project directory,
+    // so the project itself must be an approved root before anything runs.
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || run_verification_command_inner(project_path, task_id, command_str))
         .await
         .map_err(|e| e.to_string())?
