@@ -322,6 +322,61 @@ fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
 
 // The renderer passes each spawn input as a named field; a params struct would just be unpacked
 // again on both sides for no gain.
+/// Environment variables the renderer may never set on a spawned pane. Each one changes
+/// which code a shell or interpreter executes at startup (`PATH` alone decides which
+/// binaries run), so a compromised renderer could otherwise hijack every agent session by
+/// spawning a pane with a crafted value. Compared case-insensitively: Windows env keys
+/// are case-insensitive and adversarial casing must not slip past the table.
+fn is_forbidden_env_key(key: &str) -> bool {
+    const FORBIDDEN: &[&str] = &[
+        // Search paths that decide which executables/modules load.
+        "path",
+        "node_path",
+        "pythonpath",
+        "pythonhome",
+        "ld_library_path",
+        "dyld_library_path",
+        "dyld_framework_path",
+        // Code executed automatically at startup.
+        "node_options",
+        "pythonstartup",
+        "psmodulepath",
+        "ld_preload",
+        "dyld_insert_libraries",
+        "bash_env",
+        "env",
+        "rubyopt",
+        "perl5opt",
+        "perl5lib",
+        // Windows shell resolution.
+        "comspec",
+    ];
+    let k = key.to_ascii_lowercase();
+    FORBIDDEN.contains(&k.as_str())
+}
+
+/// Provider credential variables are constructed by Rust from the OS keychain; renderer-
+/// supplied values for these names are refused so a pane can never run with attacker-chosen
+/// credentials (or shadow the keychain-injected ones).
+fn is_provider_env_key(key: &str) -> bool {
+    const PROVIDER_KEYS: &[&str] = &[
+        "openai_api_key",
+        "anthropic_api_key",
+        "gemini_api_key",
+        "google_api_key",
+        "opencode_api_key",
+        "openrouter_api_key",
+        "cursor_api_key",
+        "factory_api_key",
+        "github_token",
+        "pi_api_key",
+        "grok_api_key",
+        "custom_api_key",
+    ];
+    let k = key.to_ascii_lowercase();
+    PROVIDER_KEYS.contains(&k.as_str())
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn spawn_pty(
@@ -336,7 +391,14 @@ pub async fn spawn_pty(
     interactive_prompt: Option<bool>,
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
+    roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    // Trust boundary (Phase 1): a pane may only run inside an approved project root or,
+    // as the one deliberate exception, the user's home directory (plain home shells).
+    if !cwd.is_empty() {
+        roots.ensure_inside_approved_root_or_home(&cwd)?;
+    }
+
     // A duplicate id would overwrite the existing registry entry, leaking its child process and
     // reader/emitter/writer threads (kill_pty would only ever reap the survivor). Check up front
     // (cheap, before spawning anything); the insert below re-checks to close the race window.
@@ -535,7 +597,16 @@ pub async fn spawn_pty(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
+    // Renderer env overrides are refused for execution-affecting and provider-credential
+    // keys (see `is_forbidden_env_key` / `is_provider_env_key`). Everything else the
+    // renderer sends still applies, on top of the defaults above.
     for (k, v) in env {
+        if is_forbidden_env_key(&k) || is_provider_env_key(&k) {
+            return Err(format!(
+                "Environment variable '{}' may not be set by the renderer",
+                k
+            ));
+        }
         cmd.env(k, v);
     }
     
@@ -975,5 +1046,82 @@ mod tests {
         assert!(validate_prompt_file(cwd, ".saple/missing.md").is_err());
         assert!(validate_prompt_file("", ".saple/agents/prompts/p.md").is_err());
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn forbidden_env_keys_table() {
+        struct Case {
+            key: &'static str,
+            forbidden: bool,
+        }
+        let cases = [
+            // Execution-affecting keys are denied in any casing.
+            Case { key: "PATH", forbidden: true },
+            Case { key: "path", forbidden: true },
+            Case { key: "Path", forbidden: true },
+            Case { key: "NODE_OPTIONS", forbidden: true },
+            Case { key: "node_options", forbidden: true },
+            Case { key: "PYTHONSTARTUP", forbidden: true },
+            Case { key: "PSModulePath", forbidden: true },
+            Case { key: "LD_PRELOAD", forbidden: true },
+            Case { key: "DYLD_INSERT_LIBRARIES", forbidden: true },
+            Case { key: "BASH_ENV", forbidden: true },
+            Case { key: "COMSPEC", forbidden: true },
+            Case { key: "RUBYOPT", forbidden: true },
+            Case { key: "PERL5OPT", forbidden: true },
+            // Benign keys still pass.
+            Case { key: "TERM", forbidden: false },
+            Case { key: "LANG", forbidden: false },
+            Case { key: "EDITOR", forbidden: false },
+            Case { key: "MY_APP_FLAG", forbidden: false },
+            // Prefix lookalikes must not be over-blocked.
+            Case { key: "PATHOLOGY", forbidden: false },
+            Case { key: "PATIENT_ID", forbidden: false },
+        ];
+        for case in &cases {
+            assert_eq!(
+                is_forbidden_env_key(case.key),
+                case.forbidden,
+                "case '{}'",
+                case.key
+            );
+        }
+    }
+
+    #[test]
+    fn provider_env_keys_are_renderer_forbidden() {
+        for key in [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "openai_api_key",
+            "GITHUB_TOKEN",
+            "GEMINI_API_KEY",
+            "CUSTOM_API_KEY",
+        ] {
+            assert!(is_provider_env_key(key), "{key} must be refused");
+        }
+        assert!(!is_provider_env_key("MY_API_KEY"));
+    }
+
+    #[test]
+    fn spawn_cwd_requires_approved_root_or_home() {
+        let registry = crate::project_roots::ProjectRootRegistry::new();
+        let home_ok = match std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+            Some(home) => PathBuf::from(home).canonicalize().unwrap(),
+            None => return,
+        };
+
+        // The intentional home-shell mode passes with zero approved roots.
+        assert!(registry.verify_inside_approved_root_or_home(&home_ok));
+
+        // An unregistered project directory fails closed.
+        let stranger = temp_project().parent().unwrap().to_path_buf();
+        let outside = if stranger.starts_with(&home_ok) {
+            // temp dirs live under the user profile; use a path that provably escapes it.
+            home_ok.parent().map(|p| p.to_path_buf()).unwrap_or(stranger)
+        } else {
+            stranger
+        };
+        assert!(!registry.verify_inside_approved_root_or_home(&outside));
     }
 }
