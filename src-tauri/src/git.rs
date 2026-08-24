@@ -403,6 +403,38 @@ mod tests {
     }
 
     #[test]
+    fn stage_and_unstage_remain_functional() {
+        // Intentional git.rs operations write through real git commands, not the generic
+        // file writers, so the `.git/**` writer block must leave them untouched.
+        let dir = std::env::temp_dir().join(format!("saple-git-stage-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git_stage_file_inner(path.clone(), "a.txt".to_string(), true).unwrap();
+
+        let staged = git_status_inner(path.clone()).unwrap();
+        let entry = staged.iter().find(|f| f.path == "a.txt").expect("a.txt in status");
+        assert!(entry.staged, "a.txt must be staged after git add");
+
+        git_stage_file_inner(path.clone(), "a.txt".to_string(), false).unwrap();
+        let unstaged = git_status_inner(path.clone()).unwrap();
+        let entry = unstaged.iter().find(|f| f.path == "a.txt").expect("a.txt in status");
+        assert!(!entry.staged, "a.txt must be unstaged after git reset");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn checkout_refuses_dirty_tree() {
         let dir = std::env::temp_dir().join(format!("saple-git-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
