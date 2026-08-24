@@ -5,11 +5,12 @@ import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
 // state logic — workspace bucketing, focus resolution, output buffering/trimming, pane limits —
 // runs without a webview or a real PTY.
 const invokeMock = vi.hoisted(() => vi.fn());
+const listenMock = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async () => vi.fn()),
+  listen: (...args: unknown[]) => listenMock(...args),
 }));
 
 const projectRef = vi.hoisted(() => ({
@@ -44,7 +45,9 @@ import { useConfirmStore } from './confirmStore';
 const store = () => useTerminalStore.getState();
 
 beforeEach(async () => {
+  await store().stopPtyOutputListener();
   invokeMock.mockReset().mockResolvedValue(undefined);
+  listenMock.mockReset().mockResolvedValue(vi.fn());
   layoutMock.setLayout.mockReset();
   layoutMock.clearLayout.mockReset();
   projectRef.currentProjectPath = '/proj';
@@ -54,6 +57,25 @@ beforeEach(async () => {
 });
 
 describe('addPane', () => {
+  it('waits for the shared PTY listeners before spawning', async () => {
+    let finishOutputListener: ((unlisten: () => void) => void) | undefined;
+    listenMock
+      .mockImplementationOnce(() => new Promise<() => void>((resolve) => {
+        finishOutputListener = resolve;
+      }))
+      .mockResolvedValueOnce(vi.fn());
+
+    const initializePromise = store().initialize();
+    const addPromise = store().addPane('/proj');
+
+    expect(invokeMock).not.toHaveBeenCalledWith('spawn_pty', expect.anything());
+    finishOutputListener?.(vi.fn());
+    await Promise.all([initializePromise, addPromise]);
+
+    expect(listenMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledWith('spawn_pty', expect.objectContaining({ cwd: '/proj' }));
+  });
+
   it('buckets the pane under the active workspace, focuses it, and spawns a PTY', async () => {
     const id = await store().addPane('/proj');
 

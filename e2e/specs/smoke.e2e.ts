@@ -35,10 +35,12 @@ describe('Saple Bridge smoke', () => {
     // 3. Spawn a terminal via the app shortcut (Ctrl+Shift+T -> addPane + terminals room).
     await browser.keys(['Control', 'Shift', 't']);
 
-    // 4. A non-empty terminal grid means the PTY spawned and its prompt streamed back.
-    const rows = await $('.xterm-rows');
-    await rows.waitForExist({ timeout: 60_000 });
-    await browser.waitUntil(async () => (await rows.getText()).trim().length > 0, {
+    // 4. A non-empty terminal buffer means the PTY spawned and its prompt streamed back.
+    //    xterm 6 renders through WebGL (canvas, no DOM text), so the readable text lives in
+    //    the accessibility tree, which the app maintains only under WebDriver automation.
+    const tree = await $('.xterm-accessibility-tree');
+    await tree.waitForExist({ timeout: 60_000 });
+    await browser.waitUntil(async () => (await tree.getText()).trim().length > 0, {
       timeout: 60_000,
       timeoutMsg: 'terminal never rendered a prompt',
     });
