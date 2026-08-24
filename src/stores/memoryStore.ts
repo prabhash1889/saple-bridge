@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { useConfirmStore } from './confirmStore';
 
 export interface MemoryNode {
   id: string;
@@ -48,7 +49,7 @@ interface MemoryState {
   deleteNote: (projectPath: string, node: MemoryNode) => Promise<void>;
   loadUnlinkedMentions: (projectPath: string, id: string) => Promise<void>;
   addLink: (projectPath: string, source: string, target: string) => Promise<void>;
-  takeSnapshot: (projectPath: string, name: string) => Promise<void>;
+  takeSnapshot: (projectPath: string, name: string, overwrite?: boolean) => Promise<void>;
   restoreSnapshot: (projectPath: string, name: string) => Promise<void>;
   loadSnapshots: (projectPath: string) => Promise<void>;
   searchContent: (projectPath: string, query: string) => Promise<void>;
@@ -219,15 +220,32 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
     }
   },
 
-  takeSnapshot: async (projectPath, name) => {
+  takeSnapshot: async (projectPath, name, overwrite = false) => {
     set({ loading: true, error: null });
     try {
-      await invoke('create_memory_snapshot', { projectPath, name });
-      const snapshots = await invoke<string[]>('list_memory_snapshots', { projectPath });
-      set({ snapshots, loading: false });
+      // Phase 2: snapshots stage + verify in Rust before swapping; overwriting an existing
+      // snapshot requires an explicitly confirmed overwrite flag.
+      await invoke('create_memory_snapshot', { projectPath, name, overwrite });
     } catch (err) {
-      set({ error: `Failed to create snapshot: ${String(err)}`, loading: false });
+      const message = String(err);
+      if (!overwrite && message.includes('already exists')) {
+        // Refuse-to-clobber surfaced by Rust - ask before replacing the old snapshot.
+        set({ loading: false });
+        useConfirmStore.getState().confirm({
+          title: 'Overwrite snapshot?',
+          message: `A snapshot named "${name}" already exists. Replace it with a new snapshot of the current memory?`,
+          confirmLabel: 'Overwrite',
+          onConfirm: () => {
+            void get().takeSnapshot(projectPath, name, true);
+          },
+        });
+        return;
+      }
+      set({ error: `Failed to create snapshot: ${message}`, loading: false });
+      return;
     }
+    const snapshots = await invoke<string[]>('list_memory_snapshots', { projectPath });
+    set({ snapshots, loading: false });
   },
 
   restoreSnapshot: async (projectPath, name) => {
