@@ -15,6 +15,7 @@ mod diagnostics;
 mod process_ext;
 mod fs_lock;
 mod project_roots;
+mod state_load;
 mod watcher;
 
 use project_roots::ProjectRootRegistry;
@@ -162,6 +163,8 @@ pub fn run() {
             review::run_verification_command,
             review::set_file_viewed,
             control_plane::canonical_record_write,
+            state_load::load_state_file,
+            state_load::resolve_state_corruption,
             june_control::june_control_get_enabled,
             june_control::june_control_set_enabled,
             june_control::june_command_result,

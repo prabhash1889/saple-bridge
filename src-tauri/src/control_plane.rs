@@ -103,7 +103,7 @@ pub(crate) fn canonical_write_inner(
         let json = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
         crate::fs_lock::write_unlocked(&path, json.as_bytes())?;
         Ok(record)
-    })
+    })?
 }
 
 /// Create or update a single record (by `id`) in a canonical control-plane collection.
