@@ -1,0 +1,60 @@
+- generic [active] [ref=e1]:
+  - link "Skip to plan" [ref=e2] [cursor=pointer]:
+    - /url: "#plan-document"
+  - generic [ref=e4]:
+    - complementary "Plan navigation" [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: S/B
+        - generic [ref=e8]:
+          - strong [ref=e9]: Swarm blueprint
+          - text: Execution dossier / v1
+      - paragraph [ref=e10]: Find in plan
+      - generic [ref=e11]:
+        - img [ref=e12]
+        - searchbox "Search phases and tasks" [ref=e15]
+        - generic [ref=e16]: /
+      - paragraph [ref=e18]: Program lens
+      - generic [ref=e19]:
+        - button "All" [pressed] [ref=e20] [cursor=pointer]
+        - button "Reliability" [ref=e21] [cursor=pointer]
+        - button "Runtime" [ref=e22] [cursor=pointer]
+        - button "Isolation" [ref=e23] [cursor=pointer]
+        - button "Coordination" [ref=e24] [cursor=pointer]
+        - button "Release" [ref=e25] [cursor=pointer]
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - strong [ref=e28]: Program progress
+          - generic [ref=e29]: 0%
+        - generic [ref=e31]: 0 of 11 phases marked complete
+      - paragraph [ref=e32]: Execution rail
+      - navigation "Implementation phases" [ref=e33]:
+        - list [ref=e34]
+      - generic [ref=e35]:
+        - button "Collapse all" [ref=e36] [cursor=pointer]
+        - button "Reset progress" [ref=e37] [cursor=pointer]
+    - main [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - generic [ref=e41]: SAPLE / ORCH-PLAN / 2026.08
+          - button "Print plan" [ref=e43] [cursor=pointer]: Print
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: Implementation blueprint
+            - heading "One engine. Eleven gates." [level=1] [ref=e47]:
+              - text: One engine.
+              - generic [ref=e48]: Eleven gates.
+            - paragraph [ref=e49]: Turn SAPLE Bridge's capable swarm prototype into a deterministic, project-scoped, provider-aware runtime—without copying Traycer's breadth or adding another authority.
+          - generic [ref=e50]:
+            - generic [ref=e51]:
+              - strong [ref=e52]: "11"
+              - text: Gated phases
+            - generic [ref=e53]:
+              - strong [ref=e54]: —
+              - text: Source lines
+            - generic [ref=e55]:
+              - strong [ref=e56]: "1"
+              - text: Authoritative engine
+        - generic [ref=e57]:
+          - strong [ref=e58]: Operating thesis
+          - generic [ref=e59]: Harden the mission loop, move authority into Rust, then earn richer coordination.
+      - region "Full implementation plan"

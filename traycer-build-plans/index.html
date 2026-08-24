@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Lazarus local-first AI coding workspace — product and engineering build plan"
+    />
+    <title>Lazarus — Build Plan</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090b0d;
+        --panel: #111417;
+        --panel-2: #171b1f;
+        --line: #262c31;
+        --line-strong: #394149;
+        --text: #edf1ef;
+        --muted: #96a09c;
+        --mint: #7ce7bd;
+        --mint-dim: #173c31;
+        --amber: #f2c879;
+        --amber-dim: #3e3119;
+        --coral: #ff8e80;
+        --blue: #82b7ff;
+        --radius: 12px;
+        --shadow: 0 20px 70px rgb(0 0 0 / 0.28);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 82% 3%, rgb(124 231 189 / 0.09), transparent 24rem),
+          radial-gradient(circle at 5% 22%, rgb(130 183 255 / 0.06), transparent 27rem),
+          var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .progress {
+        position: fixed;
+        inset: 0 0 auto;
+        z-index: 100;
+        height: 2px;
+        background: transparent;
+      }
+
+      .progress > span {
+        display: block;
+        width: 0;
+        height: 100%;
+        background: linear-gradient(90deg, var(--mint), var(--blue));
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 245px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      aside {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        padding: 28px 20px;
+        border-right: 1px solid var(--line);
+        background: rgb(9 11 13 / 0.78);
+        backdrop-filter: blur(18px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 34px;
+        font-weight: 750;
+        letter-spacing: -0.03em;
+      }
+
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgb(124 231 189 / 0.45);
+        border-radius: 10px;
+        background: var(--mint-dim);
+        color: var(--mint);
+        box-shadow: inset 0 0 18px rgb(124 231 189 / 0.08);
+      }
+
+      .brand small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      nav {
+        display: grid;
+        gap: 5px;
+      }
+
+      nav a {
+        padding: 8px 10px;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        text-decoration: none;
+      }
+
+      nav a:hover,
+      nav a:focus-visible {
+        background: var(--panel-2);
+        color: var(--text);
+        outline: none;
+      }
+
+      .side-note {
+        position: absolute;
+        right: 20px;
+        bottom: 24px;
+        left: 20px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      main {
+        width: min(1180px, 100%);
+        padding: 34px clamp(24px, 5vw, 78px) 100px;
+      }
+
+      .eyebrow {
+        color: var(--mint);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.12;
+        letter-spacing: -0.035em;
+      }
+
+      h1 {
+        max-width: 860px;
+        margin: 16px 0 18px;
+        font-size: clamp(44px, 7vw, 84px);
+        font-weight: 760;
+      }
+
+      h1 span {
+        color: var(--muted);
+      }
+
+      h2 {
+        margin: 0 0 12px;
+        font-size: clamp(27px, 4vw, 42px);
+      }
+
+      h3 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .lede {
+        max-width: 760px;
+        margin: 0;
+        color: #c2cac6;
+        font-size: clamp(16px, 2vw, 20px);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 40px;
+        padding: 0 15px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        background: var(--panel-2);
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 650;
+        text-decoration: none;
+      }
+
+      .button.primary {
+        border-color: rgb(124 231 189 / 0.4);
+        background: var(--mint);
+        color: #082019;
+      }
+
+      section {
+        padding-top: 100px;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 28px;
+      }
+
+      .section-head p {
+        max-width: 530px;
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 54px;
+      }
+
+      .stat,
+      .card,
+      details,
+      .architecture,
+      .decision {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: linear-gradient(145deg, rgb(23 27 31 / 0.95), rgb(15 18 21 / 0.95));
+        box-shadow: var(--shadow);
+      }
+
+      .stat {
+        padding: 18px;
+      }
+
+      .stat strong {
+        display: block;
+        color: var(--mint);
+        font-size: 28px;
+        letter-spacing: -0.04em;
+      }
+
+      .stat span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        padding: 20px;
+      }
+
+      .card .tag,
+      .phase-tag {
+        display: inline-flex;
+        margin-bottom: 18px;
+        padding: 4px 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .card p,
+      .decision p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .architecture {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        overflow: hidden;
+        background: var(--line);
+      }
+
+      .layer {
+        position: relative;
+        min-height: 250px;
+        padding: 24px;
+        background: var(--panel);
+      }
+
+      .layer::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -14px;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        width: 27px;
+        height: 27px;
+        border: 1px solid var(--line-strong);
+        border-radius: 50%;
+        background: var(--bg);
+        color: var(--mint);
+      }
+
+      .layer:last-child::after {
+        display: none;
+      }
+
+      .layer .number {
+        color: var(--mint);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+
+      .layer h3 {
+        margin-top: 32px;
+        font-size: 23px;
+      }
+
+      .layer ul,
+      details ul {
+        margin: 16px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .decisions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .decision {
+        padding: 18px;
+      }
+
+      .decision strong {
+        color: var(--amber);
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .filter {
+        width: min(360px, 100%);
+        height: 42px;
+        padding: 0 13px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        outline: none;
+        background: var(--panel);
+        color: var(--text);
+      }
+
+      .filter:focus {
+        border-color: var(--mint);
+        box-shadow: 0 0 0 3px rgb(124 231 189 / 0.1);
+      }
+
+      .phases {
+        display: grid;
+        gap: 10px;
+      }
+
+      details {
+        overflow: clip;
+      }
+
+      summary {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 20px;
+        cursor: pointer;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary .index {
+        color: var(--mint);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+
+      summary span:last-child {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      details[open] summary {
+        border-bottom: 1px solid var(--line);
+        background: rgb(124 231 189 / 0.025);
+      }
+
+      .phase-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+        padding: 20px;
+      }
+
+      .phase-body h4 {
+        margin: 0;
+        color: var(--text);
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .gate {
+        padding: 12px;
+        border-left: 2px solid var(--mint);
+        background: var(--mint-dim);
+        color: #caefdf;
+        font-size: 12px;
+      }
+
+      .documents {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .doc {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        text-decoration: none;
+      }
+
+      .doc:hover,
+      .doc:focus-visible {
+        border-color: var(--mint);
+        outline: none;
+      }
+
+      .doc small {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+      }
+
+      .doc b {
+        color: var(--mint);
+      }
+
+      .callout {
+        margin-top: 18px;
+        padding: 22px;
+        border: 1px solid rgb(242 200 121 / 0.35);
+        border-radius: var(--radius);
+        background: linear-gradient(130deg, var(--amber-dim), rgb(17 20 23 / 0.9));
+      }
+
+      .callout p {
+        max-width: 760px;
+        margin: 8px 0 0;
+        color: #d8cba8;
+      }
+
+      footer {
+        margin-top: 100px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 900px) {
+        .shell {
+          display: block;
+        }
+
+        aside {
+          position: relative;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        nav {
+          grid-template-columns: repeat(4, 1fr);
+        }
+
+        .side-note {
+          display: none;
+        }
+
+        .stats,
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .architecture {
+          grid-template-columns: 1fr;
+        }
+
+        .layer {
+          min-height: auto;
+        }
+
+        .layer::after {
+          top: auto;
+          right: 50%;
+          bottom: -14px;
+          transform: rotate(90deg) translateY(-50%);
+        }
+      }
+
+      @media (max-width: 620px) {
+        nav {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        main {
+          padding-inline: 18px;
+        }
+
+        .stats,
+        .grid,
+        .decisions,
+        .documents,
+        .phase-body {
+          grid-template-columns: 1fr;
+        }
+
+        .section-head {
+          align-items: start;
+          flex-direction: column;
+        }
+
+        summary {
+          grid-template-columns: 44px minmax(0, 1fr);
+        }
+
+        summary span:last-child {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress" aria-hidden="true"><span id="progress"></span></div>
+    <div class="shell">
+      <aside>
+        <div class="brand">
+          <div class="mark" aria-hidden="true">L</div>
+          <div>Lazarus<small>Build plan</small></div>
+        </div>
+        <nav aria-label="Plan sections">
+          <a href="#overview">Overview</a>
+          <a href="#product">Product</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#decisions">Decisions</a>
+          <a href="#roadmap">Roadmap</a>
+          <a href="#documents">Documents</a>
+        </nav>
+        <div class="side-note">
+          Local-first · Desktop-only<br />Codex + Claude · Chat + Terminal
+        </div>
+      </aside>
+
+      <main>
+        <header id="overview">
+          <div class="eyebrow">Independent product blueprint</div>
+          <h1>Bring coding sessions <span>back to life.</span></h1>
+          <p class="lede">
+            Lazarus is a local-first desktop workbench for durable Codex and Claude coding agents,
+            combining structured Chat, native Terminal sessions, plain Markdown artifacts,
+            worktree isolation, and evidence-first change review.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="STEP-BY-STEP.md">Open the 46-step build sequence</a>
+            <a class="button" href="README.md">Read plan index</a>
+          </div>
+
+          <div class="stats" aria-label="Plan summary">
+            <div class="stat"><strong>3</strong><span>runtime processes</span></div>
+            <div class="stat"><strong>2</strong><span>initial providers</span></div>
+            <div class="stat"><strong>10</strong><span>delivery milestones</span></div>
+            <div class="stat"><strong>46</strong><span>ordered build steps</span></div>
+          </div>
+        </header>
+
+        <section id="product">
+          <div class="section-head">
+            <div><div class="eyebrow">Product cut</div><h2>Focused, local, inspectable.</h2></div>
+            <p>
+              Lazarus keeps Traycer’s strongest architectural lesson—the separate machine authority—
+              while choosing a calmer project-and-timeline experience and a much smaller first release.
+            </p>
+          </div>
+          <div class="grid">
+            <article class="card" data-search="project workbench timeline objective ui">
+              <span class="tag">Different UI</span>
+              <h3>Project workbench</h3>
+              <p>Project rail, objective/run navigator, one focused surface, and one optional evidence inspector.</p>
+            </article>
+            <article class="card" data-search="chat terminal codex claude providers">
+              <span class="tag">Two surfaces</span>
+              <h3>Chat + Terminal</h3>
+              <p>Structured event-driven conversations and real provider-native PTYs without forcing one abstraction.</p>
+            </article>
+            <article class="card" data-search="local offline no account privacy">
+              <span class="tag">Local-first</span>
+              <h3>No account required</h3>
+              <p>Projects, sessions, artifacts, and change inspection work offline with existing provider logins.</p>
+            </article>
+            <article class="card" data-search="markdown artifacts spec note decision review">
+              <span class="tag">Open format</span>
+              <h3>Plain Markdown artifacts</h3>
+              <p>Specs, decisions, checklists, and reviews remain normal project files that any editor can read.</p>
+            </article>
+            <article class="card" data-search="git diff worktree isolation changes">
+              <span class="tag">Safe execution</span>
+              <h3>Explicit worktrees</h3>
+              <p>Each run exposes its exact execution location; isolated work is chosen, never hidden.</p>
+            </article>
+            <article class="card" data-search="timeline events tools approvals checkpoints evidence">
+              <span class="tag">Evidence</span>
+              <h3>Activity timeline</h3>
+              <p>Turns, tools, approvals, checkpoints, and changes form a reconstructable history for each objective.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="architecture">
+          <div class="section-head">
+            <div><div class="eyebrow">Runtime topology</div><h2>Authority has a home.</h2></div>
+            <p>
+              Electron stays narrow. The renderer stays browser-safe. The daemon owns every operation that can
+              affect source code, processes, terminals, Git, or durable operational state.
+            </p>
+          </div>
+          <div class="architecture" role="img" aria-label="Renderer to Electron and daemon architecture">
+            <article class="layer">
+              <span class="number">01 / Renderer</span>
+              <h3>React workbench</h3>
+              <ul><li>UI and routes</li><li>Query cache</li><li>Ephemeral tabs/layout</li><li>Typed daemon client</li></ul>
+            </article>
+            <article class="layer">
+              <span class="number">02 / Desktop</span>
+              <h3>Electron shell</h3>
+              <ul><li>Windows and preload</li><li>Native pickers</li><li>Daemon supervision</li><li>Packaging and updates</li></ul>
+            </article>
+            <article class="layer">
+              <span class="number">03 / Authority</span>
+              <h3>Local daemon</h3>
+              <ul><li>Providers and PTYs</li><li>Files, Git, worktrees</li><li>SQLite and Markdown</li><li>Permissions and recovery</li></ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="decisions">
+          <div class="section-head">
+            <div><div class="eyebrow">Load-bearing decisions</div><h2>Constraints before code.</h2></div>
+          </div>
+          <div class="decisions">
+            <article class="decision"><strong>Storage</strong><h3>SQLite + Markdown</h3><p>Operational events are transactional; user-authored artifacts remain open project files.</p></article>
+            <article class="decision"><strong>Transport</strong><h3>Authenticated localhost WebSocket</h3><p>One validated channel supports unary requests, replayable streams, and binary terminal frames.</p></article>
+            <article class="decision"><strong>Compatibility</strong><h3>One protocol version in v1</h3><p>Per-method negotiation waits until client and daemon actually ship independently.</p></article>
+            <article class="decision"><strong>Providers</strong><h3>Behavioral adapters</h3><p>Codex and Claude share lifecycle contracts while retaining provider-specific session records and capabilities.</p></article>
+            <article class="decision"><strong>Mutation safety</strong><h3>Reconcile, never guess</h3><p>Possibly-applied commands are checked by request ID before any retry.</p></article>
+            <article class="decision"><strong>Scope</strong><h3>Cloud is deferred</h3><p>No accounts, sync interfaces, CRDTs, relay, or remote-daemon registry are pre-built in v1.</p></article>
+          </div>
+          <div class="callout">
+            <strong>Non-negotiable:</strong>
+            <p>Schedule pressure may remove convenience features, but never renderer isolation, durable acknowledgement, approval enforcement, path containment, restart recovery, or destructive-operation guards.</p>
+          </div>
+        </section>
+
+        <section id="roadmap">
+          <div class="section-head">
+            <div><div class="eyebrow">Delivery roadmap</div><h2>Vertical slices with gates.</h2></div>
+            <input id="filter" class="filter" type="search" placeholder="Filter milestones…" aria-label="Filter milestones" />
+          </div>
+          <div class="phases" id="phases">
+            <details open data-search="foundations repository ci adr ux threat model">
+              <summary><span class="index">M0</span><h3>Foundations</h3><span>1 week</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Workspace and quality gates</li><li>Architecture decisions</li><li>Five-screen UX prototype</li><li>Threat model</li></ul></div><div><h4>Exit gate</h4><p class="gate">Clean checkout builds; core flows are reviewable; Milestone 1 has no unresolved governing decisions.</p></div></div>
+            </details>
+            <details data-search="desktop daemon electron websocket auth lifecycle readiness">
+              <summary><span class="index">M1</span><h3>Desktop + daemon spine</h3><span>2 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Secure Electron shell</li><li>Packaged daemon</li><li>Authenticated transport</li><li>Health and diagnostics</li></ul></div><div><h4>Exit gate</h4><p class="gate">Fresh install, adoption, reload reconnect, and malicious localhost connection tests pass.</p></div></div>
+            </details>
+            <details data-search="projects files git repository diff watcher sqlite">
+              <summary><span class="index">M2</span><h3>Projects + Git inspection</h3><span>2 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Project persistence</li><li>Safe file tree</li><li>Git status and diff</li><li>External-change streams</li></ul></div><div><h4>Exit gate</h4><p class="gate">A real dirty repository reopens, updates live, and resists traversal/symlink escape.</p></div></div>
+            </details>
+            <details data-search="codex chat agent events approvals resume turns">
+              <summary><span class="index">M3</span><h3>Codex structured Chat</h3><span>3 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Durable runs and turns</li><li>Codex adapter</li><li>Typed event stream</li><li>Chat and approvals</li></ul></div><div><h4>Exit gate</h4><p class="gate">Ten real tasks, full restart resume, persisted replay, and no duplicate ambiguous mutations.</p></div></div>
+            </details>
+            <details data-search="claude chat multi provider capabilities adapter">
+              <summary><span class="index">M4</span><h3>Claude structured Chat</h3><span>2 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Claude adapter</li><li>Capability-driven controls</li><li>Provider diagnostics</li><li>Cross-provider objectives</li></ul></div><div><h4>Exit gate</h4><p class="gate">Both providers pass one behavioral suite without provider branching leaking into shared Chat UI.</p></div></div>
+            </details>
+            <details data-search="terminal pty xterm binary reconnect codex claude">
+              <summary><span class="index">M5</span><h3>Terminal agents</h3><span>3 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>PTY manager</li><li>Sequenced terminal protocol</li><li>xterm surface</li><li>Provider launch/resume</li></ul></div><div><h4>Exit gate</h4><p class="gate">No duplicated input on reconnect, truthful restart behavior, and no orphan processes.</p></div></div>
+            </details>
+            <details data-search="artifacts markdown timeline changes inspector">
+              <summary><span class="index">M6</span><h3>Artifacts + activity</h3><span>2 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Markdown notebook</li><li>Objective timeline</li><li>Split inspector</li><li>Change attribution</li></ul></div><div><h4>Exit gate</h4><p class="gate">External Markdown edits are safe and activity links resolve to exact execution locations.</p></div></div>
+            </details>
+            <details data-search="worktree git recovery crash migration setup teardown">
+              <summary><span class="index">M7</span><h3>Worktrees + recovery</h3><span>3 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Managed worktree lifecycle</li><li>Setup/teardown</li><li>Startup reconciliation</li><li>Fault injection</li></ul></div><div><h4>Exit gate</h4><p class="gate">Adversarial deletion and crash checkpoints converge without lost data or broad filesystem damage.</p></div></div>
+            </details>
+            <details data-search="hardening accessibility performance diagnostics updates">
+              <summary><span class="index">M8</span><h3>Product hardening</h3><span>3 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Onboarding and settings</li><li>Accessibility</li><li>Performance</li><li>Diagnostics and updater</li></ul></div><div><h4>Exit gate</h4><p class="gate">First turn under five minutes, keyboard flows pass, and 100k-event runs stay interactive.</p></div></div>
+            </details>
+            <details data-search="beta v1 packaging signing mac windows linux release">
+              <summary><span class="index">M9</span><h3>Beta + v1</h3><span>3–5 weeks</span></summary>
+              <div class="phase-body"><div><h4>Deliver</h4><ul><li>Signed cross-platform packages</li><li>Signed update feed</li><li>Compatibility policy</li><li>Security review</li></ul></div><div><h4>Exit gate</h4><p class="gate">Clean install/update/rollback matrix passes and no high-severity findings remain.</p></div></div>
+            </details>
+          </div>
+        </section>
+
+        <section id="documents">
+          <div class="section-head">
+            <div><div class="eyebrow">Source documents</div><h2>Go from shape to sequence.</h2></div>
+            <p>The dashboard is a map. The Markdown files carry the implementation-level truth and acceptance gates.</p>
+          </div>
+          <div class="documents">
+            <a class="doc" href="PRODUCT.md"><span><strong>Product plan</strong><small>Users, scope, requirements, metrics</small></span><b>↗</b></a>
+            <a class="doc" href="UX-UI.md"><span><strong>UX and UI</strong><small>Information architecture and screens</small></span><b>↗</b></a>
+            <a class="doc" href="ARCHITECTURE.md"><span><strong>Architecture</strong><small>Processes, providers, traces, failures</small></span><b>↗</b></a>
+            <a class="doc" href="DATA-AND-PROTOCOL.md"><span><strong>Data and protocol</strong><small>Schema, events, RPC, migrations</small></span><b>↗</b></a>
+            <a class="doc" href="SECURITY-RELIABILITY.md"><span><strong>Security and reliability</strong><small>Authority, approvals, recovery, ops</small></span><b>↗</b></a>
+            <a class="doc" href="ROADMAP.md"><span><strong>Roadmap</strong><small>Milestones, dependencies, exit gates</small></span><b>↗</b></a>
+            <a class="doc" href="STEP-BY-STEP.md"><span><strong>Step-by-step build</strong><small>46 ordered implementation steps</small></span><b>↗</b></a>
+            <a class="doc" href="README.md"><span><strong>Plan index</strong><small>Boundaries, principles, definition of v1</small></span><b>↗</b></a>
+          </div>
+        </section>
+
+        <footer>
+          Lazarus build plan · Local-first desktop · Codex + Claude · Generated from the Traycer architecture deep dive · No application implementation included
+        </footer>
+      </main>
+    </div>
+
+    <script>
+      const progress = document.querySelector("#progress");
+      const filter = document.querySelector("#filter");
+      const phases = [...document.querySelectorAll("#phases > details")];
+
+      function updateProgress() {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        progress.style.width = `${max <= 0 ? 100 : (window.scrollY / max) * 100}%`;
+      }
+
+      function filterPhases() {
+        const query = filter.value.trim().toLowerCase();
+        for (const phase of phases) {
+          const text = `${phase.dataset.search ?? ""} ${phase.textContent}`.toLowerCase();
+          phase.classList.toggle("hidden", query.length > 0 && !text.includes(query));
+        }
+      }
+
+      addEventListener("scroll", updateProgress, { passive: true });
+      filter.addEventListener("input", filterPhases);
+      updateProgress();
+    </script>
+  </body>
+</html>

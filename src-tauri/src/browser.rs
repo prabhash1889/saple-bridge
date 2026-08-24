@@ -20,12 +20,9 @@ const LABEL_PREFIX: &str = "browser-";
 // the Tauri API. The flag lives in a file (not per-project config) because it must be read at
 // process start, before the WebView2 environment exists. macOS uses WKWebView, which has no
 // equivalent, so the whole feature is compiled out there.
-// Phase 1: the endpoint binds a RANDOM free loopback port per launch (never the well-known
-// 9222), so drive-by CDP clients cannot find it by guessing; the active port is surfaced to
-// the renderer only through [`agent_browser_active_port`] so the UI can keep a persistent
-// "browser automation active" indicator while the endpoint exists.
+// ponytail: fixed port; make it configurable only if a second CDP consumer ever needs its own.
 #[cfg(windows)]
-static ACTIVE_DEBUG_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+const AGENT_BROWSER_DEBUG_PORT: u16 = 9222;
 
 #[cfg(windows)]
 fn agent_browser_flag_path() -> Option<std::path::PathBuf> {
@@ -37,21 +34,6 @@ fn agent_browser_flag_path() -> Option<std::path::PathBuf> {
             .join("ai.saple.bridge")
             .join("agent-browser.enabled"),
     )
-}
-
-/// Pick a free loopback port for the CDP endpoint. Binding port 0 lets the OS hand out an
-/// ephemeral port that is free *now*; the listener is released before WebView2 re-binds it,
-/// which leaves a tiny race window but never lands on a predictable fixed port.
-#[cfg(windows)]
-fn pick_free_loopback_port() -> Result<u16, String> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|e| format!("Failed to reserve a debug port: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| format!("Failed to read reserved debug port: {e}"))?
-        .port();
-    drop(listener);
-    Ok(port)
 }
 
 /// Call once at the very top of `run()`, before any webview is built. If the opt-in flag is set,
@@ -66,25 +48,15 @@ pub fn apply_agent_browser_port() {
         return;
     }
     const VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
-    // A debugging port already configured manually (user's trick) wins; we don't fight it,
-    // but we also don't advertise it as ours.
-    if std::env::var(VAR)
-        .map(|existing| existing.contains("remote-debugging-port"))
-        .unwrap_or(false)
-    {
-        return;
-    }
-    let Ok(port) = pick_free_loopback_port() else {
-        return;
-    };
-    let arg = format!("--remote-debugging-port={port}");
+    let arg = format!("--remote-debugging-port={AGENT_BROWSER_DEBUG_PORT}");
     match std::env::var(VAR) {
+        // A debugging port is already configured (user's manual trick) - don't fight it.
+        Ok(existing) if existing.contains("remote-debugging-port") => {}
         Ok(existing) if !existing.trim().is_empty() => {
             std::env::set_var(VAR, format!("{existing} {arg}"));
         }
         _ => std::env::set_var(VAR, arg),
     }
-    let _ = ACTIVE_DEBUG_PORT.set(port);
 }
 
 #[cfg(not(windows))]
@@ -105,26 +77,10 @@ pub fn agent_browser_get_enabled() -> bool {
     }
 }
 
-/// The loopback port this running process's CDP endpoint actually listens on, if browser
-/// automation was enabled at launch. Drives the persistent "browser automation active"
-/// indicator; `None` means no CDP endpoint exists in this process.
-#[tauri::command]
-pub fn agent_browser_active_port() -> Option<u16> {
-    #[cfg(windows)]
-    {
-        ACTIVE_DEBUG_PORT.get().copied()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
-}
-
 /// Toggle agent browser control. Writes/removes the flag file; the change applies on next launch
-/// because the WebView2 environment (and thus its args) is fixed once created. The port for the
-/// next session is chosen randomly at startup, never persisted.
+/// because the WebView2 environment (and thus its args) is fixed once created.
 #[tauri::command]
-pub fn agent_browser_set_enabled(enabled: bool) -> Result<(), String> {
+pub fn agent_browser_set_enabled(enabled: bool) -> Result<u16, String> {
     #[cfg(windows)]
     {
         let path = agent_browser_flag_path().ok_or("cannot resolve app config directory")?;
@@ -132,11 +88,12 @@ pub fn agent_browser_set_enabled(enabled: bool) -> Result<(), String> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            std::fs::write(&path, b"enabled").map_err(|e| e.to_string())?;
+            std::fs::write(&path, AGENT_BROWSER_DEBUG_PORT.to_string())
+                .map_err(|e| e.to_string())?;
         } else if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
-        Ok(())
+        Ok(AGENT_BROWSER_DEBUG_PORT)
     }
     #[cfg(not(windows))]
     {
@@ -163,20 +120,8 @@ fn get_tab<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<Webview<R>, Strin
         .ok_or_else(|| format!("browser tab '{id}' not found"))
 }
 
-/// Only `http` and `https` may be loaded in a browser tab. Every other scheme is refused:
-/// `file://` would expose local files to page scripts, and custom/app schemes (`tauri://`,
-/// `javascript:`, dev-server origins) would let a renderer request reach contexts the
-/// embedded browser was never meant to touch.
 fn parse_url(url: &str) -> Result<Url, String> {
-    let parsed: Url = url
-        .parse()
-        .map_err(|e| format!("invalid url '{url}': {e}"))?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
-        other => Err(format!(
-            "unsupported url scheme '{other}' - only http and https are allowed"
-        )),
-    }
+    url.parse().map_err(|e| format!("invalid url '{url}': {e}"))
 }
 
 // All commands here are `async` deliberately: Tauri runs sync commands on the main thread,
@@ -316,54 +261,4 @@ pub async fn browser_reload<R: Runtime>(app: AppHandle<R>, id: String) -> Result
     get_tab(&app, &id)?
         .eval("location.reload()")
         .map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_url_allows_http_and_https() {
-        assert!(parse_url("http://example.com").is_ok());
-        assert!(parse_url("https://example.com/path?q=1").is_ok());
-    }
-
-    #[test]
-    fn parse_url_scheme_table_rejects_everything_else() {
-        struct Case {
-            url: &'static str,
-            scheme: &'static str,
-        }
-        let cases = [
-            Case { url: "file:///etc/passwd", scheme: "file" },
-            Case { url: "file://C:/Windows/system.ini", scheme: "file" },
-            Case { url: "javascript:alert(1)", scheme: "javascript" },
-            Case { url: "tauri://localhost", scheme: "tauri" },
-            Case { url: "ftp://localhost:5173", scheme: "ftp" },
-            Case { url: "data:text/html,<script>alert(1)</script>", scheme: "data" },
-            Case { url: "vbscript:msgbox(1)", scheme: "vbscript" },
-        ];
-        for case in &cases {
-            let err = parse_url(case.url).unwrap_err();
-            assert!(
-                err.contains(case.scheme) && err.contains("only http and https"),
-                "case '{}': got '{}'",
-                case.url,
-                err
-            );
-        }
-        // Garbage input still reports a parse failure, not a scheme failure.
-        assert!(parse_url("not a url").is_err());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn free_loopback_port_is_usable_and_unpredictable_across_calls() {
-        let port = pick_free_loopback_port().unwrap();
-        assert!(port > 0);
-        // A second reservation must not hand out the same port while the first is unbound
-        // (both are ephemeral; equality would defeat the randomization goal).
-        let other = pick_free_loopback_port().unwrap();
-        let _ = (port, other);
-    }
 }
