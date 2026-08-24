@@ -112,6 +112,20 @@ function App() {
       // Follow the active project with a Rust file watcher so external .saple edits (MCP
       // sidecar, agents) force-reload these stores before the next save clobbers them.
       void invoke('watch_project_files', { projectPath: currentProjectPath }).catch(() => {});
+      // Phase 2: keep .saple/ out of git via the repo's private exclude file. Disclose it
+      // when the file was actually modified so the user is never surprised by the change.
+      void invoke<boolean>('ensure_saple_git_excluded', { projectPath: currentProjectPath })
+        .then((modified) => {
+          if (modified && !cancelled) {
+            void import('./stores/notificationStore').then(({ useNotificationStore }) => {
+              useNotificationStore.getState().info(
+                'Workspace state excluded from git',
+                '.saple/ was added to this repository\u2019s local .git/info/exclude so task, memory, and agent state never show up in commits. This only changes local git metadata.',
+              );
+            });
+          }
+        })
+        .catch(() => {});
     }, 0);
 
     return () => {

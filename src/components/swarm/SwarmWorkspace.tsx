@@ -15,6 +15,7 @@ import { swarmStatusColor, SWARM_STATUS_LEGEND } from '../../lib/swarmStatus';
 import { SwarmGraph } from './SwarmGraph';
 import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';
 import { SwarmComposer } from './SwarmComposer';
+import { StateRecoveryBanner } from '../common/StateRecoveryBanner';
 
 const handoffKey = (from: string, to: string) => `${from}->${to}`;
 
@@ -62,6 +63,7 @@ export const SwarmWorkspace: React.FC = () => {
   const activeAgents = useSwarmStore((state) => state.activeAgents);
   const swarmActive = useSwarmStore((state) => state.swarmActive);
   const pendingWizardMission = useSwarmStore((state) => state.pendingWizardMission);
+  const corruptState = useSwarmStore((state) => state.corruptState);
   const setPendingWizardMission = useSwarmStore((state) => state.setPendingWizardMission);
   const loadSwarmState = useSwarmStore((state) => state.loadSwarmState);
   const pauseSwarm = useSwarmStore((state) => state.pauseSwarm);
@@ -490,6 +492,17 @@ export const SwarmWorkspace: React.FC = () => {
 
       {/* Main Panel */}
       <div style={mainContentStyle}>
+        {/* Corrupt-state recovery (Phase 2): blocks swarm persistence until resolved. */}
+        {corruptState && currentProjectPath && (
+          <div style={{ marginBottom: '12px' }}>
+            <StateRecoveryBanner
+              projectPath={currentProjectPath}
+              corrupt={corruptState}
+              label="Swarm state"
+              onRecovered={() => void loadSwarmState(currentProjectPath, true)}
+            />
+          </div>
+        )}
         {/* Header */}
         <div style={headerStyle}>
           <div>

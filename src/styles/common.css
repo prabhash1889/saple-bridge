@@ -1916,3 +1916,58 @@ button.text-btn:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* --- State recovery banner (Phase 2: corrupt-state recovery UI) --- */
+.state-recovery-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-bg);
+}
+.state-recovery-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.state-recovery-path code,
+.state-recovery-path {
+  word-break: break-all;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.state-recovery-error {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.state-recovery-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.state-reveal-btn {
+  font-size: 12px;
+  text-decoration: underline;
+  color: var(--text-secondary);
+  padding: 0;
+}
+.state-reveal-btn:hover {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+}
+.state-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.state-recovery-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
