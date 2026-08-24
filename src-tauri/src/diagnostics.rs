@@ -47,13 +47,18 @@ pub struct McpConfigStatus {
 }
 
 #[tauri::command]
-pub async fn run_diagnostics(project_path: String) -> Result<DiagnosticsResult, String> {
-    tauri::async_runtime::spawn_blocking(move || run_diagnostics_inner(project_path))
+pub async fn run_diagnostics(
+    project_path: String,
+    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+) -> Result<DiagnosticsResult, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || run_diagnostics_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn run_diagnostics_inner(project_path: String) -> Result<DiagnosticsResult, String> {
+fn run_diagnostics_inner(registry: &crate::project_roots::ProjectRootRegistry, project_path: String) -> Result<DiagnosticsResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     // 1. OS check
     let os = if cfg!(target_os = "windows") {
         "Windows Desktop".to_string()

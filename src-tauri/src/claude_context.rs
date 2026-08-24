@@ -221,10 +221,14 @@ pub async fn get_claude_context_usage(
     cwd: String,
     session_uuid: String,
     pane_model: Option<String>,
+    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
 ) -> Result<Option<ClaudeContextUsage>, String> {
     if !is_valid_session_uuid(&session_uuid) {
         return Err("Invalid Claude session id".to_string());
     }
+    // The cwd is the pane's working directory; approved projects and the intentional
+    // home-shell mode are allowed, anything else fails closed.
+    registry.ensure_inside_approved_root_or_home(&cwd)?;
     let hook_dir = pane_hook_dir(&app);
     // File IO on a blocking worker, same discipline as spawn_pty.
     tauri::async_runtime::spawn_blocking(move || {

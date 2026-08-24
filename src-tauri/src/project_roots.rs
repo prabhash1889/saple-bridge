@@ -101,6 +101,38 @@ impl ProjectRootRegistry {
         }
     }
 
+    /// Whether `path` resolves inside an approved root or under the user's home
+    /// directory. Home is the one deliberately supported non-project location: a
+    /// terminal pane may run a shell there without any project open. Only gates that
+    /// must keep that intentional mode working may call this; everything else uses
+    /// [`Self::ensure_inside_approved_root`].
+    pub fn verify_inside_approved_root_or_home(&self, path: &Path) -> bool {
+        if self.verify_path_inside_approved_root(path) {
+            return true;
+        }
+        if !path.is_absolute() {
+            return false;
+        }
+        let Some(resolved) = resolve_existing_ancestor(path) else {
+            return false;
+        };
+        home_dir()
+            .map(|home| path_starts_with(&resolved, &home))
+            .unwrap_or(false)
+    }
+
+    /// Fail-closed variant of [`Self::verify_inside_approved_root_or_home`].
+    pub fn ensure_inside_approved_root_or_home(&self, project_path: &str) -> Result<(), String> {
+        if self.verify_inside_approved_root_or_home(Path::new(project_path)) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Access denied: '{}' is not inside an approved project root or the home directory.",
+                project_path
+            ))
+        }
+    }
+
     /// Drop one reference held by a closing workspace instance. The root is removed
     /// when its last instance closes; releasing an unknown path is an error so a
     /// misbehaving renderer cannot probe the registry by guessing.
@@ -131,6 +163,14 @@ fn canonical_dir(path: &Path) -> Result<PathBuf, String> {
         return Err(format!("Project path {} is not a directory", canonical.display()));
     }
     Ok(canonical)
+}
+
+/// The user's home directory (canonicalized), or `None` when it cannot be determined.
+fn home_dir() -> Option<PathBuf> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .and_then(|p| p.canonicalize().ok())
 }
 
 fn resolve_existing_ancestor(path: &Path) -> Option<PathBuf> {
@@ -345,6 +385,28 @@ mod tests {
         assert!(err.contains("not registered"), "got: {}", err);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn home_mode_allows_home_but_not_arbitrary_roots() {
+        let registry = ProjectRootRegistry::new();
+        let Some(home) = home_dir() else {
+            return; // environment without a resolvable home: nothing to assert
+        };
+
+        // The intentional home-shell mode passes even with zero approved roots.
+        assert!(registry.verify_inside_approved_root_or_home(&home));
+        assert!(registry.ensure_inside_approved_root_or_home(&home.to_string_lossy()).is_ok());
+
+        // A directory outside the home tree still fails closed. (temp_dir sits under
+        // the user profile on Windows, so the home's own parent is the out-of-home fixture.)
+        if let Some(outside) = home.parent() {
+            assert!(!registry.verify_inside_approved_root_or_home(outside));
+            let err = registry
+                .ensure_inside_approved_root_or_home(&outside.to_string_lossy())
+                .unwrap_err();
+            assert!(err.contains("Access denied"), "got: {}", err);
+        }
     }
 
     #[test]
