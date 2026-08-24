@@ -20,6 +20,9 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
+// Phase 2: the store loads swarm state through load_state_file and gets a structured outcome.
+const onDisk = (content: string) => Promise.resolve({ status: 'loaded', content });
+
 // Minimal stand-ins for the stores swarmStore reaches into, so tests exercise the scheduler
 // without the terminal/PTY machinery.
 const addPaneMock = vi.hoisted(() => vi.fn());
@@ -370,8 +373,8 @@ describe('loadSwarmState restart reconciliation', () => {
 
   it('downgrades running agents with dead terminals to failed and pauses the swarm', async () => {
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'read_swarm_state') {
-        return Promise.resolve(
+      if (cmd === 'load_state_file') {
+        return onDisk(
           diskState([agent('zombie', [], 'running', { terminalId: 'dead-pane' })], 'running'),
         );
       }
@@ -392,8 +395,8 @@ describe('loadSwarmState restart reconciliation', () => {
   it('leaves running agents alone when their terminal still exists', async () => {
     terminalSessions['live-pane'] = { id: 'live-pane' };
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'read_swarm_state') {
-        return Promise.resolve(
+      if (cmd === 'load_state_file') {
+        return onDisk(
           diskState([agent('alive', [], 'running', { terminalId: 'live-pane' })], 'running'),
         );
       }
@@ -408,7 +411,7 @@ describe('loadSwarmState restart reconciliation', () => {
 
   it('resets to idle when no state file exists', async () => {
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'read_swarm_state' ? Promise.reject(new Error('not found')) : Promise.resolve(undefined),
+      cmd === 'load_state_file' ? Promise.resolve({ status: 'missing' }) : Promise.resolve(undefined),
     );
 
     await useSwarmStore.getState().loadSwarmState(PROJECT, true);
@@ -450,8 +453,8 @@ describe('startSwarmFromWizard workspace isolation (P11)', () => {
     // Simulate the workspace-change force-reload firing while a launch is in flight.
     seed([agent('root', [], 'starting', { terminalId: undefined })]);
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'read_swarm_state'
-        ? Promise.resolve(JSON.stringify({ swarmId: 'x', agents: [], status: 'idle' }))
+      cmd === 'load_state_file'
+        ? onDisk(JSON.stringify({ swarmId: 'x', agents: [], status: 'idle' }))
         : Promise.resolve(undefined),
     );
 
@@ -459,7 +462,7 @@ describe('startSwarmFromWizard workspace isolation (P11)', () => {
 
     // The in-flight 'starting' agent survives - disk (empty/idle) did not overwrite it.
     expect(getAgent('root').status).toBe('starting');
-    expect(invokeMock).not.toHaveBeenCalledWith('read_swarm_state', expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith('load_state_file', expect.anything());
   });
 });
 
@@ -525,7 +528,7 @@ describe('loadSwarmState cross-project signal recovery (P13)', () => {
 
   const mockDisk = (agents: SwarmAgent[]) =>
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'read_swarm_state') return Promise.resolve(diskState(agents, 'running'));
+      if (cmd === 'load_state_file') return onDisk(diskState(agents, 'running'));
       if (cmd === 'read_project_file') return Promise.reject(new Error('not found'));
       return Promise.resolve(undefined);
     });
@@ -1061,8 +1064,8 @@ describe('acceptance-command approval gate (T2)', () => {
 
   it('approvals loaded from disk are dropped when they belong to another swarm id', async () => {
     invokeMock.mockImplementation((cmd: string) =>
-      cmd === 'read_swarm_state'
-        ? Promise.resolve(JSON.stringify({
+      cmd === 'load_state_file'
+        ? onDisk(JSON.stringify({
             swarmId: 'swarm-current',
             agents: [],
             status: 'idle',

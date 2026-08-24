@@ -123,9 +123,15 @@ interface ProjectState {
 export const useProjectStore = create<ProjectState>()(
   persist(
     (set, get) => {
+      // Currency token: rapid workspace switches fire overlapping loads; only the latest request
+      // may commit config/summary/recents so an earlier project's load never lands in the current
+      // view (Phase 2: request-sequence tokens replace boolean loading guards).
+      let workspaceLoadSeq = 0;
+
       // Load config + summary for the active path and record it in recents. Shared by
       // every code path that activates a workspace (add / open / switch instance).
       const loadWorkspaceData = async (path: string) => {
+        const token = ++workspaceLoadSeq;
         set({ workspaceLoading: true, workspaceError: null });
         try {
           // Register this workspace's root with the Rust-side approved-roots registry
@@ -134,6 +140,7 @@ export const useProjectStore = create<ProjectState>()(
           await invoke('ensure_workspace_dirs', { projectPath: path });
           const config = await invoke<WorkspaceConfig>('ensure_project_config', { projectPath: path });
           const summary = await invoke<WorkspaceSummary>('get_workspace_summary', { projectPath: path });
+          if (token !== workspaceLoadSeq) return;
           set((state) => ({
             workspaceConfig: config,
             workspaceSummary: summary,
@@ -145,6 +152,7 @@ export const useProjectStore = create<ProjectState>()(
             workspaceLoading: false,
           }));
         } catch (err: unknown) {
+          if (token !== workspaceLoadSeq) return;
           const msg = err instanceof Error ? err.message : String(err);
           set({ workspaceError: msg, workspaceLoading: false });
         }

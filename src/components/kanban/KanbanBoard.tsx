@@ -5,6 +5,7 @@ import { useProjectStore } from '../../stores/projectStore';
 import { KanbanColumn } from './KanbanColumn';
 import { TaskDialog } from './TaskDialog';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { StateRecoveryBanner } from '../common/StateRecoveryBanner';
 import { invoke } from '@tauri-apps/api/core';
 
 const COLUMNS: { id: TaskColumn; title: string }[] = [
@@ -46,6 +47,7 @@ export const KanbanBoard: React.FC = () => {
   const loadTasks = useKanbanStore((state) => state.loadTasks);
   const loading = useKanbanStore((state) => state.loading);
   const error = useKanbanStore((state) => state.error);
+  const corruptState = useKanbanStore((state) => state.corruptState);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
@@ -339,6 +341,16 @@ export const KanbanBoard: React.FC = () => {
         <div style={errorBannerStyle}>
           <span>Error loading tasks: {error}</span>
         </div>
+      )}
+
+      {/* Corrupt-state recovery (Phase 2): blocks edits until the user resolves it. */}
+      {corruptState && currentProjectPath && (
+        <StateRecoveryBanner
+          projectPath={currentProjectPath}
+          corrupt={corruptState}
+          label="Kanban tasks"
+          onRecovered={() => void loadTasks(currentProjectPath, true)}
+        />
       )}
 
       {/* Board Columns Grid */}

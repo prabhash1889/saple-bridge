@@ -397,6 +397,52 @@ pub async fn git_checkout_branch(
         .map_err(|e| e.to_string())?
 }
 
+/// Ensure `.saple/` is listed in the repository's local `.git/info/exclude` (Phase 2). This keeps
+/// workspace state out of `git status` without touching any tracked file like `.gitignore`, and
+/// stays entirely inside the repo's private metadata. Returns whether the exclude file was
+/// modified, so the renderer can disclose the change to the user.
+#[tauri::command]
+pub async fn ensure_saple_git_excluded(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<bool, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || ensure_saple_git_excluded_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn ensure_saple_git_excluded_inner(project_path: String) -> Result<bool, String> {
+    let git_dir = std::path::Path::new(&project_path).join(".git");
+    if !git_dir.is_dir() {
+        return Ok(false); // not a git worktree; nothing to exclude from
+    }
+    let info_dir = git_dir.join("info");
+    fs::create_dir_all(&info_dir).map_err(|e| format!("Failed to create .git/info: {}", e))?;
+    let exclude = info_dir.join("exclude");
+
+    let existing = if exclude.exists() {
+        fs::read_to_string(&exclude).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    // Match an exact `.saple/` line (trimmed) so we never append duplicates.
+    let already_excluded = existing
+        .lines()
+        .any(|l| l.trim() == ".saple/" || l.trim() == ".saple");
+    if already_excluded {
+        return Ok(false);
+    }
+
+    let mut updated = existing.clone();
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str("# Added by Saple Bridge: keep local workspace state out of git\n.saple/\n");
+    fs::write(&exclude, updated).map_err(|e| format!("Failed to update .git/info/exclude: {}", e))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +544,36 @@ mod tests {
         fs::write(dir.join("a.txt"), "two\n").unwrap();
         let err = git_checkout_branch_inner(path.clone(), "main".to_string()).unwrap_err();
         assert!(err.contains("uncommitted"), "unexpected error: {}", err);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saple_git_exclude_is_idempotent_and_discloses_changes() {
+        // Non-git directory: no-op.
+        let dir = std::env::temp_dir().join(format!("saple-git-excl-nogit-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert!(!ensure_saple_git_excluded_inner(dir.to_string_lossy().to_string()).unwrap());
+
+        // Git repo without the entry: first call adds it (disclosed), second is a no-op.
+        let dir = std::env::temp_dir().join(format!("saple-git-excl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed", args);
+        };
+        git(&["init"]);
+
+        let path = dir.to_string_lossy().to_string();
+        assert!(ensure_saple_git_excluded_inner(path.clone()).unwrap(), "first run must modify");
+        let contents = fs::read_to_string(dir.join(".git").join("info").join("exclude")).unwrap();
+        assert!(contents.lines().any(|l| l.trim() == ".saple/"));
+        assert!(
+            !ensure_saple_git_excluded_inner(path).unwrap(),
+            "second run must be a no-op (no duplicate lines)"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

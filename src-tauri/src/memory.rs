@@ -497,15 +497,22 @@ fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
 pub async fn create_memory_snapshot(
     project_path: String,
     name: String,
+    overwrite: Option<bool>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<(), String> {
     registry.ensure_inside_approved_root(&project_path)?;
-    tauri::async_runtime::spawn_blocking(move || create_memory_snapshot_inner(project_path, name))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        create_memory_snapshot_inner(project_path, name, overwrite.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn create_memory_snapshot_inner(project_path: String, name: String) -> Result<(), String> {
+/// Transactional snapshot creation (Phase 2): copy into a temporary sibling, verify the copy
+/// byte-for-byte, and only then atomically swap it into place. An existing snapshot is never
+/// overwritten unless the caller explicitly confirms (`overwrite = true`, backed by a UI
+/// confirmation), and any failure leaves the previous snapshot untouched.
+fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: bool) -> Result<(), String> {
     if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
         return Err("Snapshot name must contain only alphanumeric characters, dashes, or underscores".to_string());
     }
@@ -514,14 +521,49 @@ fn create_memory_snapshot_inner(project_path: String, name: String) -> Result<()
     if !memory_dir.exists() {
         return Err("No memories found to snapshot".to_string());
     }
-    
-    let snapshot_dir = Path::new(&project_path).join(".saple").join("snapshots").join(&name);
-    if snapshot_dir.exists() {
-        fs::remove_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
-    }
-    fs::create_dir_all(&snapshot_dir).map_err(|e| e.to_string())?;
 
-    copy_dir_all(&memory_dir, &snapshot_dir)
+    let snapshots_dir = Path::new(&project_path).join(".saple").join("snapshots");
+    let snapshot_dir = snapshots_dir.join(&name);
+
+    // Stage into a temporary sibling so a failed or partial copy never replaces an existing
+    // snapshot (and no half-built directory ever appears under the real name).
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let tmp_dir = snapshots_dir.join(format!(".{}.tmp-{}-{}", name, std::process::id(), unique));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&snapshots_dir).map_err(|e| e.to_string())?;
+
+    let staged = copy_dir_all(&memory_dir, &tmp_dir)
+        .and_then(|_| verify_snapshot_copies_source(&memory_dir, &tmp_dir).map_err(|e| e.to_string()));
+    if let Err(e) = staged {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(e);
+    }
+
+    // Swap only after validation. Refuse to clobber an existing snapshot without confirmation.
+    if snapshot_dir.exists() {
+        if !overwrite {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err(format!(
+                "Snapshot {} already exists. Confirm overwrite to replace it.",
+                name
+            ));
+        }
+        fs::remove_dir_all(&snapshot_dir).map_err(|e| {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            e.to_string()
+        })?;
+    }
+    if let Err(e) = crate::fs_lock::rename_with_retry(&tmp_dir, &snapshot_dir) {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -553,7 +595,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         // Safety snapshot FIRST. Live memory must not be touched until a verified
         // valid backup exists; any failure here aborts the whole restore.
         let backup_name = format!("pre-restore-{}", now_iso().replace(':', "-"));
-        create_memory_snapshot_inner(project_path.clone(), backup_name.clone()).map_err(|e| {
+        create_memory_snapshot_inner(project_path.clone(), backup_name.clone(), false).map_err(|e| {
             format!(
                 "Restore aborted: pre-restore safety snapshot failed ({}). Live memory was left untouched.",
                 e
@@ -583,13 +625,55 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         vec![Path::new(&project_path).join(".saple").join("memory")]
     };
 
+    // Restore transactionally per target directory (Phase 2): stage the snapshot copy in a
+    // temporary sibling, verify it byte-for-byte against the snapshot, and only then swap it
+    // into place. A failed restore can no longer leave live memory half-deleted.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
     for dir in write_dirs {
-        if dir.exists() {
-            fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        if !dir.exists() {
+            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         }
-        copy_dir_all(&snapshot_dir, &dir)?;
+        let parent = dir.parent().ok_or_else(|| "Invalid memory directory".to_string())?;
+        let dir_name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "memory".to_string());
+        let staged_dir = parent.join(format!(".{}.restore-{}-{}", dir_name, std::process::id(), unique));
+
+        let staged = copy_dir_all(&snapshot_dir, &staged_dir)
+            .and_then(|_| verify_snapshot_copies_source(&snapshot_dir, &staged_dir).map_err(|e| e.to_string()));
+        if let Err(e) = staged {
+            let _ = fs::remove_dir_all(&staged_dir);
+            return Err(e);
+        }
+
+        // Swap: move the old live dir aside, put the staged copy in place, then drop the old.
+        let old_dir = parent.join(format!(".{}.old-{}-{}", dir_name, std::process::id(), unique));
+        let _ = fs::remove_dir_all(&old_dir);
+        let swapped = if dir.exists() {
+            crate::fs_lock::rename_with_retry(&dir, &old_dir)
+                .and_then(|_| crate::fs_lock::rename_with_retry(&staged_dir, &dir))
+        } else {
+            crate::fs_lock::rename_with_retry(&staged_dir, &dir)
+        };
+        match swapped {
+            Ok(()) => {
+                let _ = fs::remove_dir_all(&old_dir);
+            }
+            Err(e) => {
+                // Roll the live directory back into place; nothing was lost.
+                let _ = fs::remove_dir_all(&staged_dir);
+                if old_dir.exists() && !dir.exists() {
+                    let _ = crate::fs_lock::rename_with_retry(&old_dir, &dir);
+                }
+                return Err(e);
+            }
+        }
     }
-    
+
     Ok(())
 }
 
@@ -1372,7 +1456,7 @@ Inline `[[inline-code]]` should not count either.
 
         // Seed live memory and snapshot it as the restore target.
         fs::write(&note_path, "snapshot content v1").unwrap();
-        create_memory_snapshot_inner(project_str.clone(), "target".to_string()).unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false).unwrap();
 
         // Change live memory after the snapshot so we can prove it survives untouched.
         fs::write(&note_path, "live content v2 - must survive").unwrap();
@@ -1429,7 +1513,7 @@ Inline `[[inline-code]]` should not count either.
 
         // Live state that will be snapshotted as the restore target.
         fs::write(&note_path, "snapshot content v1").unwrap();
-        create_memory_snapshot_inner(project_str.clone(), "target".to_string()).unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false).unwrap();
 
         // Diverge live memory; restore must bring back v1 and keep v2 in a pre-restore backup.
         fs::write(&note_path, "live content v2").unwrap();
@@ -1455,6 +1539,88 @@ Inline `[[inline-code]]` should not count either.
         assert_eq!(backups.len(), 1, "expected exactly one pre-restore backup");
         let backed_up = fs::read_to_string(backups[0].join("general").join("note.md")).unwrap();
         assert_eq!(backed_up, "live content v2");
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn snapshot_refuses_overwrite_without_confirmation() {
+        let (note_path, project, project_str) = setup_restore_project("overwrite");
+
+        fs::write(&note_path, "v1").unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false).unwrap();
+
+        // Live memory moves on; re-snapshotting the same name without confirmation must fail
+        // and leave the original snapshot untouched.
+        fs::write(&note_path, "v2").unwrap();
+        let err = create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false)
+            .expect_err("unconfirmed overwrite must be refused");
+        assert!(err.contains("already exists"), "got: {}", err);
+        let kept = fs::read_to_string(project.join(".saple/snapshots/target/general/note.md")).unwrap();
+        assert_eq!(kept, "v1", "existing snapshot must not be clobbered");
+
+        // Explicit confirmation replaces it.
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string(), true).unwrap();
+        let replaced = fs::read_to_string(project.join(".saple/snapshots/target/general/note.md")).unwrap();
+        assert_eq!(replaced, "v2");
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn failed_snapshot_leaves_existing_snapshot_and_no_staging_dirs_behind() {
+        let (note_path, project, project_str) = setup_restore_project("failedsnap");
+
+        fs::write(&note_path, "good v1").unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false).unwrap();
+
+        // Make the source unreadable so the staged copy fails partway.
+        #[cfg(windows)]
+        let _lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&note_path)
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&note_path).unwrap().permissions();
+            perms.set_mode(0o000);
+            fs::set_permissions(&note_path, perms).unwrap();
+        }
+
+        let result = create_memory_snapshot_inner(project_str.clone(), "other".to_string(), false);
+
+        #[cfg(windows)]
+        drop(_lock);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&note_path).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&note_path, perms).unwrap();
+        }
+
+        assert!(result.is_err(), "snapshot over an unreadable source must fail");
+        // The previous snapshot survives byte-for-byte...
+        let kept = fs::read_to_string(project.join(".saple/snapshots/target/general/note.md")).unwrap();
+        assert_eq!(kept, "good v1");
+        // ...and no half-built snapshot or staging directory was left behind.
+        assert!(!project.join(".saple/snapshots/other").exists());
+        let strays: Vec<PathBuf> = fs::read_dir(project.join(".saple").join("snapshots"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().contains(".tmp-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(strays.is_empty(), "staging dirs must be cleaned up: {:?}", strays);
 
         let _ = fs::remove_dir_all(&project);
     }

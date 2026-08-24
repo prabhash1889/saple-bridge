@@ -39,10 +39,16 @@ fn load_array(path: &std::path::Path) -> Result<Vec<Value>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    match serde_json::from_str::<Value>(&content).map_err(|e| format!("parse {:?}: {}", path, e))? {
-        Value::Array(arr) => Ok(arr),
-        _ => Err(format!("{:?} is not a JSON array", path)),
+    // Centralized JSON text reading: BOM-stripped UTF-8, clear UTF-16/32 reporting.
+    match crate::state_load::read_json_text(path) {
+        crate::state_load::JsonText::Ok(content) => {
+            match serde_json::from_str::<Value>(&content).map_err(|e| format!("parse {:?}: {}", path, e))? {
+                Value::Array(arr) => Ok(arr),
+                _ => Err(format!("{:?} is not a JSON array", path)),
+            }
+        }
+        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
+        crate::state_load::JsonText::Encoding(m) => Err(m),
     }
 }
 
@@ -103,7 +109,7 @@ pub(crate) fn canonical_write_inner(
         let json = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
         crate::fs_lock::write_unlocked(&path, json.as_bytes())?;
         Ok(record)
-    })
+    })?
 }
 
 /// Create or update a single record (by `id`) in a canonical control-plane collection.

@@ -82,6 +82,36 @@ pub fn is_last_own_write(path: &Path, contents: &[u8]) -> bool {
     own_writes().lock().unwrap().get(&key).copied() == Some(fingerprint(contents))
 }
 
+// --- Corrupt-state guard (Phase 2: state integrity) -------------------------------------------
+//
+// A store whose JSON failed to parse must never be silently overwritten by a later save: the
+// corrupt bytes are the only evidence of what went wrong. `state_load.rs` flags such paths here
+// and every write through this module (the single funnel for atomic project-state writes) is
+// blocked until a recovery action clears the flag.
+
+fn corrupt_flags() -> &'static Mutex<HashMap<String, String>> {
+    static FLAGS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Flag `path` as corrupt with a human-readable reason; blocks all writes through this module.
+pub fn flag_corrupt(path: &Path, reason: &str) {
+    let key = lock_key(path);
+    corrupt_flags().lock().unwrap().insert(key, reason.to_string());
+}
+
+/// Clear the corrupt flag (a recovery action validated the file or the user chose to start
+/// empty). Returns whether a flag was present.
+pub fn clear_corrupt_flag(path: &Path) -> bool {
+    let key = lock_key(path);
+    corrupt_flags().lock().unwrap().remove(&key).is_some()
+}
+
+fn corrupt_reason(path: &Path) -> Option<String> {
+    let key = lock_key(path);
+    corrupt_flags().lock().unwrap().get(&key).cloned()
+}
+
 /// Atomically write `contents` to `path`, serialized against other writers of the same path.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
     let guard = lock_for(path);
@@ -91,11 +121,11 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
 
 /// Run `f` while holding both the per-path mutex AND the cross-process sentinel lock, so a full
 /// read-modify-write (load JSON, mutate, save) against a canonical collection file is serialized
-/// against the saple-mcp sidecar too — not just this process. `f` MUST persist via
-/// [`write_unlocked`] (it already holds the same non-reentrant mutex; [`atomic_write`] would
-/// deadlock re-acquiring it). Mirrors saple-mcp's `with_path_lock` so both crates contend on the
-/// same sentinel.
-pub fn with_path_lock<R>(path: &Path, f: impl FnOnce() -> R) -> R {
+/// against the saple-mcp sidecar too — not just this process. Fails safely (returns `Err`) when
+/// the cross-process lock cannot be taken; `f` MUST persist via [`write_unlocked`] (it already
+/// holds the same non-reentrant mutex; [`atomic_write`] would deadlock re-acquiring it). Mirrors
+/// saple-mcp's `with_path_lock` so both crates contend on the same sentinel.
+pub fn with_path_lock<R>(path: &Path, f: impl FnOnce() -> R) -> Result<R, String> {
     let guard = lock_for(path);
     let _held = guard.lock().unwrap();
     with_cross_process_lock(path, f)
@@ -106,6 +136,16 @@ pub fn with_path_lock<R>(path: &Path, f: impl FnOnce() -> R) -> R {
 /// write in `own_writes` so the file watcher recognizes the rename event as our own echo.
 pub fn write_unlocked(path: &Path, contents: &[u8]) -> Result<(), String> {
     static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    // Phase 2: a corrupt-flagged state file is never overwritten; recovery must clear the flag
+    // first (retry / restore backup / explicit start-empty).
+    if let Some(reason) = corrupt_reason(path) {
+        return Err(format!(
+            "Write blocked: {} is flagged as corrupt ({}). Use recovery to retry, restore the preserved copy, or start empty.",
+            path.display(),
+            reason
+        ));
+    }
 
     let parent = path
         .parent()
@@ -121,7 +161,7 @@ pub fn write_unlocked(path: &Path, contents: &[u8]) -> Result<(), String> {
     let tmp = parent.join(format!(".{}.tmp-{}-{}", file_name, std::process::id(), unique));
 
     fs::write(&tmp, contents).map_err(|e| format!("Failed to write temp file: {}", e))?;
-    match fs::rename(&tmp, path) {
+    match rename_with_retry(&tmp, path) {
         Ok(()) => {
             let mut map = own_writes().lock().unwrap();
             // Bounded like the lock registry: on overflow, clear rather than track which entries
@@ -140,6 +180,44 @@ pub fn write_unlocked(path: &Path, contents: &[u8]) -> Result<(), String> {
     }
 }
 
+// --- Windows rename retry (Phase 2) ------------------------------------------------------------
+//
+// On Windows a rename over an open target briefly fails with a sharing violation (os error 32/33)
+// whenever an antivirus scanner, search indexer, or another reader holds the destination. That is
+// transient by nature, so retry a few times with short backoff before giving up.
+
+/// Transient Windows sharing/lock violations that a bounded retry can clear.
+fn is_transient_rename_error(err: &std::io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(32) | Some(33))
+}
+
+/// Rename `from` onto `to`, retrying transient Windows sharing violations with short bounded
+/// backoff (5 attempts, doubling from 25 ms). `rename_impl` is injectable for tests.
+pub(crate) fn rename_with_retry_impl(
+    from: &Path,
+    to: &Path,
+    mut rename_impl: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), String> {
+    const MAX_ATTEMPTS: u32 = 5;
+    let backoff_start = Duration::from_millis(25);
+
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match rename_impl(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_transient_rename_error(&e) && attempt < MAX_ATTEMPTS => {
+                std::thread::sleep(backoff_start * attempt);
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+pub(crate) fn rename_with_retry(from: &Path, to: &Path) -> Result<(), String> {
+    rename_with_retry_impl(from, to, |f, t| fs::rename(f, t))
+}
+
 /// The sentinel file that serializes cross-process writers of `target`: a sibling `.<name>.lock`
 /// (same directory, same shape as the atomic-write temp files the watcher already tolerates).
 fn sentinel_path(target: &Path) -> PathBuf {
@@ -154,49 +232,111 @@ fn sentinel_path(target: &Path) -> PathBuf {
 /// never interleave read-modify-write cycles on the same canonical file and drop a record.
 ///
 /// The lock is a sentinel file created with `create_new` (an atomic "create only if absent" on both
-/// Windows and Unix — no extra dependency, no per-OS `LockFileEx`/`flock` split). A holder that
-/// crashes leaves the sentinel behind; it is stolen once older than `STALE` so a dead process can't
-/// wedge writes forever. If the lock can't be taken within `WAIT_TIMEOUT` (or the sentinel can't be
-/// created at all), `f` runs anyway — a best-effort lock must never hang or fail a real write.
+/// Windows and Unix — no extra dependency, no per-OS `LockFileEx`/`flock` split). The sentinel
+/// records the holder's PID, so a holder that crashed mid-write is detected via PID liveness and
+/// its sentinel is stolen; a *live* holder is waited for at most `WAIT_TIMEOUT`.
 ///
-/// ponytail: sentinel-file spinlock, not OS byte-range locks. Upgrade path if contention ever
-/// bites: real advisory locks (`LockFileEx`/`flock`) behind a shared saple-core crate.
-pub fn with_cross_process_lock<R>(target: &Path, f: impl FnOnce() -> R) -> R {
-    const STALE: Duration = Duration::from_secs(15);
+/// Phase 2: locking now fails safely. If the lock cannot be taken within the wait budget (or the
+/// sentinel cannot be created at all), this returns an error instead of silently proceeding
+/// unlocked — an unlocked read-modify-write is exactly how records get dropped. Locks are also no
+/// longer stolen merely for being older than a threshold; only proven-dead PIDs are stolen.
+pub fn with_cross_process_lock<R>(target: &Path, f: impl FnOnce() -> R) -> Result<R, String> {
     const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
-    let lock = sentinel_path(target);
-    let start = Instant::now();
-    let mut acquired = false;
-    loop {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&lock) {
-            Ok(mut file) => {
-                let _ = write!(file, "{}", std::process::id());
-                acquired = true;
-                break;
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                // Steal a stale sentinel (previous holder crashed mid-write).
-                if let Ok(modified) = fs::metadata(&lock).and_then(|m| m.modified()) {
-                    if modified.elapsed().map(|d| d > STALE).unwrap_or(false) {
-                        let _ = fs::remove_file(&lock);
-                        continue;
-                    }
-                }
-                if start.elapsed() > WAIT_TIMEOUT {
-                    break; // best-effort: proceed rather than block the caller forever
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(_) => break, // can't create the sentinel (perms?) — proceed unlocked
-        }
-    }
+    with_cross_process_lock_timeout(target, WAIT_TIMEOUT, f)
+}
 
+pub(crate) fn with_cross_process_lock_timeout<R>(
+    target: &Path,
+    wait_timeout: Duration,
+    f: impl FnOnce() -> R,
+) -> Result<R, String> {
+    let lock = sentinel_path(target);
+    let acquired = acquire_cross_process_lock(&lock, wait_timeout)?;
     let out = f();
     if acquired {
         let _ = fs::remove_file(&lock);
     }
-    out
+    Ok(out)
+}
+
+fn acquire_cross_process_lock(lock: &Path, wait_timeout: Duration) -> Result<bool, String> {
+    let start = Instant::now();
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(lock) {
+            Ok(mut file) => {
+                let _ = write!(file, "{}", std::process::id());
+                return Ok(true);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // A sentinel whose recorded PID is dead belongs to a crashed process: steal it.
+                // A live holder (or an unparsable fresh sentinel) is waited for instead.
+                let contents = fs::read_to_string(lock).unwrap_or_default();
+                match contents.trim().parse::<u32>() {
+                    Ok(pid) if pid != std::process::id() && !pid_alive(pid) => {
+                        let _ = fs::remove_file(lock);
+                        continue;
+                    }
+                    _ => {
+                        if start.elapsed() > wait_timeout {
+                            return Err(format!(
+                                "Another process holds the write lock {} (holder pid {}). \
+                                 Refusing to proceed unlocked to avoid losing state.",
+                                lock.display(),
+                                contents.trim()
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+            }
+            // Can't create the sentinel (perms?) — fail closed rather than write unlocked.
+            Err(e) => {
+                return Err(format!(
+                    "Cannot create cross-process lock {}: {}",
+                    lock.display(),
+                    e
+                ))
+            }
+        }
+    }
+}
+
+/// Whether another process with `pid` is currently alive. Used to distinguish a crashed lock
+/// holder (steal its sentinel) from a live one (wait). Unknown PIDs are conservatively treated
+/// as alive so we never steal from a running process.
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        CloseHandle(handle);
+        true
+    }
+}
+
+#[cfg(not(windows))]
+fn pid_alive(pid: u32) -> bool {
+    // Linux exposes /proc/<pid>; on other Unixes without libc wired up, stay conservative.
+    Path::new("/proc").join(pid.to_string()).exists()
+}
+
+/// True when `target`'s cross-process sentinel exists AND its holder is still alive. The state
+/// loader uses this to report a `Locked` outcome instead of reading a file that is being replaced.
+pub(crate) fn sentinel_held_by_live_process(target: &Path) -> bool {
+    let lock = sentinel_path(target);
+    if !lock.exists() {
+        return false;
+    }
+    let contents = fs::read_to_string(&lock).unwrap_or_default();
+    match contents.trim().parse::<u32>() {
+        Ok(pid) => pid != std::process::id() && pid_alive(pid),
+        Err(_) => true, // can't prove the holder is dead - treat as locked
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +382,143 @@ mod tests {
         atomic_write(&path, b"[]").unwrap();
         assert!(is_last_own_write(&path, b"[]"));
         assert!(!is_last_own_write(&path, b"[{\"id\":\"a\"}]"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_flag_blocks_writes_until_cleared() {
+        let dir = std::env::temp_dir().join(format!("saple-fslock-corrupt-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tasks.json");
+        atomic_write(&path, b"original").unwrap();
+
+        flag_corrupt(&path, "parse error");
+        let blocked = atomic_write(&path, b"overwritten");
+        assert!(blocked.is_err(), "corrupt-flagged writes must be refused");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "original",
+            "flagged file must keep its bytes"
+        );
+
+        assert!(clear_corrupt_flag(&path));
+        atomic_write(&path, b"recovered").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "recovered");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn transient_rename_failures_are_retried_then_recovered() {
+        let dir = std::env::temp_dir().join(format!("saple-fslock-rename-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("from.tmp");
+        let to = dir.join("to.json");
+        fs::write(&from, b"data").unwrap();
+
+        // Fail with a Windows sharing violation twice, then succeed: bounded backoff recovers.
+        let mut calls = 0;
+        let result = rename_with_retry_impl(&from, &to, |f, t| {
+            calls += 1;
+            if calls <= 2 {
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                fs::rename(f, t)
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(calls, 3);
+        assert_eq!(fs::read_to_string(&to).unwrap(), "data");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persistent_rename_failure_reports_after_bounded_attempts() {
+        let dir = std::env::temp_dir().join(format!("saple-fslock-rename2-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("from.tmp");
+        let to = dir.join("locked.json");
+
+        let mut calls = 0;
+        let result = rename_with_retry_impl(&from, &to, |_f, _t| {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(33))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 5, "must stop at the bounded attempt count");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_transient_rename_errors_fail_immediately() {
+        let dir = std::env::temp_dir().join(format!("saple-fslock-rename3-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("missing.tmp");
+        let to = dir.join("x.json");
+
+        let mut calls = 0;
+        let result = rename_with_retry_impl(&from, &to, |_f, _t| {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(2)) // not a sharing violation
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 1, "only transient sharing violations may be retried");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn live_holder_blocks_and_dead_holder_is_stolen() {
+        let dir = std::env::temp_dir().join(format!("saple-fslock-cp-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("state.json");
+        let lock = sentinel_path(&target);
+
+        // A sentinel naming a dead process is stolen immediately.
+        fs::write(&lock, "999999999").unwrap();
+        let out = with_cross_process_lock_timeout(&target, Duration::from_millis(50), || 42);
+        assert_eq!(out.unwrap(), 42, "dead holder's sentinel must be stolen");
+        assert!(!lock.exists(), "sentinel removed after release");
+
+        // A sentinel held by THIS process (live pid) must fail closed, not proceed unlocked.
+        fs::write(&lock, std::process::id().to_string()).unwrap();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_clone = ran.clone();
+        let result = with_cross_process_lock_timeout(&target, Duration::from_millis(30), move || {
+            ran_clone.store(true, Ordering::SeqCst);
+        });
+        assert!(result.is_err(), "a live holder must fail closed after the wait budget");
+        assert!(!ran.load(Ordering::SeqCst), "closure must NOT run unlocked");
+        assert_eq!(
+            fs::read_to_string(&lock).unwrap(),
+            std::process::id().to_string(),
+            "the live holder's sentinel is left alone"
+        );
+
+        // An unparsable sentinel is treated as locked (conservative) - no age-based stealing.
+        fs::write(&lock, "").unwrap();
+        let result = with_cross_process_lock_timeout(&target, Duration::from_millis(30), || ());
+        assert!(result.is_err(), "unparsable sentinel must fail closed, not be stolen by age");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unparsable_sentinel_counts_as_locked_for_the_loader() {
+        let dir = std::env::temp_dir().join(format!("saple-fslock-probe-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("tasks.json");
+        assert!(!sentinel_held_by_live_process(&target));
+
+        fs::write(sentinel_path(&target), "garbage").unwrap();
+        assert!(sentinel_held_by_live_process(&target), "unprovable holder counts as locked");
+
+        fs::remove_file(sentinel_path(&target)).unwrap();
+        fs::write(sentinel_path(&target), "999999999").unwrap();
+        assert!(!sentinel_held_by_live_process(&target), "dead holder does not count as locked");
 
         let _ = fs::remove_dir_all(&dir);
     }

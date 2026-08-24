@@ -202,13 +202,56 @@ fn create_review_record_inner(
     Ok(record)
 }
 
+/// Load a JSON-array state file (tasks.json, sessions.json) with corrupt-state handling: a parse
+/// failure preserves the original bytes, flags the path so writes are blocked until recovery, and
+/// returns an error - the caller must fail closed instead of proceeding with empty state.
+fn load_json_array(path: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    match crate::state_load::read_json_text(path) {
+        crate::state_load::JsonText::Ok(content) => {
+            serde_json::from_str::<Vec<serde_json::Value>>(&content).map_err(|e| {
+                let err = format!("Failed to parse {}: {}", path.display(), e);
+                match crate::state_load::preserve_and_flag_corrupt(path, &err) {
+                    Ok(backup) => format!(
+                        "{}. Original bytes preserved at {} — resolve recovery before writing.",
+                        err,
+                        backup.display()
+                    ),
+                    Err(preserve_err) => format!("{} ({})", err, preserve_err),
+                }
+            })
+        }
+        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
+        crate::state_load::JsonText::Encoding(m) => Err(m),
+    }
+}
+
+/// Load and parse a review record, distinguishing missing/corrupt from plain IO errors. A corrupt
+/// record preserves its original bytes, flags the path (blocking writes until recovery), and never
+/// auto-recreates over the corruption.
+fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, String> {
+    match crate::state_load::read_json_text(path) {
+        crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content).map_err(|e| {
+            let err = format!("Failed to parse review record {}: {}", path.display(), e);
+            match crate::state_load::preserve_and_flag_corrupt(path, &err) {
+                Ok(backup) => format!(
+                    "{}. Original bytes preserved at {} — resolve recovery before editing.",
+                    err,
+                    backup.display()
+                ),
+                Err(preserve_err) => format!("{} ({})", err, preserve_err),
+            }
+        }),
+        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
+        crate::state_load::JsonText::Encoding(m) => Err(m),
+    }
+}
+
 fn read_review_record_inner(project_path: String, task_id: String) -> Result<ReviewRecord, String> {
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
     if !review_file_path.exists() {
         return Err("Review record not found".to_string());
     }
-    let content = fs::read_to_string(&review_file_path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse review record: {}", e))
+    load_review_record(&review_file_path)
 }
 
 fn submit_review_decision_inner(
@@ -227,53 +270,63 @@ fn submit_review_decision_inner(
         ));
     }
 
-    // 1. Read and update the review record
+    // 1. Read and update the review record — the whole read-modify-write holds the file's
+    // cross-process lock so a concurrent sidecar/agent write cannot be lost mid-cycle.
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
     if !review_file_path.exists() {
         return Err("Review record not found".to_string());
     }
 
-    let record_content = fs::read_to_string(&review_file_path).map_err(|e| e.to_string())?;
-    let mut record: ReviewRecord = serde_json::from_str(&record_content).map_err(|e| e.to_string())?;
+    let session_id = crate::fs_lock::with_path_lock(&review_file_path, || {
+        let mut record = load_review_record(&review_file_path)?;
 
-    let session_id = record.session_id.clone();
-    record.status = if decision == "approve" { "approved" } else { "rejected" }.to_string();
-    record.notes = notes.clone();
-    record.updated_at = now_iso();
+        let session_id = record.session_id.clone();
+        record.status = if decision == "approve" { "approved" } else { "rejected" }.to_string();
+        record.notes = notes.clone();
+        record.updated_at = now_iso();
 
-    let record_json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    crate::fs_lock::atomic_write(&review_file_path, record_json.as_bytes())?;
+        let record_json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+        crate::fs_lock::write_unlocked(&review_file_path, record_json.as_bytes())?;
+        Ok::<String, String>(session_id)
+    })??;
 
-    // 2. Update task in tasks.json
+    // 2. Update task in tasks.json (locked read-modify-write against tasks.json writers).
     let tasks_file = get_project_file_path(&project_path, ".saple/tasks.json")?;
     if tasks_file.exists() {
-        let content = fs::read_to_string(&tasks_file).map_err(|e| e.to_string())?;
-        if let Ok(mut tasks) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
-            let next_column = if decision == "approve" { "done" } else { "progress" };
-            let mut updated = false;
-            for t in &mut tasks {
-                if t.get("id").and_then(|id| id.as_str()) == Some(&task_id) {
-                    t["column"] = serde_json::json!(next_column);
-                    t["updatedAt"] = serde_json::json!(now_iso());
-                    updated = true;
+        crate::fs_lock::with_path_lock(&tasks_file, || {
+            match load_json_array(&tasks_file) {
+                Ok(mut tasks) => {
+                    let next_column = if decision == "approve" { "done" } else { "progress" };
+                    let mut updated = false;
+                    for t in &mut tasks {
+                        if t.get("id").and_then(|id| id.as_str()) == Some(&task_id) {
+                            t["column"] = serde_json::json!(next_column);
+                            t["updatedAt"] = serde_json::json!(now_iso());
+                            updated = true;
+                        }
+                    }
+                    if updated {
+                        let json = serde_json::to_string_pretty(&tasks).map_err(|e| e.to_string())?;
+                        crate::fs_lock::write_unlocked(&tasks_file, json.as_bytes())?;
+                    }
+                    Ok(())
                 }
+                // A corrupt tasks.json must fail the decision closed, never silently skip the
+                // task move while the review proceeds.
+                Err(e) => Err(e),
             }
-            if updated {
-                let json = serde_json::to_string_pretty(&tasks).map_err(|e| e.to_string())?;
-                crate::fs_lock::atomic_write(&tasks_file, json.as_bytes())?;
-            }
-        }
+        })??;
     }
 
-    // 3. Update session in sessions.json
+    // 3. Update session in sessions.json (locked read-modify-write).
     let sessions_file = get_project_file_path(&project_path, ".saple/agents/sessions.json")?;
     let mut run_id: Option<String> = None;
     if sessions_file.exists() {
-        let content = fs::read_to_string(&sessions_file).map_err(|e| e.to_string())?;
-        if let Ok(mut sessions) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+        run_id = crate::fs_lock::with_path_lock(&sessions_file, || {
+            let mut sessions = load_json_array(&sessions_file)?;
             let next_status = if decision == "approve" { "done" } else { "failed" };
             let mut updated = false;
-            for s in &mut sessions {
+            let mut run_id: Option<String> = None;            for s in &mut sessions {
                 if s.get("id").and_then(|id| id.as_str()) == Some(&session_id) {
                     run_id = s.get("runId").and_then(|v| v.as_str()).map(String::from);
                     s["status"] = serde_json::json!(next_status);
@@ -286,9 +339,10 @@ fn submit_review_decision_inner(
             }
             if updated {
                 let json = serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?;
-                crate::fs_lock::atomic_write(&sessions_file, json.as_bytes())?;
+                crate::fs_lock::write_unlocked(&sessions_file, json.as_bytes())?;
             }
-        }
+            Ok::<Option<String>, String>(run_id)
+        })??;
     }
 
     // 4. Record the decision on the canonical run (P0: "review decision → final run/review
@@ -406,18 +460,18 @@ fn run_verification_command_inner(
         ));
     }
 
-    // Update the review record with test output!
+    // Update the review record with test output! Best-effort: a corrupt record is left untouched
+    // (already flagged by the loader) rather than blocking the verification result.
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
     if review_file_path.exists() {
-        if let Ok(content) = fs::read_to_string(&review_file_path) {
-            if let Ok(mut record) = serde_json::from_str::<ReviewRecord>(&content) {
-                record.test_output = Some(combined.clone());
-                record.updated_at = now_iso();
-                if let Ok(json) = serde_json::to_string_pretty(&record) {
-                    let _ = crate::fs_lock::atomic_write(&review_file_path, json.as_bytes());
-                }
+        let _ = crate::fs_lock::with_path_lock(&review_file_path, || {
+            let Ok(mut record) = load_review_record(&review_file_path) else { return };
+            record.test_output = Some(combined.clone());
+            record.updated_at = now_iso();
+            if let Ok(json) = serde_json::to_string_pretty(&record) {
+                let _ = crate::fs_lock::write_unlocked(&review_file_path, json.as_bytes());
             }
-        }
+        });
     }
 
     Ok(combined)
@@ -434,17 +488,18 @@ fn set_file_viewed_inner(
     if !review_file_path.exists() {
         return Err("Review record not found".to_string());
     }
-    let content = fs::read_to_string(&review_file_path).map_err(|e| e.to_string())?;
-    let mut record: ReviewRecord = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    crate::fs_lock::with_path_lock(&review_file_path, || {
+        let mut record = load_review_record(&review_file_path)?;
 
-    record.viewed_files.retain(|p| p != &file_path);
-    if viewed {
-        record.viewed_files.push(file_path);
-    }
-    record.updated_at = now_iso();
+        record.viewed_files.retain(|p| p != &file_path);
+        if viewed {
+            record.viewed_files.push(file_path);
+        }
+        record.updated_at = now_iso();
 
-    let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())
+        let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+        crate::fs_lock::write_unlocked(&review_file_path, json.as_bytes())
+    })?
 }
 
 #[tauri::command]

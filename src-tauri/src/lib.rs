@@ -15,6 +15,7 @@ mod diagnostics;
 mod process_ext;
 mod fs_lock;
 mod project_roots;
+mod state_load;
 mod watcher;
 
 use project_roots::ProjectRootRegistry;
@@ -156,12 +157,15 @@ pub fn run() {
             git::git_commit,
             git::git_list_branches,
             git::git_checkout_branch,
+            git::ensure_saple_git_excluded,
             review::create_review_record,
             review::read_review_record,
             review::submit_review_decision,
             review::run_verification_command,
             review::set_file_viewed,
             control_plane::canonical_record_write,
+            state_load::load_state_file,
+            state_load::resolve_state_corruption,
             june_control::june_control_get_enabled,
             june_control::june_control_set_enabled,
             june_control::june_command_result,
