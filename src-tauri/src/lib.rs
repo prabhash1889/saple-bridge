@@ -20,7 +20,7 @@ mod watcher;
 use project_roots::ProjectRootRegistry;
 
 #[tauri::command]
-fn select_directory(registry: tauri::State<ProjectRootRegistry>) -> Option<String> {
+fn select_directory(registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>) -> Option<String> {
     let folder = rfd::FileDialog::new()
         .set_title("Select Project Directory")
         .pick_folder();
@@ -82,8 +82,10 @@ pub fn run() {
             app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
             // Registry of approved project roots (canonical absolute paths). Lives only in
             // Rust memory: roots are added by native directory selection or validated
-            // restoration, and privileged commands will verify against it (sub-phase 1B).
-            app.manage(project_roots::ProjectRootRegistry::new());
+            // restoration, and every privileged command verifies against it before touching
+            // the filesystem or spawning a process (sub-phase 1B). Arc-shared so commands can
+            // move a handle into their blocking workers.
+            app.manage(std::sync::Arc::new(project_roots::ProjectRootRegistry::new()));
             june_control::start(app.handle().clone());
             Ok(())
         })
@@ -114,7 +116,6 @@ pub fn run() {
             select_directory,
             project_roots::register_project_root,
             project_roots::release_project_root,
-            project_roots::list_project_roots,
             pty::spawn_pty,
             claude_context::get_claude_context_usage,
             pty::write_pty,

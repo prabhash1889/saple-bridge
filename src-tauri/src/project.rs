@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use crate::process_ext::CommandNoWindow;
+use crate::project_roots::ProjectRootRegistry;
 
 pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
     use std::path::Component;
@@ -214,13 +216,18 @@ fn is_leap(year: i64) -> bool {
 }
 
 #[tauri::command]
-pub async fn ensure_workspace_dirs(project_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || ensure_workspace_dirs_inner(project_path))
+pub async fn ensure_workspace_dirs(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ensure_workspace_dirs_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn ensure_workspace_dirs_inner(project_path: String) -> Result<(), String> {
+fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let dirs = [
         ".saple",
         ".saple/agents",
@@ -258,13 +265,18 @@ fn ensure_workspace_dirs_inner(project_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn ensure_project_config(project_path: String) -> Result<WorkspaceConfig, String> {
-    tauri::async_runtime::spawn_blocking(move || ensure_project_config_inner(project_path))
+pub async fn ensure_project_config(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<WorkspaceConfig, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ensure_project_config_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn ensure_project_config_inner(project_path: String) -> Result<WorkspaceConfig, String> {
+fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceConfig, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
 
     if config_path.exists() {
@@ -298,13 +310,18 @@ fn ensure_project_config_inner(project_path: String) -> Result<WorkspaceConfig, 
 }
 
 #[tauri::command]
-pub async fn read_project_config(project_path: String) -> Result<WorkspaceConfig, String> {
-    tauri::async_runtime::spawn_blocking(move || read_project_config_inner(project_path))
+pub async fn read_project_config(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<WorkspaceConfig, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || read_project_config_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-pub(crate) fn read_project_config_inner(project_path: String) -> Result<WorkspaceConfig, String> {
+pub(crate) fn read_project_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceConfig, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
     if !config_path.exists() {
         return Err("Config file not found".to_string());
@@ -314,13 +331,19 @@ pub(crate) fn read_project_config_inner(project_path: String) -> Result<Workspac
 }
 
 #[tauri::command]
-pub async fn write_project_config(project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, String> {
-    tauri::async_runtime::spawn_blocking(move || write_project_config_inner(project_path, config))
+pub async fn write_project_config(
+    project_path: String,
+    config: WorkspaceConfig,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<WorkspaceConfig, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || write_project_config_inner(&registry, project_path, config))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn write_project_config_inner(project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, String> {
+fn write_project_config_inner(registry: &ProjectRootRegistry, project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
     let mut updated = config;
     updated.updated_at = now_iso();
@@ -330,13 +353,19 @@ fn write_project_config_inner(project_path: String, config: WorkspaceConfig) -> 
 }
 
 #[tauri::command]
-pub async fn read_project_file(project_path: String, file_path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_project_file_inner(project_path, file_path))
+pub async fn read_project_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || read_project_file_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn read_project_file_inner(project_path: String, file_path: String) -> Result<String, String> {
+fn read_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let full_path = get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("File not found".to_string());
@@ -345,25 +374,37 @@ fn read_project_file_inner(project_path: String, file_path: String) -> Result<St
 }
 
 #[tauri::command]
-pub async fn write_project_file(project_path: String, file_path: String, content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_project_file_inner(project_path, file_path, content))
+pub async fn write_project_file(
+    project_path: String,
+    file_path: String,
+    content: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || write_project_file_inner(&registry, project_path, file_path, content))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn write_project_file_inner(project_path: String, file_path: String, content: String) -> Result<(), String> {
+fn write_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String, content: String) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let full_path = get_project_write_path(&project_path, &file_path)?;
     crate::fs_lock::atomic_write(&full_path, content.as_bytes())
 }
 
 #[tauri::command]
-pub async fn get_workspace_summary(project_path: String) -> Result<WorkspaceSummary, String> {
-    tauri::async_runtime::spawn_blocking(move || get_workspace_summary_inner(project_path))
+pub async fn get_workspace_summary(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<WorkspaceSummary, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_workspace_summary_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn get_workspace_summary_inner(project_path: String) -> Result<WorkspaceSummary, String> {
+fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceSummary, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let base = Path::new(&project_path);
     let canonical_base = base.canonicalize().map_err(|e| format!("Invalid path: {}", e))?;
     let name = base.file_name()
@@ -375,7 +416,7 @@ fn get_workspace_summary_inner(project_path: String) -> Result<WorkspaceSummary,
     let _ = fs::remove_file(canonical_base.join(".saple_write_test"));
     
     // Check git repo
-    let branch = git_current_branch_inner(&project_path).ok();
+    let branch = git_current_branch_inner(registry, &project_path).ok();
     let is_git_repo = branch.is_some();
     
     // Check saple config
@@ -399,7 +440,8 @@ fn get_workspace_summary_inner(project_path: String) -> Result<WorkspaceSummary,
     })
 }
 
-fn git_current_branch_inner(project_path: &str) -> Result<String, String> {
+fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) -> Result<String, String> {
+    registry.ensure_inside_approved_root(project_path)?;
     let output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(project_path)
@@ -420,15 +462,23 @@ fn git_current_branch_inner(project_path: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn git_current_branch(project_path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || git_current_branch_inner(&project_path))
+pub async fn git_current_branch(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || git_current_branch_inner(&registry, &project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn install_mcp_config(project_path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || install_mcp_config_inner(project_path))
+pub async fn install_mcp_config(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || install_mcp_config_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -582,7 +632,8 @@ fn heal_mcp_configs(project_path: &str) {
     }
 }
 
-fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
+fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let binary_path = sidecar_binary_path()?;
     let binary_str = binary_path.to_string_lossy().to_string();
 
@@ -642,56 +693,68 @@ fn install_mcp_config_inner(project_path: String) -> Result<String, String> {
 /// spawn `saple-mcp`, send one `tools/list` request, and return its `result`. Keeps Bridge ignorant
 /// of the catalog contents (no drift). `.no_window()` suppresses the console flash on Windows.
 #[tauri::command]
-pub async fn test_mcp_tools(project_path: String) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        use std::io::{BufRead, Write};
-        use std::process::Stdio;
+pub async fn test_mcp_tools(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<serde_json::Value, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || test_mcp_tools_inner(&registry, project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
-        let bin = sidecar_binary_path()?;
-        if !bin.exists() {
-            return Err(format!(
-                "saple-mcp sidecar not found at {}. Run `npm run prepare-sidecar`.",
-                bin.display()
-            ));
-        }
+fn test_mcp_tools_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<serde_json::Value, String> {
+    use std::io::{BufRead, Write};
+    use std::process::Stdio;
 
-        let mut child = Command::new(&bin)
-            .arg(&project_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .no_window()
-            .spawn()
-            .map_err(|e| format!("Failed to spawn saple-mcp: {}", e))?;
+    registry.ensure_inside_approved_root(&project_path)?;
 
-        // `tools/list` needs no prior `initialize` in this server, so skip the handshake.
-        let req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
-        child.stdin.take()
-            .ok_or("Failed to open saple-mcp stdin")?
-            .write_all(req.as_bytes())
-            .map_err(|e| e.to_string())?;
+    let bin = sidecar_binary_path()?;
+    if !bin.exists() {
+        return Err(format!(
+            "saple-mcp sidecar not found at {}. Run `npm run prepare-sidecar`.",
+            bin.display()
+        ));
+    }
 
-        let mut line = String::new();
-        std::io::BufReader::new(child.stdout.take().ok_or("Failed to open saple-mcp stdout")?)
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?;
+    let mut child = Command::new(&bin)
+        .arg(&project_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .no_window()
+        .spawn()
+        .map_err(|e| format!("Failed to spawn saple-mcp: {}", e))?;
 
-        let _ = child.kill();
-        let _ = child.wait();
+    // `tools/list` needs no prior `initialize` in this server, so skip the handshake.
+    let req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
+    child.stdin.take()
+        .ok_or("Failed to open saple-mcp stdin")?
+        .write_all(req.as_bytes())
+        .map_err(|e| e.to_string())?;
 
-        let resp: serde_json::Value = serde_json::from_str(line.trim())
-            .map_err(|e| format!("Invalid response from saple-mcp: {}", e))?;
-        resp.get("result").cloned().ok_or_else(|| {
-            resp["error"]["message"].as_str().unwrap_or("No result in response").to_string()
-        })
+    let mut line = String::new();
+    std::io::BufReader::new(child.stdout.take().ok_or("Failed to open saple-mcp stdout")?)
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let resp: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|e| format!("Invalid response from saple-mcp: {}", e))?;
+    resp.get("result").cloned().ok_or_else(|| {
+        resp["error"]["message"].as_str().unwrap_or("No result in response").to_string()
     })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn check_mcp_status(project_path: String) -> Result<McpStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || check_mcp_status_inner(project_path))
+pub async fn check_mcp_status(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<McpStatus, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || check_mcp_status_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -727,7 +790,8 @@ fn saple_memory_is_legacy(config: &serde_json::Value) -> bool {
     false
 }
 
-fn check_mcp_status_inner(project_path: String) -> Result<McpStatus, String> {
+fn check_mcp_status_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<McpStatus, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     // Route both paths through `get_project_file_path` for containment parity with the rest of
     // the module, rather than joining onto the raw project path.
     let mcp_json_path = get_project_file_path(&project_path, ".mcp.json")?;
@@ -793,6 +857,69 @@ mod tests {
         dir.canonicalize().unwrap()
     }
 
+    /// A registry with `dir` approved - the "legitimately opened workspace" fixture.
+    fn approved(dir: &Path) -> ProjectRootRegistry {
+        let registry = ProjectRootRegistry::new();
+        registry.register_root(dir).unwrap();
+        registry
+    }
+
+    #[test]
+    fn privileged_inners_reject_unregistered_absolute_root() {
+        // Every inner returns different payload types; erase them by mapping to (),
+        // keeping assertions on the presence/absence of the registry rejection only.
+        let dir = temp_project();
+        let sibling = temp_project();
+        let config = WorkspaceConfig {
+            workspace_id: "w".into(), workspace_name: "w".into(), memory_mode: "saple".into(),
+            default_provider: "codex".into(), default_model_by_provider: HashMap::new(),
+            max_parallel_agents: 1, enable_edit_mode: true, verification_presets: vec![],
+            created_at: String::new(), updated_at: String::new(),
+        };
+        let all_cases = |registry: &ProjectRootRegistry, path: String| -> Vec<(&'static str, Result<(), String>)> {
+            vec![
+                ("ensure_workspace_dirs", ensure_workspace_dirs_inner(registry, path.clone()).map(|_| ())),
+                ("read_project_file", read_project_file_inner(registry, path.clone(), "x.txt".into()).map(|_| ())),
+                ("write_project_file", write_project_file_inner(registry, path.clone(), "x.txt".into(), "x".into())),
+                ("read_project_config", read_project_config_inner(registry, path.clone()).map(|_| ())),
+                ("write_project_config", write_project_config_inner(registry, path.clone(), config.clone()).map(|_| ())),
+                ("get_workspace_summary", get_workspace_summary_inner(registry, path.clone()).map(|_| ())),
+                ("git_current_branch", git_current_branch_inner(registry, &path).map(|_| ())),
+                ("check_mcp_status", check_mcp_status_inner(registry, path.clone()).map(|_| ())),
+                ("install_mcp_config", install_mcp_config_inner(registry, path).map(|_| ())),
+            ]
+        };
+
+        // Unregistered absolute root must be refused everywhere with a clear message.
+        let stranger = approved(&dir);
+        for (name, result) in all_cases(&stranger, sibling.to_string_lossy().to_string()) {
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("not inside an approved project root"),
+                "case '{}': expected registry rejection, got: {}",
+                name,
+                err
+            );
+        }
+
+        // The approved root passes the gate: failures (if any) are ordinary ones like
+        // "Config file not found", never the registry rejection.
+        let own = approved(&dir);
+        for (name, result) in all_cases(&own, dir.to_string_lossy().to_string()) {
+            if let Err(err) = result {
+                assert!(
+                    !err.contains("not inside an approved project root"),
+                    "case '{}': approved root must pass the gate, got: {}",
+                    name,
+                    err
+                );
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&sibling);
+    }
+
     #[test]
     fn allows_relative_paths_inside_workspace() {
         let dir = temp_project();
@@ -843,17 +970,18 @@ mod tests {
     fn write_project_file_rejects_git_internal_paths() {
         let dir = temp_project();
         let project = dir.to_str().unwrap().to_string();
+        let registry = approved(&dir);
 
-        let err = write_project_file_inner(project.clone(), ".git/config".to_string(), "x".to_string()).unwrap_err();
+        let err = write_project_file_inner(&registry, project.clone(), ".git/config".to_string(), "x".to_string()).unwrap_err();
         assert!(err.contains(".git"), "got: {}", err);
-        let err = write_project_file_inner(project.clone(), ".git/hooks/pre-commit".to_string(), "x".to_string()).unwrap_err();
+        let err = write_project_file_inner(&registry, project.clone(), ".git/hooks/pre-commit".to_string(), "x".to_string()).unwrap_err();
         assert!(err.contains(".git"), "got: {}", err);
 
         // Windows filesystems are case-insensitive: an upper-cased component must hit
         // the same block instead of reaching the real .git directory.
         #[cfg(windows)]
         {
-            let err = write_project_file_inner(project.clone(), ".GIT/config".to_string(), "x".to_string()).unwrap_err();
+            let err = write_project_file_inner(&registry, project.clone(), ".GIT/config".to_string(), "x".to_string()).unwrap_err();
             assert!(err.contains(".git"), "got: {}", err);
         }
 
@@ -862,7 +990,7 @@ mod tests {
         assert!(!dir.join(".git").exists(), ".git must not be created by a rejected write");
 
         // A normal contained write is untouched.
-        write_project_file_inner(project, "docs/note.md".to_string(), "hi".to_string())
+        write_project_file_inner(&registry, project, "docs/note.md".to_string(), "hi".to_string())
             .expect("contained write must succeed");
         assert!(dir.join("docs").join("note.md").exists());
 
