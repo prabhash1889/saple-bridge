@@ -68,7 +68,9 @@ pub fn watch_project_files(
     project_path: String,
     app_handle: AppHandle,
     state: State<'_, WatcherState>,
+    registry: State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let mut guard = state.0.lock().unwrap();
 
     if guard.as_ref().map(|w| w.project_path == project_path).unwrap_or(false) {
@@ -174,7 +176,9 @@ pub fn watch_swarm_dir(
     project_path: String,
     app_handle: AppHandle,
     state: State<'_, SwarmWatcherState>,
+    registry: State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     let mut guard = state.0.lock().unwrap();
 
     if guard.as_ref().map(|w| w.project_path == project_path).unwrap_or(false) {

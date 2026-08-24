@@ -56,9 +56,6 @@ impl ProjectRootRegistry {
     /// Whether `path` resolves inside any approved root. Non-existent targets are
     /// resolved through their nearest existing ancestor (the target may be about to
     /// be created), mirroring the containment logic in `project.rs`.
-    // Exported for sub-phase 1B, which wires every privileged command through this
-    // check; until then only tests call it.
-    #[allow(dead_code)]
     pub fn verify_path_inside_approved_root(&self, path: &Path) -> bool {
         if !path.is_absolute() {
             return false;
@@ -75,6 +72,9 @@ impl ProjectRootRegistry {
     }
 
     /// Canonical roots currently approved, sorted for stable output.
+    /// Deliberately not exposed to the renderer: the approved-root list is Rust-internal
+    /// trust state, so this stays available to tests and diagnostics only.
+    #[cfg(test)]
     pub fn list_roots(&self) -> Vec<PathBuf> {
         self.roots
             .lock()
@@ -84,6 +84,21 @@ impl ProjectRootRegistry {
                 keys
             })
             .unwrap_or_default()
+    }
+
+    /// Trust-boundary gate for every privileged command: `project_path` must resolve
+    /// inside an approved root or the command refuses to run (fail closed). This is
+    /// the single check each `*_inner` operation calls before touching the filesystem,
+    /// spawning a process, or arming a watcher.
+    pub fn ensure_inside_approved_root(&self, project_path: &str) -> Result<(), String> {
+        if self.verify_path_inside_approved_root(Path::new(project_path)) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Access denied: '{}' is not inside an approved project root. Re-open the folder in Bridge to approve it.",
+                project_path
+            ))
+        }
     }
 
     /// Drop one reference held by a closing workspace instance. The root is removed
@@ -157,7 +172,7 @@ fn path_starts_with(path: &Path, base: &Path) -> bool {
 #[tauri::command]
 pub fn register_project_root(
     path: String,
-    registry: tauri::State<ProjectRootRegistry>,
+    registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>,
 ) -> Result<String, String> {
     // Renderer-initiated registration is always the validated-restoration path: the
     // directory must still exist and be accessible before it becomes trusted.
@@ -167,17 +182,11 @@ pub fn register_project_root(
 }
 
 #[tauri::command]
-pub fn release_project_root(path: String, registry: tauri::State<ProjectRootRegistry>) -> Result<(), String> {
+pub fn release_project_root(
+    path: String,
+    registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
     registry.release_root(Path::new(&path))
-}
-
-#[tauri::command]
-pub fn list_project_roots(registry: tauri::State<ProjectRootRegistry>) -> Vec<String> {
-    registry
-        .list_roots()
-        .iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect()
 }
 
 #[cfg(test)]
