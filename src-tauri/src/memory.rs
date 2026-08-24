@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use serde::{Serialize, Deserialize};
+use crate::project_roots::ProjectRootRegistry;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct MemoryNode {
@@ -414,7 +416,11 @@ pub fn parse_markdown_memory(content: &str, relative_path: &str) -> (MemoryNode,
 }
 
 #[tauri::command]
-pub async fn get_memory_graph(project_path: String) -> Result<MemoryGraph, String> {
+pub async fn get_memory_graph(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MemoryGraph, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || get_memory_graph_inner(project_path))
         .await
         .map_err(|e| e.to_string())?
@@ -488,7 +494,12 @@ fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
 }
 
 #[tauri::command]
-pub async fn create_memory_snapshot(project_path: String, name: String) -> Result<(), String> {
+pub async fn create_memory_snapshot(
+    project_path: String,
+    name: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || create_memory_snapshot_inner(project_path, name))
         .await
         .map_err(|e| e.to_string())?
@@ -514,7 +525,12 @@ fn create_memory_snapshot_inner(project_path: String, name: String) -> Result<()
 }
 
 #[tauri::command]
-pub async fn restore_memory_snapshot(project_path: String, name: String) -> Result<(), String> {
+pub async fn restore_memory_snapshot(
+    project_path: String,
+    name: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || restore_memory_snapshot_inner(project_path, name))
         .await
         .map_err(|e| e.to_string())?
@@ -578,7 +594,11 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
 }
 
 #[tauri::command]
-pub async fn list_memory_snapshots(project_path: String) -> Result<Vec<String>, String> {
+pub async fn list_memory_snapshots(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<String>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || list_memory_snapshots_inner(project_path))
         .await
         .map_err(|e| e.to_string())?
@@ -605,7 +625,12 @@ fn list_memory_snapshots_inner(project_path: String) -> Result<Vec<String>, Stri
 }
 
 #[tauri::command]
-pub async fn delete_memory_file(project_path: String, file_path: String) -> Result<(), String> {
+pub async fn delete_memory_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || delete_memory_file_inner(project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
@@ -641,7 +666,12 @@ pub(crate) fn delete_memory_file_inner(project_path: String, file_path: String) 
 }
 
 #[tauri::command]
-pub async fn read_memory_file(project_path: String, file_path: String) -> Result<String, String> {
+pub async fn read_memory_file(
+    project_path: String,
+    file_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || read_memory_file_inner(project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
@@ -674,7 +704,9 @@ pub async fn save_memory_node(
     tags: Vec<String>,
     aliases: Vec<String>,
     content: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<MemoryNode, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         save_memory_node_inner(project_path, id, title, category, tags, aliases, content)
     })
@@ -943,7 +975,12 @@ fn collect_notes(dir: &Path, base: &Path, out: &mut Vec<(MemoryNode, String, Vec
 /// Case-insensitive full-text search over note titles and bodies. Returns matching note ids;
 /// the Memory list uses them to widen its instant title/tag filter to note content.
 #[tauri::command]
-pub async fn search_memory_content(project_path: String, query: String) -> Result<Vec<String>, String> {
+pub async fn search_memory_content(
+    project_path: String,
+    query: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<String>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || search_memory_content_inner(project_path, query))
         .await
         .map_err(|e| e.to_string())?
@@ -980,7 +1017,9 @@ fn search_memory_content_inner(project_path: String, query: String) -> Result<Ve
 pub async fn get_unlinked_mentions(
     project_path: String,
     id: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<Vec<UnlinkedMention>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || get_unlinked_mentions_inner(project_path, id))
         .await
         .map_err(|e| e.to_string())?
@@ -1076,7 +1115,9 @@ pub async fn add_memory_link(
     project_path: String,
     source: String,
     target: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || add_memory_link_inner(project_path, source, target))
         .await
         .map_err(|e| e.to_string())?
