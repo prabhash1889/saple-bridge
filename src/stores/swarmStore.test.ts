@@ -1219,3 +1219,59 @@ describe('automated review gate (Phase 4)', () => {
     expect(addPaneMock).not.toHaveBeenCalled();
   });
 });
+
+describe('swarm lifecycle races (Phase 3)', () => {
+  it('removing an agent drops its dependents edges and unblocks edge-only blockers', () => {
+    seed([
+      agent('root', [], 'failed'),
+      agent('dep', ['root'], 'blocked'),
+    ]);
+
+    useSwarmStore.getState().removeAgent('root');
+
+    const roster = useSwarmStore.getState().activeAgents;
+    expect(roster.map((a) => a.id)).toEqual(['dep']);
+    expect(roster[0].dependencies).toEqual([]);
+    expect(roster[0].status).toBe('waiting'); // re-evaluated by the next scan, not stuck blocked
+  });
+
+  it('a scheduler deadlock is surfaced as blocked agents instead of a silently stuck swarm', async () => {
+    seed([agent('stuck', ['ghost'])]);
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT);
+
+    const stuck = getAgent('stuck');
+    expect(stuck.status).toBe('blocked');
+    expect(stuck.statusReason).toMatch(/deadlock/i);
+    expect(addPaneMock).not.toHaveBeenCalled();
+  });
+
+  it('undelivered digests survive pause and resume exactly once; stop clears them', async () => {
+    seed([agent('coordinator', [], 'running', { role: 'coordinator' })]);
+    useSwarmStore.setState({ pendingDigests: ['[Bridge digest] queued'] });
+
+    await useSwarmStore.getState().pauseSwarm(PROJECT);
+    expect(useSwarmStore.getState().pendingDigests).toEqual(['[Bridge digest] queued']);
+
+    await useSwarmStore.getState().resumeSwarm(PROJECT);
+    // No live pane watch in tests: the digest stays queued for injection rather than being
+    // dropped or duplicated.
+    expect(useSwarmStore.getState().pendingDigests).toEqual(['[Bridge digest] queued']);
+
+    await useSwarmStore.getState().stopSwarm(PROJECT);
+    expect(useSwarmStore.getState().pendingDigests).toEqual([]);
+  });
+
+  it('a launch racing a stop kills the just-created pane instead of orphaning it', async () => {
+    seed([agent('doomed')]);
+    // addPane resolves only after the swarm has already been stopped.
+    addPaneMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve('late-pane'), 20)),
+    );
+
+    await useSwarmStore.getState().checkAndRunNextAgents(PROJECT); // schedules the launch
+    await useSwarmStore.getState().stopSwarm(PROJECT); // lands inside the addPane await
+    await vi.waitFor(() => expect(removePaneMock).toHaveBeenCalledWith('late-pane'));
+  });
+});
+
