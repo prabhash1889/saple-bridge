@@ -89,6 +89,14 @@
      constant while its titlebar (app-theme CSS vars) follows the selected theme. */
   --bg-terminal: #1E1E1E;
 
+  /* Semantic surface/color aliases. They reference the base palette so every
+     dark-family theme block that overrides backgrounds/accent picks up the
+     right values automatically. Light-family themes re-map --bg-card below
+     because their *-light step is darker than the card surface. */
+  --bg-card: var(--bg-surface-light);
+  --bg-surface-hover: var(--bg-surface-active);
+  --color-primary: var(--accent);
+
   --text-primary: #F3F4F6;
   --text-secondary: #9CA3AF;
   --text-muted: #6B7280;
@@ -183,6 +191,9 @@ html[data-theme="light"] {
   --bg-surface-active: #DFE2E8;
   --bg-overlay: rgba(233, 235, 239, 0.85);
   --bg-deep: #DEE1E7;
+
+  /* Light-family card mapping: the elevated card is the bright surface step. */
+  --bg-card: var(--bg-surface);
 
   --text-primary: #1A1D22;
   --text-secondary: #4B5563;
@@ -439,6 +450,9 @@ html[data-theme="solarized"] {
   --bg-overlay: rgba(253, 246, 227, 0.85);
   --bg-deep: #E3DCC6;
 
+  /* Light-family card mapping (see the built-in light theme). */
+  --bg-card: var(--bg-surface);
+
   --text-primary: #586E75;
   --text-secondary: #657B83;
   --text-muted: #93A1A1;
@@ -495,6 +509,9 @@ html[data-theme="latte"] {
   --bg-surface-active: #CCD0DA;
   --bg-overlay: rgba(239, 241, 245, 0.85);
   --bg-deep: #DCE0E8;
+
+  /* Light-family card mapping (see the built-in light theme). */
+  --bg-card: var(--bg-surface);
 
   --text-primary: #4C4F69;
   --text-secondary: #5C5F77;
