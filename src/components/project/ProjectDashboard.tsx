@@ -17,6 +17,7 @@ import {
   Terminal,
   Trash2,
   Users,
+  X,
   XCircle,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
@@ -76,6 +77,7 @@ export const ProjectDashboard: React.FC = () => {
     workspaceLoading,
     checkPathExists,
     openWorkspaces,
+    removeRecentProject,
   } = useProjectStore();
   const openWorkspacePaths = openWorkspaces.map((w) => w.path);
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -124,6 +126,19 @@ export const ProjectDashboard: React.FC = () => {
   const handleRecentClick = async (path: string) => {
     await openWorkspace(path);
     setActiveView('terminals');
+  };
+
+  // Per-entry recents removal: drop the path from the persisted recent lists and clear
+  // its cached health result so a re-added path is checked fresh.
+  const handleRemoveRecent = (path: string) => {
+    delete recentHealthCache[path];
+    setRecentHealth((prev) => {
+      if (prev[path] === undefined) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+    removeRecentProject(path);
   };
 
   const reviewTasks = tasks.filter((task) => task.column === 'review');
@@ -330,22 +345,35 @@ export const ProjectDashboard: React.FC = () => {
                 const name = getWorkspaceName(path);
                 const health = recentHealth[path];
                 return (
-                  <button
-                    key={path}
-                    className="recent-project-item"
-                    onClick={() => handleRecentClick(path)}
-                    title={path}
-                  >
-                    {health === false ? (
-                      <XCircle size={14} className="icon-missing" />
-                    ) : health === 'checking' ? (
-                      <span className="status-dot pending" />
-                    ) : (
-                      <FolderOpen size={14} />
-                    )}
-                    <span className={health === false ? 'text-muted' : ''}>{name}</span>
-                    {health === false && <span className="badge warning-badge">missing</span>}
-                  </button>
+                  <div key={path} className="recent-project-item">
+                    <button
+                      type="button"
+                      className="text-btn recent-project-open"
+                      onClick={() => handleRecentClick(path)}
+                      title={path}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, padding: 0, textAlign: 'left' }}
+                    >
+                      {health === false ? (
+                        <XCircle size={14} className="icon-missing" />
+                      ) : health === 'checking' ? (
+                        <span className="status-dot pending" />
+                      ) : (
+                        <FolderOpen size={14} />
+                      )}
+                      <span className={health === false ? 'text-muted' : ''}>{name}</span>
+                      {health === false && <span className="badge warning-badge">missing</span>}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-btn"
+                      onClick={() => handleRemoveRecent(path)}
+                      title={`Remove ${name} from recents`}
+                      aria-label={`Remove ${name} from recents`}
+                      style={{ flexShrink: 0, padding: 3, display: 'flex', lineHeight: 0 }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -487,11 +515,29 @@ export const ProjectDashboard: React.FC = () => {
                 .slice(0, 4)
                 .map((path) => {
                 const health = recentHealth[path];
+                const name = getWorkspaceName(path);
                 return (
-                  <button key={path} onClick={() => handleRecentClick(path)} title={path} disabled={workspaceLoading}>
-                    <span className={`workspace-status ${health === false ? 'missing' : health === 'checking' ? 'pending' : 'idle'}`} />
-                    <span>{getWorkspaceName(path)}</span>
-                  </button>
+                  <div key={path} style={{ position: 'relative', minWidth: 0 }}>
+                    <button
+                      onClick={() => handleRecentClick(path)}
+                      title={path}
+                      disabled={workspaceLoading}
+                      style={{ width: '100%', paddingRight: 20 }}
+                    >
+                      <span className={`workspace-status ${health === false ? 'missing' : health === 'checking' ? 'pending' : 'idle'}`} />
+                      <span>{name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="text-btn"
+                      onClick={() => handleRemoveRecent(path)}
+                      title={`Remove ${name} from recents`}
+                      aria-label={`Remove ${name} from recents`}
+                      style={{ position: 'absolute', right: 2, top: '50%', transform: 'translateY(-50%)', padding: 3, display: 'flex', lineHeight: 0 }}
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
                 );
               })}
             </div>

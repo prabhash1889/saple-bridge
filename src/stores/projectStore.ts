@@ -111,6 +111,7 @@ interface ProjectState {
   setActiveView: (view: ViewType) => void;
   setPendingSettingsTab: (tab: string | null) => void;
   addRecentProject: (path: string) => void;
+  removeRecentProject: (path: string) => void;
   clearRecentProjects: () => void;
   clearWorkspaceHistory: () => void;
   addWorkspace: (path: string) => Promise<void>;
@@ -329,6 +330,15 @@ export const useProjectStore = create<ProjectState>()(
             recentProjects: [path, ...filtered].slice(0, 10),
           };
         }),
+
+        // Drop one path from the recent lists (recents + history). Open workspace
+        // instances are left untouched: forgetting a recents entry is not closing a
+        // workspace, and an open instance re-registers itself in recents on its next
+        // successful load anyway.
+        removeRecentProject: (path) => set((state) => ({
+          recentProjects: state.recentProjects.filter((p) => p !== path),
+          workspaceHistory: state.workspaceHistory.filter((e) => e.path !== path),
+        })),
 
         clearRecentProjects: () => set({ recentProjects: [] }),
 

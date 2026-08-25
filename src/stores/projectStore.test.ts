@@ -47,3 +47,41 @@ describe('projectStore workspace ordering + rename', () => {
     expect(useProjectStore.getState().currentProjectName).toBe('Active');
   });
 });
+
+describe('projectStore.removeRecentProject', () => {
+  it('drops the path from recents and history but keeps open instances', () => {
+    useProjectStore.setState({
+      recentProjects: ['/p/a', '/p/b'],
+      workspaceHistory: [
+        { path: '/p/a', name: 'a', openedAt: 1 },
+        { path: '/p/b', name: 'b', openedAt: 2 },
+      ],
+      openWorkspaces: [ws('a')],
+      currentProjectPath: '/p/a',
+    });
+
+    useProjectStore.getState().removeRecentProject('/p/b');
+
+    const state = useProjectStore.getState();
+    expect(state.recentProjects).toEqual(['/p/a']);
+    expect(state.workspaceHistory.map((e) => e.path)).toEqual(['/p/a']);
+    // Open instances and the active workspace are untouched by a recents removal.
+    expect(state.openWorkspaces.map((w) => w.id)).toEqual(['a']);
+    expect(state.currentProjectPath).toBe('/p/a');
+  });
+
+  it('removing the last occurrence leaves the lists empty without touching workspaces', () => {
+    useProjectStore.setState({
+      recentProjects: ['/p/solo'],
+      workspaceHistory: [{ path: '/p/solo', name: 'solo', openedAt: 1 }],
+      openWorkspaces: [],
+      currentProjectPath: null,
+    });
+
+    useProjectStore.getState().removeRecentProject('/p/solo');
+
+    const state = useProjectStore.getState();
+    expect(state.recentProjects).toEqual([]);
+    expect(state.workspaceHistory).toEqual([]);
+  });
+});
