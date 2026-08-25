@@ -1544,6 +1544,27 @@ Inline `[[inline-code]]` should not count either.
     }
 
     #[test]
+    fn snapshot_list_round_trips_created_snapshots() {
+        // Phase 4: create -> list -> restore round trip through the listing API.
+        let (note_path, project, project_str) = setup_restore_project("listroundtrip");
+
+        fs::write(&note_path, "v1").unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "alpha".to_string(), false).unwrap();
+        fs::write(&note_path, "v2").unwrap();
+        create_memory_snapshot_inner(project_str.clone(), "beta".to_string(), false).unwrap();
+
+        let listed = list_memory_snapshots_inner(project_str.clone()).unwrap();
+        assert!(listed.contains(&"alpha".to_string()), "listing must contain alpha: {:?}", listed);
+        assert!(listed.contains(&"beta".to_string()), "listing must contain beta: {:?}", listed);
+
+        // Restoring the older snapshot through the listed name brings back its bytes.
+        restore_memory_snapshot_inner(project_str, "alpha".to_string()).unwrap();
+        assert_eq!(fs::read_to_string(&note_path).unwrap(), "v1");
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
     fn snapshot_refuses_overwrite_without_confirmation() {
         let (note_path, project, project_str) = setup_restore_project("overwrite");
 

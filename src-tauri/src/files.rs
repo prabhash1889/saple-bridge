@@ -742,6 +742,121 @@ mod tests {
     }
 
     #[test]
+    fn delete_rejects_parent_traversal_variants_and_keeps_workspace_intact() {
+        // Phase 4: every spelling that climbs out of the workspace (`..` segments in any
+        // position or count) must be refused before the trash is ever involved.
+        let dir = std::env::temp_dir().join(format!("saple-del-trav-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("a").join("b")).unwrap();
+        fs::write(dir.join("a").join("b").join("deep.txt"), "x").unwrap();
+        fs::write(dir.join("sentinel.txt"), "keep").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let registry = approved(&dir);
+
+        for target in ["..", "../", "./..", "a/..", "a/b/../..", "a/b/../../.."] {
+            let err =
+                delete_path_inner(&registry, project.clone(), target.to_string()).expect_err("traversal must be rejected");
+            assert!(
+                err.contains("escapes the project workspace"),
+                "target {:?} must be rejected as traversal, got: {}",
+                target,
+                err
+            );
+        }
+        assert!(dir.join("sentinel.txt").exists(), "workspace content intact");
+        assert!(dir.exists(), "workspace root intact");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_rejects_root_normalizing_dot_variants() {
+        // Phase 4: dot segments and trailing separators must normalize back to the root and
+        // hit the same refusal as "." itself. (Backslash separators are Windows-only; on
+        // Unix `.\.` is just a nonexistent filename, which is also rejected.)
+        let dir = std::env::temp_dir().join(format!("saple-del-dots-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("sentinel.txt"), "keep").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let registry = approved(&dir);
+
+        for target in ["././.", ".//", ".\\.", "./."] {
+            if delete_path_inner(&registry, project.clone(), target.to_string()).is_ok() {
+                panic!("root-normalizing target {:?} must not be deletable", target);
+            }
+            assert!(dir.join("sentinel.txt").exists(), "workspace intact after rejected {:?}", target);
+        }
+        assert!(dir.exists(), "workspace root intact");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn delete_with_case_variant_project_path_stays_gated() {
+        // Phase 4: Windows paths are case-insensitive; a renderer-supplied project path with
+        // flipped casing must still resolve to the same approved root, so root-normalizing
+        // targets cannot slip past the gate by looking like a different directory.
+        let dir = std::env::temp_dir().join(format!("saple-del-case-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("sentinel.txt"), "keep").unwrap();
+        let registry = approved(&dir);
+
+        let canonical = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let flipped: String = canonical
+            .chars()
+            .map(|c| if c.is_ascii_alphabetic() { c.to_ascii_uppercase() } else { c })
+            .collect();
+        let lower: String = canonical
+            .chars()
+            .map(|c| if c.is_ascii_alphabetic() { c.to_ascii_lowercase() } else { c })
+            .collect();
+
+        for project_variant in [flipped, lower] {
+            // Root-normalizing targets stay refused through the case-variant spelling...
+            assert!(
+                delete_path_inner(&registry, project_variant.clone(), ".".to_string()).is_err(),
+                "case-variant root delete must be refused"
+            );
+            // ...and a contained child still resolves (proving the gate passed).
+            let err = delete_path_inner(&registry, project_variant.clone(), "missing-child.txt".to_string())
+                .expect_err("only containment errors expected here");
+            assert!(
+                err.contains("no longer exists"),
+                "case-variant path should reach the file check, got: {}",
+                err
+            );
+        }
+        assert!(dir.join("sentinel.txt").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_handles_trailing_separators_on_contained_children() {
+        // Trailing slashes/dots on a legitimate child must not turn it into something
+        // uncontained - they either work or fail closed, never escape.
+        let dir = std::env::temp_dir().join(format!("saple-del-trail-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub").join("gone.txt"), "bye").unwrap();
+        fs::write(dir.join("stay.txt"), "here").unwrap();
+        let project = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        let registry = approved(&dir);
+
+        delete_path_inner(&registry, project.clone(), "sub/gone.txt/".to_string())
+            .expect("trailing slash on a contained child must still delete it");
+        assert!(!dir.join("sub").join("gone.txt").exists(), "child removed despite trailing slash");
+        assert!(dir.join("stay.txt").exists(), "sibling untouched");
+        assert!(dir.exists(), "workspace intact");
+
+        // A trailing dot does not resolve to the file through this path check
+        // (std::fs::metadata keeps the literal name), so it fails closed instead of
+        // widening or guessing at the target.
+        let err = delete_path_inner(&registry, project, "stay.txt.".to_string())
+            .expect_err("a trailing-dot name must fail closed, not delete a guessed target");
+        assert!(err.contains("no longer exists"), "got: {}", err);
+        assert!(dir.join("stay.txt").exists(), "sibling untouched");
+        assert!(dir.exists(), "workspace intact");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn create_file_rejects_git_internal_paths() {
         let dir = std::env::temp_dir().join(format!("saple-git-block-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
