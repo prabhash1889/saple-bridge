@@ -970,7 +970,7 @@ select optgroup {
   padding: clamp(16px, 3vw, 30px);
   overflow: auto;
   background:
-    linear-gradient(180deg, rgba(13, 17, 23, 0.98), rgba(6, 8, 11, 1)),
+    linear-gradient(180deg, var(--bg-surface), var(--bg-deep)),
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 96px);
 }
 

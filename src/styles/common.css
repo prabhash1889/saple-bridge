@@ -1175,7 +1175,7 @@ button.text-btn:hover {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--bg-overlay);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -1285,7 +1285,7 @@ button.text-btn:hover {
 .palette-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--bg-overlay);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: flex-start;
@@ -1296,7 +1296,7 @@ button.text-btn:hover {
 }
 
 .palette-dialog {
-  background: rgba(24, 24, 27, 0.85);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
@@ -1320,7 +1320,7 @@ button.text-btn:hover {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   gap: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-surface-light);
 }
 
 .palette-search-icon, .palette-back-btn {
@@ -1452,7 +1452,7 @@ button.text-btn:hover {
 /* Keyboard Shortcuts help dialog (opened from the command palette). Reuses .palette-overlay
    and .palette-kbd; adds its own compact grouped layout. */
 .shortcuts-dialog {
-  background: rgba(24, 24, 27, 0.9);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
@@ -1592,7 +1592,7 @@ button.text-btn:hover {
   display: flex;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-surface-light);
   gap: 16px;
 }
 
