@@ -176,6 +176,30 @@ Updated at phase boundaries; completed implementation detail lives in git histor
 | 1 - Privileged-command trust boundaries | Complete | approved-root registry, per-command `project_path` validation, PTY cwd/env hardening, browser scheme and June fixes |
 | 2 - State integrity and recovery | Complete | structured load outcomes, recovery UI, request-sequence tokens, locked read-modify-writes, transactional snapshots, BOM handling, `.saple/` exclude disclosure |
 | 3 - Review, swarm, and process correctness | **Complete (code)** | all work items and automated checks landed; two environment-dependent QA/CI runs deferred into Phase 4 - see Phase 3 status |
+| 4 - Observability, testing, and release hardening | **Complete (code)** | durable app log + privileged-action audit log, diagnostics report, failure escalation/dedupe, IPC contract registry tests, coverage baseline, sidecar pinning, SHA-pinned Actions, Dependabot/audit job, release gate; signing/notarization and maintainer-side pins deferred - see Phase 4 status |
+
+---
+## Phase 4 - Observability, testing, and release hardening
+
+**Outcome:** Production failures are diagnosable, destructive paths are tested, and release inputs are reproducible.
+
+### Status (updated at the end of the Phase 4 session)
+
+All three work areas landed on branch `traycer/saple-bridge-soft-salmon`:
+
+1. `feat(logging)` / `feat(audit)` - durable size-capped app log under the OS app log dir with secret redaction; append-only JSONL privileged-action audit log (source, command, cwd, exit code/error, duration) wired into shell runs, PTY spawn, `delete_path`, and `write_pty` failures; renderer errors forwarded into the durable log via `log_renderer_error` with Rust-side redaction.
+2. `feat(diagnostics)` / `feat(notifications)` - `collect_diagnostics` command plus a Settings "Copy diagnostics report" action (redacted); repeated failures for state saves, control-plane writes, watchers, PTY launch, and swarm launch escalate to persistent notifications after repeats; duplicate toasts dedupe while persistent root-cause errors never go silent.
+3. Testing - a frontend-to-Rust command registry (`src/lib/ipcCommands.ts`) enforced by two-sided contract tests (TS AST scan of every `invoke()` call site vs the Rust `generate_handler!` list); expanded destructive-path tests (traversal, dot/case/trailing-separator variants), atomic-write failure tests, snapshot round-trip test; frontend coverage baseline published via `test:coverage` (statements ~66%, branches ~64%; no thresholds yet).
+4. `chore(release)` / `ci:` - sidecar checkout pinned to a reviewed SHA and built with `cargo --locked`, sidecar SHA-256 recorded per build; GitHub Actions pinned to full commit SHAs; e2e lockfile committed with `npm ci` everywhere; Dependabot (npm, cargo, actions) plus an advisory-audit CI job failing on high/critical; release workflow gained a concurrency group and an approval environment; local QA builds no longer mutate version files.
+
+Deliberate CSP deviation: production `connect-src`/`frame-src` keep loopback-host entries because P5 Local Preview (shipped feature, validated by `src/lib/loopback.ts`) requires them; these are loopback-scoped port wildcards, not arbitrary-origin wildcards. Removing them is a product decision to drop or dev-gate Local Preview.
+
+Deferred to their natural owners (environment/maintainer-dependent):
+
+- [ ] Windows installer signing and macOS notarization/signing (requires certificates).
+- [ ] Maintainer actions: record `SAPLE_MCP_PINNED_SHA` in `scripts/prepare-sidecar.mjs` and the `SAPLE_MCP_SHA` repository variable; create the `release` GitHub environment with required reviewers (the approval gate is inert until then).
+- [ ] Run the Unix-side process-group kill test on macOS CI and the packaged-app Windows QA pass carried over from Phase 3.
+- [ ] Modest coverage thresholds once the baseline has visibility; delete_path `.git/**` parity with generic writers flagged as a follow-up.
 
 ---
 ## Phase 3 - Review, swarm, and process correctness
