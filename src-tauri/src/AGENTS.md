@@ -23,6 +23,7 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundl
 | Proc tree | `proc_tree.rs` | Whole-process-tree termination: Windows Job Objects, Unix process-group kill |
 | Project | `project.rs` | Workspace config, workspace summary, and MCP config wiring |
 | Path policy | `project_roots.rs` | Approved-root registry plus the single contained-path policy: containment resolution, protected writer paths (`.git/**`), destructive-target rules |
+| Error codes | `error_code.rs` | Small serializable `CodedError` (`{ code, message }`) with stable snake_case codes for path-policy failures; string surfaces flatten it to its message |
 | Memory | `memory.rs` | Parse memory markdown, graph wikilinks, manage snapshots |
 | Keychain | `keychain.rs` | OS keychain wrapper through the `keyring` crate |
 | Git | `git.rs` | Git status, diff, staging, and commit helpers |
@@ -36,6 +37,7 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundl
 
 - Validate project paths against the selected project directory before reading or writing.
 - All path-policy decisions (containment, protected paths, destructive targets) flow through `project_roots.rs`; do not re-implement containment checks in command modules.
+- Path-policy failures return `error_code::CodedError` (`root_not_approved`, `path_outside_root`, `protected_path`, `destructive_target`, `invalid_path`, `internal`); surfaces still carrying plain strings flatten it via the provided `From` impls.
 - Keep PTY process lifecycle in Rust.
 - Store credentials only through the OS keychain account `saple_bridge_user`.
 - Return structured data to React; do not rely on the renderer to validate sensitive paths.
