@@ -1,5 +1,6 @@
 mod browser;
 mod claude_context;
+mod error_code;
 mod pty;
 mod project;
 mod keychain;

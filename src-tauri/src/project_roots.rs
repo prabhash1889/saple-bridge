@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::error_code::CodedError;
+
 /// Rust-owned registry of approved project roots, stored as canonical absolute paths.
 ///
 /// A compromised renderer can pass arbitrary strings to every project command today;
@@ -36,7 +38,7 @@ impl ProjectRootRegistry {
 
     /// Canonicalize and register a root chosen through a native dialog. Idempotent per
     /// open workspace instance: each call adds one reference.
-    pub fn register_root(&self, path: &Path) -> Result<PathBuf, String> {
+    pub fn register_root(&self, path: &Path) -> Result<PathBuf, CodedError> {
         let canonical = canonical_dir(path)?;
         let mut roots = self.roots.lock().map_err(|_| REGISTRY_POISONED.to_string())?;
         *roots.entry(canonical.clone()).or_insert(0) += 1;
@@ -46,11 +48,11 @@ impl ProjectRootRegistry {
     /// Validated restoration of a previously approved project (recents / cold-start
     /// restore). The directory must still exist and be accessible; otherwise the
     /// stale entry is refused instead of becoming a trust anchor.
-    pub fn restore_root(&self, path: &Path) -> Result<PathBuf, String> {
+    pub fn restore_root(&self, path: &Path) -> Result<PathBuf, CodedError> {
         let canonical = canonical_dir(path)?;
         fs::read_dir(&canonical)
             .and_then(|mut entries| entries.next().transpose().map(|_| ()))
-            .map_err(|e| format!("Project path is not accessible: {}", e))?;
+            .map_err(|e| CodedError::invalid_path(format!("Project path is not accessible: {}", e)))?;
         self.register_root(&canonical)
     }
 
@@ -91,14 +93,14 @@ impl ProjectRootRegistry {
     /// inside an approved root or the command refuses to run (fail closed). This is
     /// the single check each `*_inner` operation calls before touching the filesystem,
     /// spawning a process, or arming a watcher.
-    pub fn ensure_inside_approved_root(&self, project_path: &str) -> Result<(), String> {
+    pub fn ensure_inside_approved_root(&self, project_path: &str) -> Result<(), CodedError> {
         if self.verify_path_inside_approved_root(Path::new(project_path)) {
             Ok(())
         } else {
-            Err(format!(
+            Err(CodedError::root_not_approved(format!(
                 "Access denied: '{}' is not inside an approved project root. Re-open the folder in Bridge to approve it.",
                 project_path
-            ))
+            )))
         }
     }
 
@@ -123,25 +125,25 @@ impl ProjectRootRegistry {
     }
 
     /// Fail-closed variant of [`Self::verify_inside_approved_root_or_home`].
-    pub fn ensure_inside_approved_root_or_home(&self, project_path: &str) -> Result<(), String> {
+    pub fn ensure_inside_approved_root_or_home(&self, project_path: &str) -> Result<(), CodedError> {
         if self.verify_inside_approved_root_or_home(Path::new(project_path)) {
             Ok(())
         } else {
-            Err(format!(
+            Err(CodedError::root_not_approved(format!(
                 "Access denied: '{}' is not inside an approved project root or the home directory.",
                 project_path
-            ))
+            )))
         }
     }
 
     /// Drop one reference held by a closing workspace instance. The root is removed
     /// when its last instance closes; releasing an unknown path is an error so a
     /// misbehaving renderer cannot probe the registry by guessing.
-    pub fn release_root(&self, path: &Path) -> Result<(), String> {
+    pub fn release_root(&self, path: &Path) -> Result<(), CodedError> {
         let canonical = canonical_dir(path)?;
         let mut roots = self.roots.lock().map_err(|_| REGISTRY_POISONED.to_string())?;
         match roots.get_mut(&canonical) {
-            None => Err("Project root is not registered".to_string()),
+            None => Err(CodedError::root_not_approved("Project root is not registered")),
             Some(count) => {
                 if *count <= 1 {
                     roots.remove(&canonical);
@@ -156,12 +158,15 @@ impl ProjectRootRegistry {
 
 const REGISTRY_POISONED: &str = "Project root registry lock poisoned";
 
-fn canonical_dir(path: &Path) -> Result<PathBuf, String> {
+fn canonical_dir(path: &Path) -> Result<PathBuf, CodedError> {
     let canonical = path
         .canonicalize()
-        .map_err(|e| format!("Invalid project path {}: {}", path.display(), e))?;
+        .map_err(|e| CodedError::invalid_path(format!("Invalid project path {}: {}", path.display(), e)))?;
     if !canonical.is_dir() {
-        return Err(format!("Project path {} is not a directory", canonical.display()));
+        return Err(CodedError::invalid_path(format!(
+            "Project path {} is not a directory",
+            canonical.display()
+        )));
     }
     Ok(canonical)
 }
@@ -214,7 +219,7 @@ fn path_starts_with(path: &Path, base: &Path) -> bool {
 pub fn register_project_root(
     path: String,
     registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>,
-) -> Result<String, String> {
+) -> Result<String, CodedError> {
     // Renderer-initiated registration is always the validated-restoration path: the
     // directory must still exist and be accessible before it becomes trusted.
     registry
@@ -226,7 +231,7 @@ pub fn register_project_root(
 pub fn release_project_root(
     path: String,
     registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     registry.release_root(Path::new(&path))
 }
 
@@ -239,26 +244,26 @@ pub fn release_project_root(
 
 /// Canonical form of the project directory itself, or a clear error when it has vanished or is
 /// not a directory.
-pub(crate) fn canonical_base(project_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn canonical_base(project_path: &str) -> Result<PathBuf, CodedError> {
     Path::new(project_path)
         .canonicalize()
-        .map_err(|e| format!("Base path error: {}", e))
+        .map_err(|e| CodedError::invalid_path(format!("Base path error: {}", e)))
 }
 
 /// Reject renderer-supplied relative paths that could never be contained: absolute paths
 /// (`Path::join` would silently discard the base), `..` traversal, and Windows root/prefix
 /// components.
-fn validate_relative_path(file_path: &str) -> Result<(), String> {
+fn validate_relative_path(file_path: &str) -> Result<(), CodedError> {
     use std::path::Component;
 
     let rel = Path::new(file_path);
     if rel.is_absolute() {
-        return Err("Access denied: absolute paths are not allowed".to_string());
+        return Err(CodedError::path_outside_root("Access denied: absolute paths are not allowed"));
     }
     for comp in rel.components() {
         match comp {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err("Access denied: path escapes the project workspace".to_string());
+                return Err(CodedError::path_outside_root("Access denied: path escapes the project workspace"));
             }
             _ => {}
         }
@@ -271,16 +276,17 @@ fn validate_relative_path(file_path: &str) -> Result<(), String> {
 /// link pointing outside the workspace is caught); a not-yet-existing target comes back as the
 /// joined path after proving its nearest existing ancestor sits inside the base, so a symlinked
 /// parent cannot trick later directory creation into escaping.
-pub(crate) fn contained_target(canonical_base: &Path, file_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn contained_target(canonical_base: &Path, file_path: &str) -> Result<PathBuf, CodedError> {
     validate_relative_path(file_path)?;
     let target = canonical_base.join(Path::new(file_path));
 
     // If the target already exists, canonicalize the *full* path (resolving symlinks) and confirm
     // containment before handing it back.
     if target.exists() {
-        let canonical_target = target.canonicalize().map_err(|e| format!("Target path error: {}", e))?;
+        let canonical_target =
+            target.canonicalize().map_err(|e| CodedError::invalid_path(format!("Target path error: {}", e)))?;
         if !path_starts_with(&canonical_target, canonical_base) {
-            return Err("Access denied: path is outside the project workspace".to_string());
+            return Err(CodedError::path_outside_root("Access denied: path is outside the project workspace"));
         }
         return Ok(canonical_target);
     }
@@ -296,18 +302,17 @@ pub(crate) fn contained_target(canonical_base: &Path, file_path: &str) -> Result
                 None => break,
             }
         }
-        let canonical_existing = existing
-            .canonicalize()
-            .map_err(|e| format!("Parent path error: {}", e))?;
+        let canonical_existing =
+            existing.canonicalize().map_err(|e| CodedError::invalid_path(format!("Parent path error: {}", e)))?;
         if !path_starts_with(&canonical_existing, canonical_base) {
-            return Err("Access denied: path is outside the project workspace".to_string());
+            return Err(CodedError::path_outside_root("Access denied: path is outside the project workspace"));
         }
     }
 
     Ok(target)
 }
 
-fn create_missing_parents(target: &Path) -> Result<(), String> {
+fn create_missing_parents(target: &Path) -> Result<(), CodedError> {
     if let Some(parent) = target.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {}", e))?;
@@ -319,7 +324,7 @@ fn create_missing_parents(target: &Path) -> Result<(), String> {
 /// Resolve a contained read/edit target for the open project. Contained targets that do not exist
 /// yet get their parent directories created as a side effect (writes rely on this; `fs_lock`
 /// writes fail without an existing parent).
-pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Result<PathBuf, CodedError> {
     let canonical_base = canonical_base(project_path)?;
     let target = contained_target(&canonical_base, file_path)?;
     create_missing_parents(&target)?;
@@ -347,13 +352,13 @@ fn has_git_component(path: &Path) -> bool {
 /// must never corrupt them. The raw relative path is checked first so requesting a
 /// not-yet-existing `.git/hooks/...` target cannot make [`get_project_file_path`]
 /// create `.git` subdirectories as a side effect.
-pub(crate) fn get_project_write_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn get_project_write_path(project_path: &str, file_path: &str) -> Result<PathBuf, CodedError> {
     if has_git_component(Path::new(file_path)) {
-        return Err("Access denied: writing inside .git is not allowed".to_string());
+        return Err(CodedError::protected_path("Access denied: writing inside .git is not allowed"));
     }
     let full_path = get_project_file_path(project_path, file_path)?;
     if has_git_component(&full_path) {
-        return Err("Access denied: writing inside .git is not allowed".to_string());
+        return Err(CodedError::protected_path("Access denied: writing inside .git is not allowed"));
     }
     Ok(full_path)
 }
@@ -362,10 +367,12 @@ pub(crate) fn get_project_write_path(project_path: &str, file_path: &str) -> Res
 /// (`file_path = ""`, `"."`, `"./"`). [`contained_target`] proves containment but
 /// treats the root as contained, so without this a delete request for `.` would move
 /// the entire project to the trash.
-pub(crate) fn ensure_not_workspace_root(project_path: &str, target: &Path) -> Result<(), String> {
+pub(crate) fn ensure_not_workspace_root(project_path: &str, target: &Path) -> Result<(), CodedError> {
     let canonical_base = canonical_base(project_path)?;
     if target == canonical_base {
-        return Err("Access denied: refusing to operate on the project workspace itself".to_string());
+        return Err(CodedError::destructive_target(
+            "Access denied: refusing to operate on the project workspace itself",
+        ));
     }
     Ok(())
 }
@@ -373,6 +380,7 @@ pub(crate) fn ensure_not_workspace_root(project_path: &str, target: &Path) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error_code::ErrorCode;
 
     fn temp_project() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -406,12 +414,14 @@ mod tests {
         let dir = temp_project();
 
         let err = registry.register_root(&dir.join("does-not-exist")).unwrap_err();
-        assert!(err.contains("Invalid project path"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::InvalidPath);
+        assert!(err.message.contains("Invalid project path"), "got: {}", err.message);
 
         let file = dir.join("file.txt");
         fs::write(&file, "x").unwrap();
         let err = registry.register_root(&file).unwrap_err();
-        assert!(err.contains("not a directory"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::InvalidPath);
+        assert!(err.message.contains("not a directory"), "got: {}", err.message);
 
         assert!(registry.list_roots().is_empty());
         let _ = fs::remove_dir_all(&dir);
@@ -523,7 +533,8 @@ mod tests {
 
         // Releasing an unregistered root must fail loudly.
         let err = registry.release_root(&dir).unwrap_err();
-        assert!(err.contains("not registered"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::RootNotApproved);
+        assert!(err.message.contains("not registered"), "got: {}", err.message);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -546,7 +557,8 @@ mod tests {
             let err = registry
                 .ensure_inside_approved_root_or_home(&outside.to_string_lossy())
                 .unwrap_err();
-            assert!(err.contains("Access denied"), "got: {}", err);
+            assert_eq!(err.code, ErrorCode::RootNotApproved);
+            assert!(err.message.contains("Access denied"), "got: {}", err.message);
         }
     }
 
@@ -578,9 +590,11 @@ mod tests {
     fn resolver_rejects_parent_dir_traversal() {
         let dir = temp_project();
         let err = get_project_file_path(dir.to_str().unwrap(), "../escape.txt").unwrap_err();
-        assert!(err.contains("escapes"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::PathOutsideRoot);
+        assert!(err.message.contains("escapes"), "got: {}", err.message);
         let err2 = get_project_file_path(dir.to_str().unwrap(), ".saple/../../escape.txt").unwrap_err();
-        assert!(err2.contains("escapes"), "got: {}", err2);
+        assert_eq!(err2.code, ErrorCode::PathOutsideRoot);
+        assert!(err2.message.contains("escapes"), "got: {}", err2.message);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -589,7 +603,12 @@ mod tests {
         let dir = temp_project();
         let abs = if cfg!(windows) { "C:\\Windows\\System32\\drivers\\etc\\hosts" } else { "/etc/passwd" };
         let err = get_project_file_path(dir.to_str().unwrap(), abs).unwrap_err();
-        assert!(err.contains("absolute") || err.contains("escapes"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::PathOutsideRoot);
+        assert!(
+            err.message.contains("absolute") || err.message.contains("escapes"),
+            "got: {}",
+            err.message
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -617,16 +636,19 @@ mod tests {
         let project = dir.to_str().unwrap().to_string();
 
         let err = get_project_write_path(&project, ".git/config").unwrap_err();
-        assert!(err.contains(".git"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::ProtectedPath);
+        assert!(err.message.contains(".git"), "got: {}", err.message);
         let err = get_project_write_path(&project, ".git/hooks/pre-commit").unwrap_err();
-        assert!(err.contains(".git"), "got: {}", err);
+        assert_eq!(err.code, ErrorCode::ProtectedPath);
+        assert!(err.message.contains(".git"), "got: {}", err.message);
 
         // Windows filesystems are case-insensitive: an upper-cased component must hit
         // the same block instead of reaching the real .git directory.
         #[cfg(windows)]
         {
             let err = get_project_write_path(&project, ".GIT/config").unwrap_err();
-            assert!(err.contains(".git"), "got: {}", err);
+            assert_eq!(err.code, ErrorCode::ProtectedPath);
+            assert!(err.message.contains(".git"), "got: {}", err.message);
         }
 
         // The raw-path check must run before containment resolution, so no `.git`
@@ -648,7 +670,13 @@ mod tests {
         for rel in ["", ".", "./"] {
             let target = get_project_file_path(dir.to_str().unwrap(), rel).unwrap();
             let err = ensure_not_workspace_root(dir.to_str().unwrap(), &target).unwrap_err();
-            assert!(err.contains("workspace itself"), "rel {:?} must be rejected, got: {}", rel, err);
+            assert_eq!(err.code, ErrorCode::DestructiveTarget);
+            assert!(
+                err.message.contains("workspace itself"),
+                "rel {:?} must be rejected, got: {}",
+                rel,
+                err.message
+            );
         }
         assert!(dir.join("keep.txt").exists());
 
