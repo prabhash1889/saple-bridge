@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
+use crate::error_code::CodedError;
+use crate::memory_layout;
 use crate::project_roots::ProjectRootRegistry;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -27,29 +29,6 @@ pub struct MemoryEdge {
 pub struct MemoryGraph {
     pub nodes: Vec<MemoryNode>,
     pub edges: Vec<MemoryEdge>,
-}
-
-pub fn get_memory_mode(project_path: &str) -> String {
-    let config_path = Path::new(project_path).join(".saple").join("config.json");
-    if config_path.exists() {
-        if let Ok(content) = fs::read_to_string(config_path) {
-            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(mode) = config.get("memoryMode").and_then(|m| m.as_str()) {
-                    return mode.to_string();
-                }
-            }
-        }
-    }
-    "saple".to_string()
-}
-
-pub fn get_memory_dir(project_path: &str) -> PathBuf {
-    let mode = get_memory_mode(project_path);
-    if mode == "bridge-compatible" {
-        Path::new(project_path).join(".bridgememory")
-    } else {
-        Path::new(project_path).join(".saple").join("memory")
-    }
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
@@ -427,7 +406,7 @@ pub async fn get_memory_graph(
 }
 
 fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Ok(MemoryGraph { nodes: vec![], edges: vec![] });
     }
@@ -499,7 +478,7 @@ pub async fn create_memory_snapshot(
     name: String,
     overwrite: Option<bool>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         create_memory_snapshot_inner(project_path, name, overwrite.unwrap_or(false))
@@ -512,17 +491,19 @@ pub async fn create_memory_snapshot(
 /// byte-for-byte, and only then atomically swap it into place. An existing snapshot is never
 /// overwritten unless the caller explicitly confirms (`overwrite = true`, backed by a UI
 /// confirmation), and any failure leaves the previous snapshot untouched.
-fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: bool) -> Result<(), String> {
+fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: bool) -> Result<(), CodedError> {
     if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return Err("Snapshot name must contain only alphanumeric characters, dashes, or underscores".to_string());
+        return Err(CodedError::invalid_path(
+            "Snapshot name must contain only alphanumeric characters, dashes, or underscores",
+        ));
     }
 
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
-        return Err("No memories found to snapshot".to_string());
+        return Err(CodedError::internal("No memories found to snapshot"));
     }
 
-    let snapshots_dir = Path::new(&project_path).join(".saple").join("snapshots");
+    let snapshots_dir = memory_layout::snapshots_dir(&project_path);
     let snapshot_dir = snapshots_dir.join(&name);
 
     // Stage into a temporary sibling so a failed or partial copy never replaces an existing
@@ -537,8 +518,11 @@ fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: b
     }
     fs::create_dir_all(&snapshots_dir).map_err(|e| e.to_string())?;
 
-    let staged = copy_dir_all(&memory_dir, &tmp_dir)
-        .and_then(|_| verify_snapshot_copies_source(&memory_dir, &tmp_dir).map_err(|e| e.to_string()));
+    let staged: Result<(), CodedError> = (|| {
+        copy_dir_all(&memory_dir, &tmp_dir)?;
+        verify_snapshot_copies_source(&memory_dir, &tmp_dir)?;
+        Ok(())
+    })();
     if let Err(e) = staged {
         let _ = fs::remove_dir_all(&tmp_dir);
         return Err(e);
@@ -548,19 +532,19 @@ fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: b
     if snapshot_dir.exists() {
         if !overwrite {
             let _ = fs::remove_dir_all(&tmp_dir);
-            return Err(format!(
+            return Err(CodedError::already_exists(format!(
                 "Snapshot {} already exists. Confirm overwrite to replace it.",
                 name
-            ));
+            )));
         }
         fs::remove_dir_all(&snapshot_dir).map_err(|e| {
             let _ = fs::remove_dir_all(&tmp_dir);
-            e.to_string()
+            CodedError::from(e.to_string())
         })?;
     }
     if let Err(e) = crate::fs_lock::rename_with_retry(&tmp_dir, &snapshot_dir) {
         let _ = fs::remove_dir_all(&tmp_dir);
-        return Err(e);
+        return Err(e.into());
     }
 
     Ok(())
@@ -571,11 +555,12 @@ pub async fn restore_memory_snapshot(
     project_path: String,
     name: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || restore_memory_snapshot_inner(project_path, name))
         .await
         .map_err(|e| e.to_string())?
+        .map_err(CodedError::from)
 }
 
 fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(), String> {
@@ -585,12 +570,12 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         return Err("Snapshot name must contain only alphanumeric characters, dashes, or underscores".to_string());
     }
 
-    let snapshot_dir = Path::new(&project_path).join(".saple").join("snapshots").join(&name);
+    let snapshot_dir = memory_layout::snapshots_dir(&project_path).join(&name);
     if !snapshot_dir.exists() {
         return Err(format!("Snapshot {} not found", name));
     }
 
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     if memory_dir.exists() && dir_contains_any_file(&memory_dir) {
         // Safety snapshot FIRST. Live memory must not be touched until a verified
         // valid backup exists; any failure here aborts the whole restore.
@@ -601,10 +586,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
                 e
             )
         })?;
-        let backup_dir = Path::new(&project_path)
-            .join(".saple")
-            .join("snapshots")
-            .join(&backup_name);
+        let backup_dir = memory_layout::snapshots_dir(&project_path).join(&backup_name);
         verify_snapshot_copies_source(&memory_dir, &backup_dir).map_err(|e| {
             format!(
                 "Restore aborted: pre-restore safety snapshot could not be verified ({}). Live memory was left untouched.",
@@ -613,17 +595,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         })?;
     }
 
-    let mode = get_memory_mode(&project_path);
-    let write_dirs = if mode == "bridge-compatible" {
-        vec![Path::new(&project_path).join(".bridgememory")]
-    } else if mode == "both" {
-        vec![
-            Path::new(&project_path).join(".saple").join("memory"),
-            Path::new(&project_path).join(".bridgememory"),
-        ]
-    } else {
-        vec![Path::new(&project_path).join(".saple").join("memory")]
-    };
+    let write_dirs = memory_layout::write_dirs(&project_path);
 
     // Restore transactionally per target directory (Phase 2): stage the snapshot copy in a
     // temporary sibling, verify it byte-for-byte against the snapshot, and only then swap it
@@ -689,7 +661,7 @@ pub async fn list_memory_snapshots(
 }
 
 fn list_memory_snapshots_inner(project_path: String) -> Result<Vec<String>, String> {
-    let snapshots_dir = Path::new(&project_path).join(".saple").join("snapshots");
+    let snapshots_dir = memory_layout::snapshots_dir(&project_path);
     if !snapshots_dir.exists() {
         return Ok(vec![]);
     }
@@ -721,18 +693,8 @@ pub async fn delete_memory_file(
 }
 
 pub(crate) fn delete_memory_file_inner(project_path: String, file_path: String) -> Result<(), String> {
-    let mode = get_memory_mode(&project_path);
-    let delete_dirs = if mode == "bridge-compatible" {
-        vec![Path::new(&project_path).join(".bridgememory")]
-    } else if mode == "both" {
-        vec![
-            Path::new(&project_path).join(".saple").join("memory"),
-            Path::new(&project_path).join(".bridgememory"),
-        ]
-    } else {
-        vec![Path::new(&project_path).join(".saple").join("memory")]
-    };
-    
+    let delete_dirs = memory_layout::write_dirs(&project_path);
+
     for dir in delete_dirs {
         let full_path = dir.join(&file_path);
         if full_path.exists() {
@@ -762,7 +724,7 @@ pub async fn read_memory_file(
 }
 
 fn read_memory_file_inner(project_path: String, file_path: String) -> Result<String, String> {
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     let full_path = memory_dir.join(&file_path);
 
     if full_path.exists() {
@@ -828,20 +790,14 @@ pub(crate) fn save_memory_node_inner(
     aliases: Vec<String>,
     content: String,
 ) -> Result<MemoryNode, String> {
-    let mode = get_memory_mode(&project_path);
-
     let clean_category = category.trim().to_lowercase().replace(' ', "-");
     let clean_id = id.trim().to_lowercase().replace(' ', "-");
     validate_note_path_component(&clean_category, "category")?;
     validate_note_path_component(&clean_id, "id")?;
     let relative_path = format!("{}/{}.md", clean_category, clean_id);
     
-    let read_dir = if mode == "bridge-compatible" {
-        Path::new(&project_path).join(".bridgememory")
-    } else {
-        Path::new(&project_path).join(".saple").join("memory")
-    };
-    
+    let read_dir = memory_layout::get_memory_dir(&project_path);
+
     let mut created_time = now_iso();
     let mut unknown_fields = HashMap::new();
     
@@ -891,17 +847,8 @@ pub(crate) fn save_memory_node_inner(
         format!("{}# {}\n\n{}", frontmatter, title, body_trimmed)
     };
     
-    let write_dirs = if mode == "bridge-compatible" {
-        vec![Path::new(&project_path).join(".bridgememory")]
-    } else if mode == "both" {
-        vec![
-            Path::new(&project_path).join(".saple").join("memory"),
-            Path::new(&project_path).join(".bridgememory"),
-        ]
-    } else {
-        vec![Path::new(&project_path).join(".saple").join("memory")]
-    };
-    
+    let write_dirs = memory_layout::write_dirs(&project_path);
+
     for dir in &write_dirs {
         // Contain to the *memory dir* (not the project root), mirroring the delete/read paths.
         // The component validation above already blocks traversal; the canonicalize check stays
@@ -1077,7 +1024,7 @@ fn search_memory_content_inner(project_path: String, query: String) -> Result<Ve
     if q.len() < 2 {
         return Ok(vec![]);
     }
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Ok(vec![]);
     }
@@ -1112,7 +1059,7 @@ pub async fn get_unlinked_mentions(
 }
 
 fn get_unlinked_mentions_inner(project_path: String, id: String) -> Result<Vec<UnlinkedMention>, String> {
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Ok(vec![]);
     }
@@ -1210,7 +1157,7 @@ pub async fn add_memory_link(
 }
 
 fn add_memory_link_inner(project_path: String, source: String, target: String) -> Result<(), String> {
-    let memory_dir = get_memory_dir(&project_path);
+    let memory_dir = memory_layout::get_memory_dir(&project_path);
     let (_, node, content) = find_note_file_inner(&memory_dir, &source)
         .ok_or_else(|| format!("Source note '{}' not found", source))?;
 
@@ -1576,7 +1523,8 @@ Inline `[[inline-code]]` should not count either.
         fs::write(&note_path, "v2").unwrap();
         let err = create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false)
             .expect_err("unconfirmed overwrite must be refused");
-        assert!(err.contains("already exists"), "got: {}", err);
+        assert_eq!(err.code, crate::error_code::ErrorCode::AlreadyExists);
+        assert!(err.message.contains("already exists"), "got: {}", err.message);
         let kept = fs::read_to_string(project.join(".saple/snapshots/target/general/note.md")).unwrap();
         assert_eq!(kept, "v1", "existing snapshot must not be clobbered");
 

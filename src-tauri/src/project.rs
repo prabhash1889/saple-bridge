@@ -1,113 +1,16 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
+use crate::error_code::CodedError;
 use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
-pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
-    use std::path::Component;
-
-    let base = Path::new(project_path);
-    let canonical_base = base.canonicalize().map_err(|e| format!("Base path error: {}", e))?;
-
-    // Reject absolute paths and traversal up front. `Path::join` with an absolute path silently
-    // discards the base (e.g. `base.join("C:\\Windows\\x")` -> `C:\Windows\x`), so without this an
-    // absolute or `..`-laden `file_path` would escape the workspace entirely.
-    let rel = Path::new(file_path);
-    if rel.is_absolute() {
-        return Err("Access denied: absolute paths are not allowed".to_string());
-    }
-    for comp in rel.components() {
-        match comp {
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err("Access denied: path escapes the project workspace".to_string());
-            }
-            _ => {}
-        }
-    }
-
-    let target = canonical_base.join(rel);
-
-    // If the target already exists, canonicalize the *full* path (resolving symlinks) and confirm
-    // containment before handing it back.
-    if target.exists() {
-        let canonical_target = target.canonicalize().map_err(|e| format!("Target path error: {}", e))?;
-        if !canonical_target.starts_with(&canonical_base) {
-            return Err("Access denied: path is outside the project workspace".to_string());
-        }
-        return Ok(canonical_target);
-    }
-
-    // Target doesn't exist yet (a write that will create it). Prove containment by canonicalizing
-    // the nearest existing ancestor *before* creating any directories — so a symlinked parent can't
-    // trick us into create_dir_all outside the workspace.
-    if let Some(parent) = target.parent() {
-        let mut existing = parent;
-        while !existing.exists() {
-            match existing.parent() {
-                Some(p) => existing = p,
-                None => break,
-            }
-        }
-        let canonical_existing = existing
-            .canonicalize()
-            .map_err(|e| format!("Parent path error: {}", e))?;
-        if !canonical_existing.starts_with(&canonical_base) {
-            return Err("Access denied: path is outside the project workspace".to_string());
-        }
-        if !parent.exists() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {}", e))?;
-        }
-    }
-
-    Ok(target)
-}
-
-/// Refuse destructive operations whose target resolves to the workspace root itself
-/// (`file_path = ""`, `"."`, `"./"`). `get_project_file_path` proves containment but
-/// treats the root as contained, so without this a delete request for `.` would move
-/// the entire project to the trash.
-pub(crate) fn ensure_not_workspace_root(canonical_base: &Path, target: &Path) -> Result<(), String> {
-    if target == canonical_base {
-        return Err("Access denied: refusing to operate on the project workspace itself".to_string());
-    }
-    Ok(())
-}
-
-/// Whether any component of `path` names the git internals directory. Applied to both
-/// the raw relative path and the fully resolved absolute path so symlinked escapes
-/// into `.git` are caught too. Windows filesystems are case-insensitive, so `.GIT`
-/// must hit the same block; on Unix a differently-cased name is an unrelated folder.
-fn has_git_component(path: &Path) -> bool {
-    path.components().any(|c| {
-        let name = c.as_os_str();
-        if cfg!(windows) {
-            name.eq_ignore_ascii_case(".git")
-        } else {
-            name == ".git"
-        }
-    })
-}
-
-/// Contained-path policy for generic file writers: identical to
-/// [`get_project_file_path`] plus a `.git/**` block. Git internals are owned by
-/// `git.rs`, which runs intentional git commands; raw writes from the editor layer
-/// must never corrupt them. The raw relative path is checked first so requesting a
-/// not-yet-existing `.git/hooks/...` target cannot make `get_project_file_path`
-/// create `.git` subdirectories as a side effect.
-pub(crate) fn get_project_write_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
-    if has_git_component(Path::new(file_path)) {
-        return Err("Access denied: writing inside .git is not allowed".to_string());
-    }
-    let full_path = get_project_file_path(project_path, file_path)?;
-    if has_git_component(&full_path) {
-        return Err("Access denied: writing inside .git is not allowed".to_string());
-    }
-    Ok(full_path)
-}
+// Path policy (containment resolution, protected writer paths, destructive targets) lives in
+// `project_roots` as of Phase 5; import from `crate::project_roots` directly.
+use crate::project_roots::{get_project_file_path, get_project_write_path};
 
 fn default_enable_edit_mode() -> bool {
     true
@@ -219,14 +122,14 @@ fn is_leap(year: i64) -> bool {
 pub async fn ensure_workspace_dirs(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || ensure_workspace_dirs_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<(), String> {
+fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let dirs = [
         ".saple",
@@ -238,7 +141,6 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
         ".saple/swarm/mailbox",
         ".saple/swarm/handoffs",
         ".saple/swarm/context",
-        ".saple/memory",
         ".saple/review",
     ];
     for dir in &dirs {
@@ -247,19 +149,18 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
             fs::create_dir_all(&path).map_err(|e| format!("Failed to create {}: {}", dir, e))?;
         }
     }
-    
-    // Also check memory mode to ensure .bridgememory exists if needed
-    let mode = crate::memory::get_memory_mode(&project_path);
-    if mode == "bridge-compatible" || mode == "both" {
-        let path = get_project_file_path(&project_path, ".bridgememory")?;
+
+    // Memory directories come from the layout owner so mode rules live in one place.
+    for dir in crate::memory_layout::required_dir_names(&project_path) {
+        let path = get_project_file_path(&project_path, dir)?;
         if !path.exists() {
-            fs::create_dir_all(&path).map_err(|e| format!("Failed to create .bridgememory: {}", e))?;
+            fs::create_dir_all(&path).map_err(|e| format!("Failed to create {}: {}", dir, e))?;
         }
     }
 
     // Project open is the one hook every user passes through — repair stale sidecar paths here.
     #[cfg(not(debug_assertions))]
-    heal_mcp_configs(&project_path);
+    crate::sidecar::heal_mcp_configs(&project_path);
 
     Ok(())
 }
@@ -268,14 +169,14 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
 pub async fn ensure_project_config(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<WorkspaceConfig, String> {
+) -> Result<WorkspaceConfig, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || ensure_project_config_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceConfig, String> {
+fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceConfig, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
 
@@ -288,16 +189,17 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
                     let err = format!("Failed to parse config: {}", e);
                     match crate::state_load::preserve_and_flag_corrupt(&config_path, &err) {
                         Ok(backup) => format!(
-                            "{}. Original bytes preserved at {} — resolve recovery before writing.",
+                            "{}. Original bytes preserved at {} - resolve recovery before writing.",
                             err,
                             backup.display()
                         ),
                         Err(preserve_err) => format!("{} ({})", err, preserve_err),
                     }
                 })
+                .map_err(CodedError::internal)
             }
-            crate::state_load::JsonText::Io(e) => Err(e.to_string()),
-            crate::state_load::JsonText::Encoding(m) => Err(m),
+            crate::state_load::JsonText::Io(e) => Err(e.to_string().into()),
+            crate::state_load::JsonText::Encoding(m) => Err(m.into()),
         }
     } else {
         let now = now_iso();
@@ -330,24 +232,24 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
 pub async fn read_project_config(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<WorkspaceConfig, String> {
+) -> Result<WorkspaceConfig, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || read_project_config_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-pub(crate) fn read_project_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceConfig, String> {
+pub(crate) fn read_project_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceConfig, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
     if !config_path.exists() {
-        return Err("Config file not found".to_string());
+        return Err("Config file not found".to_string().into());
     }
     match crate::state_load::read_json_text(&config_path) {
         crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e)),
-        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
-        crate::state_load::JsonText::Encoding(m) => Err(m),
+            .map_err(|e| CodedError::internal(format!("Failed to parse config: {}", e))),
+        crate::state_load::JsonText::Io(e) => Err(e.to_string().into()),
+        crate::state_load::JsonText::Encoding(m) => Err(m.into()),
     }
 }
 
@@ -356,14 +258,14 @@ pub async fn write_project_config(
     project_path: String,
     config: WorkspaceConfig,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<WorkspaceConfig, String> {
+) -> Result<WorkspaceConfig, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || write_project_config_inner(&registry, project_path, config))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn write_project_config_inner(registry: &ProjectRootRegistry, project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, String> {
+fn write_project_config_inner(registry: &ProjectRootRegistry, project_path: String, config: WorkspaceConfig) -> Result<WorkspaceConfig, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let config_path = get_project_file_path(&project_path, ".saple/config.json")?;
     let mut updated = config;
@@ -378,20 +280,20 @@ pub async fn read_project_file(
     project_path: String,
     file_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<String, String> {
+) -> Result<String, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || read_project_file_inner(&registry, project_path, file_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn read_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<String, String> {
+fn read_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<String, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let full_path = get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
-        return Err("File not found".to_string());
+        return Err("File not found".to_string().into());
     }
-    fs::read_to_string(full_path).map_err(|e| e.to_string())
+    fs::read_to_string(full_path).map_err(|e| CodedError::internal(e.to_string()))
 }
 
 #[tauri::command]
@@ -400,31 +302,31 @@ pub async fn write_project_file(
     file_path: String,
     content: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || write_project_file_inner(&registry, project_path, file_path, content))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn write_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String, content: String) -> Result<(), String> {
+fn write_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String, content: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let full_path = get_project_write_path(&project_path, &file_path)?;
-    crate::fs_lock::atomic_write(&full_path, content.as_bytes())
+    crate::fs_lock::atomic_write(&full_path, content.as_bytes()).map_err(CodedError::internal)
 }
 
 #[tauri::command]
 pub async fn get_workspace_summary(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<WorkspaceSummary, String> {
+) -> Result<WorkspaceSummary, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || get_workspace_summary_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceSummary, String> {
+fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<WorkspaceSummary, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let base = Path::new(&project_path);
     let canonical_base = base.canonicalize().map_err(|e| format!("Invalid path: {}", e))?;
@@ -444,7 +346,7 @@ fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: Str
     let has_saple_config = canonical_base.join(".saple").join("config.json").exists();
     
     // Check bridge memory
-    let has_bridge_memory = canonical_base.join(".bridgememory").exists();
+    let has_bridge_memory = crate::memory_layout::bridge_memory_dir(&project_path).exists();
     
     // Check MCP config
     let has_mcp_config = canonical_base.join(".mcp.json").exists() || canonical_base.join("mcp_config.json").exists();
@@ -461,7 +363,7 @@ fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: Str
     })
 }
 
-fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) -> Result<String, String> {
+fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) -> Result<String, CodedError> {
     registry.ensure_inside_approved_root(project_path)?;
     let output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -473,12 +375,12 @@ fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) 
     if output.status.success() {
         let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if branch.is_empty() {
-            Err("Not a git repository or no branch".to_string())
+            Err("Not a git repository or no branch".to_string().into())
         } else {
             Ok(branch)
         }
     } else {
-        Err("Not a git repository".to_string())
+        Err("Not a git repository".to_string().into())
     }
 }
 
@@ -486,7 +388,7 @@ fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) 
 pub async fn git_current_branch(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<String, String> {
+) -> Result<String, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || git_current_branch_inner(&registry, &project_path))
         .await
@@ -497,165 +399,16 @@ pub async fn git_current_branch(
 pub async fn install_mcp_config(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<String, String> {
+) -> Result<String, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || install_mcp_config_inner(&registry, project_path))
         .await
         .map_err(|e| e.to_string())?
 }
 
-/// Absolute path to the `saple-mcp` sidecar binary that MCP configs should reference.
-///
-/// The MCP server now lives in the standalone `saple-mcp` crate and ships as a Tauri sidecar.
-/// External clients (Claude Code) launch it directly from `.mcp.json`, so this must be a concrete
-/// on-disk path, not a Tauri Command handle.
-///   * **dev** — the triple-suffixed staging file under `src-tauri/binaries/` that
-///     `scripts/prepare-sidecar.mjs` produces (TARGET_TRIPLE / SAPLE_BRIDGE_MANIFEST_DIR are baked
-///     in by build.rs).
-///   * **release** — the per-user staged copy from `ensure_stable_sidecar`. The exe-adjacent
-///     bundled copy is only a fallback: install directories are not stable paths (the MSIX
-///     WindowsApps dir is versioned per Store update and its ACLs block external clients; an
-///     NSIS install can be moved), so `.mcp.json` must never point into them.
-fn sidecar_binary_path() -> Result<PathBuf, String> {
-    let ext = if cfg!(windows) { ".exe" } else { "" };
-
-    #[cfg(debug_assertions)]
-    {
-        let triple = env!("TARGET_TRIPLE");
-        let manifest_dir = env!("SAPLE_BRIDGE_MANIFEST_DIR"); // = src-tauri/
-        let name = format!("saple-mcp-{}{}", triple, ext);
-        Ok(Path::new(manifest_dir).join("binaries").join(name))
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        if let Some(dir) = stable_sidecar_dir() {
-            let staged = dir.join(format!("saple-mcp{}", ext));
-            if staged.exists() {
-                return Ok(staged);
-            }
-        }
-        bundled_sidecar_path(ext)
-    }
-}
-
-/// The sidecar as bundled next to the app binary (Tauri strips the target triple at bundle time;
-/// on macOS this is `…app/Contents/MacOS/`).
-#[cfg(not(debug_assertions))]
-fn bundled_sidecar_path(ext: &str) -> Result<PathBuf, String> {
-    let mut dir = std::env::current_exe()
-        .map_err(|e| format!("Failed to get binary path: {}", e))?;
-    dir.pop(); // strip the app binary file name -> its directory
-    Ok(dir.join(format!("saple-mcp{}", ext)))
-}
-
-/// Per-user directory the sidecar is staged into: survives app updates and is readable by
-/// external processes (unlike the MSIX WindowsApps install dir). Same path for the NSIS and
-/// Store builds on purpose, so switching installs never ping-pongs `.mcp.json`.
-#[cfg(not(debug_assertions))]
-fn stable_sidecar_dir() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    return std::env::var_os("LOCALAPPDATA")
-        .map(|d| PathBuf::from(d).join("ai.saple.bridge").join("bin"));
-    #[cfg(target_os = "macos")]
-    return std::env::var_os("HOME").map(|d| {
-        PathBuf::from(d)
-            .join("Library")
-            .join("Application Support")
-            .join("ai.saple.bridge")
-            .join("bin")
-    });
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    None
-}
-
-/// Stage the bundled sidecar into `stable_sidecar_dir` (called once at startup, release builds).
-/// Copy-to-temp then rename, so an MCP client launching concurrently never sees a half-written
-/// exe. If the staged copy is locked by a running server the rename fails and the old copy stays
-/// in place until a later launch. Never fatal: while no staged copy exists,
-/// `sidecar_binary_path` falls back to the bundled one.
-#[cfg(not(debug_assertions))]
-pub fn ensure_stable_sidecar() {
-    let ext = if cfg!(windows) { ".exe" } else { "" };
-    let Ok(src) = bundled_sidecar_path(ext) else { return };
-    let Ok(src_meta) = fs::metadata(&src) else { return }; // no bundled sidecar next to the exe
-    let Some(dir) = stable_sidecar_dir() else { return };
-    let dest = dir.join(format!("saple-mcp{}", ext));
-
-    // ponytail: freshness = same size and dest not older; hash the files if this ever misfires.
-    let up_to_date = fs::metadata(&dest)
-        .map(|d| {
-            d.len() == src_meta.len()
-                && matches!(
-                    (d.modified(), src_meta.modified()),
-                    (Ok(dest_t), Ok(src_t)) if dest_t >= src_t
-                )
-        })
-        .unwrap_or(false);
-    if up_to_date {
-        return;
-    }
-
-    let tmp = dir.join(format!("saple-mcp{}.new", ext));
-    let staged = fs::create_dir_all(&dir)
-        .and_then(|_| fs::copy(&src, &tmp).map(|_| ()))
-        .and_then(|_| fs::rename(&tmp, &dest));
-    if let Err(e) = staged {
-        let _ = fs::remove_file(&tmp);
-        eprintln!("saple-bridge: failed to stage sidecar at {}: {}", dest.display(), e);
-    }
-}
-
-/// Rewrite a `saple-memory` entry whose `command` points at a stale sidecar location (a
-/// versioned MSIX dir from before a Store update, or a moved install). Only entries whose
-/// command file name is `saple-mcp` are touched — legacy embedded-server configs keep going
-/// through the explicit reinstall banner. Returns true when the config was modified.
-#[cfg_attr(debug_assertions, allow(dead_code))]
-fn heal_saple_memory_command(config: &mut serde_json::Value, current_sidecar: &str) -> bool {
-    let entry = match config.get_mut("mcpServers").and_then(|s| s.get_mut("saple-memory")) {
-        Some(e) => e,
-        None => return false,
-    };
-    let cmd = match entry.get("command").and_then(|c| c.as_str()) {
-        Some(c) => c,
-        None => return false,
-    };
-    let is_ours = Path::new(cmd)
-        .file_stem()
-        .map(|s| s.to_string_lossy().eq_ignore_ascii_case("saple-mcp"))
-        .unwrap_or(false);
-    if !is_ours || cmd == current_sidecar {
-        return false;
-    }
-    entry["command"] = serde_json::Value::String(current_sidecar.to_string());
-    true
-}
-
-/// Self-heal MCP configs on project open. After a Store update the old WindowsApps sidecar path
-/// no longer exists, so without this every previously configured project silently loses its
-/// `saple-memory` server. Release only: dev builds resolve the sidecar to a repo-local staging
-/// path that must not leak into user configs.
-#[cfg(not(debug_assertions))]
-fn heal_mcp_configs(project_path: &str) {
-    let Ok(current) = sidecar_binary_path() else { return };
-    if !current.exists() {
-        return;
-    }
-    let current = current.to_string_lossy().to_string();
-    for file in [".mcp.json", "mcp_config.json"] {
-        let Ok(path) = get_project_file_path(project_path, file) else { continue };
-        let Ok(content) = fs::read_to_string(&path) else { continue };
-        let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) else { continue };
-        if heal_saple_memory_command(&mut val, &current) {
-            if let Ok(pretty) = serde_json::to_string_pretty(&val) {
-                let _ = crate::fs_lock::atomic_write(&path, pretty.as_bytes());
-            }
-        }
-    }
-}
-
-fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<String, String> {
+fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<String, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
-    let binary_path = sidecar_binary_path()?;
+    let binary_path = crate::sidecar::sidecar_binary_path()?;
     let binary_str = binary_path.to_string_lossy().to_string();
 
     let mcp_config = serde_json::json!({
@@ -710,70 +463,11 @@ fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String
     Ok(format!("MCP config installed for project at {}", project_path))
 }
 
-/// Preview the sidecar's tool catalog (Settings → MCP). The MCP server is no longer in-process, so
-/// spawn `saple-mcp`, send one `tools/list` request, and return its `result`. Keeps Bridge ignorant
-/// of the catalog contents (no drift). `.no_window()` suppresses the console flash on Windows.
-#[tauri::command]
-pub async fn test_mcp_tools(
-    project_path: String,
-    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<serde_json::Value, String> {
-    let registry = registry.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || test_mcp_tools_inner(&registry, project_path))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-fn test_mcp_tools_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<serde_json::Value, String> {
-    use std::io::{BufRead, Write};
-    use std::process::Stdio;
-
-    registry.ensure_inside_approved_root(&project_path)?;
-
-    let bin = sidecar_binary_path()?;
-    if !bin.exists() {
-        return Err(format!(
-            "saple-mcp sidecar not found at {}. Run `npm run prepare-sidecar`.",
-            bin.display()
-        ));
-    }
-
-    let mut child = Command::new(&bin)
-        .arg(&project_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .no_window()
-        .spawn()
-        .map_err(|e| format!("Failed to spawn saple-mcp: {}", e))?;
-
-    // `tools/list` needs no prior `initialize` in this server, so skip the handshake.
-    let req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n";
-    child.stdin.take()
-        .ok_or("Failed to open saple-mcp stdin")?
-        .write_all(req.as_bytes())
-        .map_err(|e| e.to_string())?;
-
-    let mut line = String::new();
-    std::io::BufReader::new(child.stdout.take().ok_or("Failed to open saple-mcp stdout")?)
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-
-    let _ = child.kill();
-    let _ = child.wait();
-
-    let resp: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| format!("Invalid response from saple-mcp: {}", e))?;
-    resp.get("result").cloned().ok_or_else(|| {
-        resp["error"]["message"].as_str().unwrap_or("No result in response").to_string()
-    })
-}
-
 #[tauri::command]
 pub async fn check_mcp_status(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<McpStatus, String> {
+) -> Result<McpStatus, CodedError> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || check_mcp_status_inner(&registry, project_path))
         .await
@@ -811,7 +505,7 @@ fn saple_memory_is_legacy(config: &serde_json::Value) -> bool {
     false
 }
 
-fn check_mcp_status_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<McpStatus, String> {
+fn check_mcp_status_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<McpStatus, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     // Route both paths through `get_project_file_path` for containment parity with the rest of
     // the module, rather than joining onto the raw project path.
@@ -870,6 +564,8 @@ fn check_mcp_status_inner(registry: &ProjectRootRegistry, project_path: String) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error_code::ErrorCode;
+    use std::path::PathBuf;
 
     fn temp_project() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("saple-proj-test-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
@@ -897,7 +593,7 @@ mod tests {
             max_parallel_agents: 1, enable_edit_mode: true, verification_presets: vec![],
             created_at: String::new(), updated_at: String::new(),
         };
-        let all_cases = |registry: &ProjectRootRegistry, path: String| -> Vec<(&'static str, Result<(), String>)> {
+        let all_cases = |registry: &ProjectRootRegistry, path: String| -> Vec<(&'static str, Result<(), CodedError>)> {
             vec![
                 ("ensure_workspace_dirs", ensure_workspace_dirs_inner(registry, path.clone()).map(|_| ())),
                 ("read_project_file", read_project_file_inner(registry, path.clone(), "x.txt".into()).map(|_| ())),
@@ -915,11 +611,12 @@ mod tests {
         let stranger = approved(&dir);
         for (name, result) in all_cases(&stranger, sibling.to_string_lossy().to_string()) {
             let err = result.unwrap_err();
+            assert_eq!(err.code, ErrorCode::RootNotApproved);
             assert!(
-                err.contains("not inside an approved project root"),
+                err.message.contains("not inside an approved project root"),
                 "case '{}': expected registry rejection, got: {}",
                 name,
-                err
+                err.message
             );
         }
 
@@ -929,93 +626,16 @@ mod tests {
         for (name, result) in all_cases(&own, dir.to_string_lossy().to_string()) {
             if let Err(err) = result {
                 assert!(
-                    !err.contains("not inside an approved project root"),
+                    !err.message.contains("not inside an approved project root"),
                     "case '{}': approved root must pass the gate, got: {}",
                     name,
-                    err
+                    err.message
                 );
             }
         }
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&sibling);
-    }
-
-    #[test]
-    fn allows_relative_paths_inside_workspace() {
-        let dir = temp_project();
-        let p = get_project_file_path(dir.to_str().unwrap(), ".saple/tasks.json").unwrap();
-        assert!(p.starts_with(&dir));
-        assert!(dir.join(".saple").exists(), "parent dir created");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn rejects_parent_dir_traversal() {
-        let dir = temp_project();
-        let err = get_project_file_path(dir.to_str().unwrap(), "../escape.txt").unwrap_err();
-        assert!(err.contains("escapes"), "got: {}", err);
-        let err2 = get_project_file_path(dir.to_str().unwrap(), ".saple/../../escape.txt").unwrap_err();
-        assert!(err2.contains("escapes"), "got: {}", err2);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn rejects_absolute_paths() {
-        let dir = temp_project();
-        let abs = if cfg!(windows) { "C:\\Windows\\System32\\drivers\\etc\\hosts" } else { "/etc/passwd" };
-        let err = get_project_file_path(dir.to_str().unwrap(), abs).unwrap_err();
-        assert!(err.contains("absolute") || err.contains("escapes"), "got: {}", err);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn does_not_create_dirs_when_path_escapes() {
-        let dir = temp_project();
-        let _ = get_project_file_path(dir.to_str().unwrap(), "../sibling/deep/path.txt");
-        let escaped = dir.parent().unwrap().join("sibling");
-        assert!(!escaped.exists(), "must not create directories outside the workspace");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn allows_long_nested_relative_path() {
-        let dir = temp_project();
-        let long_rel = format!(".saple/{}/note.md", "a/".repeat(40));
-        let p = get_project_file_path(dir.to_str().unwrap(), &long_rel).unwrap();
-        assert!(p.starts_with(&dir));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn write_project_file_rejects_git_internal_paths() {
-        let dir = temp_project();
-        let project = dir.to_str().unwrap().to_string();
-        let registry = approved(&dir);
-
-        let err = write_project_file_inner(&registry, project.clone(), ".git/config".to_string(), "x".to_string()).unwrap_err();
-        assert!(err.contains(".git"), "got: {}", err);
-        let err = write_project_file_inner(&registry, project.clone(), ".git/hooks/pre-commit".to_string(), "x".to_string()).unwrap_err();
-        assert!(err.contains(".git"), "got: {}", err);
-
-        // Windows filesystems are case-insensitive: an upper-cased component must hit
-        // the same block instead of reaching the real .git directory.
-        #[cfg(windows)]
-        {
-            let err = write_project_file_inner(&registry, project.clone(), ".GIT/config".to_string(), "x".to_string()).unwrap_err();
-            assert!(err.contains(".git"), "got: {}", err);
-        }
-
-        // The raw-path check must run before containment resolution, so no `.git`
-        // directories were created as a side effect of rejecting the write.
-        assert!(!dir.join(".git").exists(), ".git must not be created by a rejected write");
-
-        // A normal contained write is untouched.
-        write_project_file_inner(&registry, project, "docs/note.md".to_string(), "hi".to_string())
-            .expect("contained write must succeed");
-        assert!(dir.join("docs").join("note.md").exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1044,52 +664,5 @@ mod tests {
         // No saple-memory entry at all.
         let none = serde_json::json!({ "mcpServers": { "other": { "command": "x", "args": [] }}});
         assert!(!saple_memory_is_legacy(&none));
-    }
-
-    #[test]
-    fn heals_stale_sidecar_command() {
-        // Native paths per host: heal_saple_memory_command uses Path::file_stem to recognize the
-        // "saple-mcp" binary, and only the host's separator counts (a backslash is a literal
-        // filename char on Unix, so Windows paths wouldn't parse on the mac runner). Real configs
-        // always hold host-native paths, so mirror that here to keep the heal covered on both OSes.
-        #[cfg(windows)]
-        let (current, stale, proj) = (
-            "C:\\Users\\u\\AppData\\Local\\ai.saple.bridge\\bin\\saple-mcp.exe",
-            "C:\\Program Files\\WindowsApps\\pkg_1.0.21_x64__h\\saple-mcp.exe",
-            "C:\\proj",
-        );
-        #[cfg(not(windows))]
-        let (current, stale, proj) = (
-            "/Users/u/Library/Application Support/ai.saple.bridge/bin/saple-mcp",
-            "/Applications/Saple Bridge.app/Contents/MacOS/saple-mcp",
-            "/proj",
-        );
-        let mut cfg = serde_json::json!({ "mcpServers": {
-            "saple-memory": { "command": stale, "args": [proj] },
-            "other": { "command": "npx", "args": ["x"] }
-        }});
-        assert!(heal_saple_memory_command(&mut cfg, current));
-        assert_eq!(cfg["mcpServers"]["saple-memory"]["command"], current);
-        // Args and unrelated servers must survive untouched.
-        assert_eq!(cfg["mcpServers"]["saple-memory"]["args"][0], proj);
-        assert_eq!(cfg["mcpServers"]["other"]["command"], "npx");
-    }
-
-    #[test]
-    fn heal_leaves_current_foreign_and_legacy_commands_alone() {
-        let current = "/opt/bin/saple-mcp";
-
-        let mut same =
-            serde_json::json!({ "mcpServers": { "saple-memory": { "command": current, "args": [] }}});
-        assert!(!heal_saple_memory_command(&mut same, current), "up-to-date path must not rewrite");
-
-        // Legacy embedded-server config (bridge exe) goes through the reinstall banner, not the heal.
-        let mut legacy = serde_json::json!({ "mcpServers": {
-            "saple-memory": { "command": "C:\\x\\saple-bridge.exe", "args": ["mcp", "p"] }
-        }});
-        assert!(!heal_saple_memory_command(&mut legacy, current));
-
-        let mut none = serde_json::json!({ "mcpServers": {} });
-        assert!(!heal_saple_memory_command(&mut none, current));
     }
 }

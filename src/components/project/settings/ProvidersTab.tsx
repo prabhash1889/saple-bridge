@@ -5,7 +5,9 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { useProviderStore } from '../../../stores/providerStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useTerminalStore } from '../../../stores/terminalStore';
-import { KEYCHAIN_SERVICE_PREFIX, MASKED_KEY, SIGN_IN_COMMANDS } from './constants';
+import { SIGN_IN_COMMANDS, providerKeychainService } from '../../../lib/providerFacts';
+import { MASKED_KEY } from './constants';
+import type { AgentProvider } from '../../../types/provider';
 
 export const ProvidersTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
@@ -24,7 +26,7 @@ export const ProvidersTab: React.FC = () => {
     providers.forEach(async (p) => {
       if (providerKeys[p.provider]) return;
       try {
-        const saved = await invoke<boolean>('has_api_key', { service: `${KEYCHAIN_SERVICE_PREFIX}${p.provider}_api_key` });
+        const saved = await invoke<boolean>('has_api_key', { service: providerKeychainService(p.provider) });
         if (saved) {
           setProviderKeys(prev => ({ ...prev, [p.provider]: { value: MASKED_KEY, saved: true } }));
         } else {
@@ -42,7 +44,7 @@ export const ProvidersTab: React.FC = () => {
     setProviderKeySaving(prev => ({ ...prev, [provider]: true }));
     setProviderKeyStatus(prev => ({ ...prev, [provider]: 'idle' }));
     try {
-      await invoke('set_api_key', { service: `${KEYCHAIN_SERVICE_PREFIX}${provider}_api_key`, key });
+      await invoke('set_api_key', { service: providerKeychainService(provider as AgentProvider), key });
       setProviderKeyStatus(prev => ({ ...prev, [provider]: 'success' }));
       setProviderKeys(prev => ({ ...prev, [provider]: { value: MASKED_KEY, saved: true } }));
       refreshReadiness();
@@ -57,7 +59,7 @@ export const ProvidersTab: React.FC = () => {
   const handleProviderKeyDelete = async (provider: string) => {
     setProviderKeySaving(prev => ({ ...prev, [provider]: true }));
     try {
-      await invoke('delete_api_key', { service: `${KEYCHAIN_SERVICE_PREFIX}${provider}_api_key` });
+      await invoke('delete_api_key', { service: providerKeychainService(provider as AgentProvider) });
       setProviderKeys(prev => ({ ...prev, [provider]: { value: '', saved: false } }));
       setProviderKeyStatus(prev => ({ ...prev, [provider]: 'idle' }));
       refreshReadiness();
@@ -69,7 +71,7 @@ export const ProvidersTab: React.FC = () => {
   };
 
   const handleProviderSignIn = async (provider: string) => {
-    const command = SIGN_IN_COMMANDS[provider];
+    const command = SIGN_IN_COMMANDS[provider as AgentProvider];
     if (!command) return;
     if (!currentProjectPath) {
       errorNotification('Open a workspace first', 'Sign-in runs in a terminal inside a workspace.');

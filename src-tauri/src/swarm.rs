@@ -50,7 +50,7 @@ pub async fn write_swarm_state(
 }
 
 fn write_swarm_state_inner(project_path: String, state_json: String) -> Result<(), String> {
-    let path = crate::project::get_project_file_path(&project_path, ".saple/swarm/state.json")?;
+    let path = crate::project_roots::get_project_file_path(&project_path, ".saple/swarm/state.json")?;
     crate::fs_lock::atomic_write(&path, state_json.as_bytes())
 }
 
@@ -68,7 +68,7 @@ pub async fn read_mailbox_file(
 
 fn read_mailbox_file_inner(project_path: String, agent_id: String) -> Result<String, String> {
     let file_name = format!(".saple/swarm/mailbox/{}.md", agent_id);
-    let path = crate::project::get_project_file_path(&project_path, &file_name)?;
+    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
     if !path.exists() {
         return Ok(format!("# {} Mailbox\nNo messages yet.\n", agent_id));
     }
@@ -90,7 +90,7 @@ pub async fn write_mailbox_file(
 
 fn write_mailbox_file_inner(project_path: String, agent_id: String, content: String) -> Result<(), String> {
     let file_name = format!(".saple/swarm/mailbox/{}.md", agent_id);
-    let path = crate::project::get_project_file_path(&project_path, &file_name)?;
+    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
     crate::fs_lock::atomic_write(&path, content.as_bytes())
 }
 
@@ -109,7 +109,7 @@ pub async fn read_handoff_file(
 
 fn read_handoff_file_inner(project_path: String, from_agent: String, to_agent: String) -> Result<String, String> {
     let file_name = format!(".saple/swarm/handoffs/{}-to-{}.json", from_agent, to_agent);
-    let path = crate::project::get_project_file_path(&project_path, &file_name)?;
+    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
     if !path.exists() {
         return Err("Handoff file not found".to_string());
     }
@@ -132,7 +132,7 @@ pub async fn write_handoff_file(
 
 fn write_handoff_file_inner(project_path: String, from_agent: String, to_agent: String, content: String) -> Result<(), String> {
     let file_name = format!(".saple/swarm/handoffs/{}-to-{}.json", from_agent, to_agent);
-    let path = crate::project::get_project_file_path(&project_path, &file_name)?;
+    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
     crate::fs_lock::atomic_write(&path, content.as_bytes())
 }
 

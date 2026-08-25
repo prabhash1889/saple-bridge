@@ -6,12 +6,12 @@ import { useFileStore } from '../../stores/fileStore';
 import { useConfirmStore } from '../../stores/confirmStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { MemoryMarkdown } from './markdown/MemoryMarkdown';
+import { memoryPathPrefix } from '../../lib/memoryLayout';
 
 export const MemoryEditor: React.FC = () => {
   const { currentProjectPath, workspaceConfig } = useProjectStore();
-  // The on-disk memory dir depends on the workspace's memory mode (see get_memory_dir in
-  // memory.rs): bridge-compatible stores under `.bridgememory/`, otherwise `.saple/memory/`.
-  const memoryPathPrefix = workspaceConfig?.memoryMode === 'bridge-compatible' ? '.bridgememory/' : '.saple/memory/';
+  // Display-only note path prefix; the on-disk layout itself is owned by Rust (memory_layout.rs).
+  const memoryPathPrefixText = memoryPathPrefix(workspaceConfig?.memoryMode);
   const { files, loadFiles } = useFileStore();
   const {
     activeNote,
@@ -333,7 +333,7 @@ export const MemoryEditor: React.FC = () => {
           <div>
             <label style={sidebarLabelStyle}>File Path</label>
             <div style={filePathBoxStyle}>
-              {activeNote.filePath ? `${memoryPathPrefix}${activeNote.filePath}` : 'Not saved yet'}
+              {activeNote.filePath ? `${memoryPathPrefixText}${activeNote.filePath}` : 'Not saved yet'}
             </div>
           </div>
 

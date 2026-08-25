@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import type { AgentProvider } from '../types/provider';
-import { PROVIDER_MODEL_ALIASES } from '../components/swarm/wizard/providerMeta';
+import { PROVIDER_MODEL_ALIASES } from '../lib/providerFacts';
 
 // Per-provider model catalog feeding the model comboboxes (P8). Three layers, most-trusted first:
 //   1. Stable CLI aliases (static, always available — see PROVIDER_MODEL_ALIASES).

@@ -15,7 +15,8 @@
 
 use serde_json::Value;
 
-use crate::project::{get_project_file_path, now_iso};
+use crate::project::now_iso;
+use crate::project_roots::get_project_file_path;
 
 /// The only files this generic writer may touch — the canonical control-plane collections. Without
 /// this whitelist a "write arbitrary JSON by id" command would be a way to clobber `tasks.json`,

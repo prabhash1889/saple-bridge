@@ -22,10 +22,6 @@ vi.mock('./projectStore', () => ({
   useProjectStore: { getState: () => projectRef },
 }));
 
-vi.mock('./kanbanStore', () => ({
-  useKanbanStore: { getState: () => ({ tasks: [], updateTask: vi.fn() }) },
-}));
-
 const layoutMock = vi.hoisted(() => ({
   setLayout: vi.fn(),
   clearLayout: vi.fn(),
@@ -35,11 +31,7 @@ vi.mock('./terminalLayoutStore', () => ({
   useTerminalLayoutStore: { getState: () => layoutMock },
 }));
 
-vi.mock('../lib/desktopNotifications', () => ({
-  notifyTaskReadyForReview: vi.fn(),
-}));
-
-import { useTerminalStore } from './terminalStore';
+import { useTerminalStore, subscribeRawTerminalEvents, getPaneSignalTail, type RawTerminalEvent } from './terminalStore';
 import { useConfirmStore } from './confirmStore';
 
 const store = () => useTerminalStore.getState();
@@ -188,5 +180,72 @@ describe('output buffering', () => {
     vi.advanceTimersByTime(20);
 
     expect(store().getBufferedOutput(id).length).toBe(TERMINAL_OUTPUT_BUFFER_CHARS);
+  });
+});
+
+// The store is a dumb transport: PTY events are recorded (buffer + rolling tail) and re-emitted
+// as RawTerminalEvents for terminalSwarmBridge. These tests pin that transport contract.
+describe('raw transport events', () => {
+  const tauriHandler = (topic: string) => {
+    const call = listenMock.mock.calls.find(([t]) => t === topic);
+    return call?.[1] as (event: { payload: unknown }) => void;
+  };
+
+  it('re-emits pty-output as a raw event with the tail already updated', async () => {
+    await store().addPane('/proj');
+    const events: RawTerminalEvent[] = [];
+    const tailsDuringEvents: string[] = [];
+    const unsubscribe = subscribeRawTerminalEvents((event) => {
+      // The bridge reads the signal tail DURING the event for marker detection, so it must
+      // already include the chunk that triggered this event.
+      if (event.kind === 'output') {
+        events.push(event);
+        tailsDuringEvents.push(getPaneSignalTail(event.paneId));
+      }
+    });
+
+    tauriHandler('pty-output')({ payload: { id: 'term-1', data: 'work [AGENT_' } });
+    tauriHandler('pty-output')({ payload: { id: 'term-1', data: 'DONE]' } });
+
+    unsubscribe();
+    expect(events).toEqual([
+      { kind: 'output', paneId: 'term-1', data: 'work [AGENT_' },
+      { kind: 'output', paneId: 'term-1', data: 'DONE]' },
+    ]);
+    expect(tailsDuringEvents).toEqual(['work [AGENT_', 'work [AGENT_DONE]']);
+  });
+
+  it('re-emits pty-exit only for live sessions', async () => {
+    const id = await store().addPane('/proj');
+    const events: RawTerminalEvent[] = [];
+    const unsubscribe = subscribeRawTerminalEvents(events.push.bind(events));
+
+    tauriHandler('pty-exit')({ payload: { id: 'ghost-pane', exitCode: 0 } });
+    expect(events).toEqual([]);
+
+    tauriHandler('pty-exit')({ payload: { id, exitCode: 3 } });
+    unsubscribe();
+
+    expect(events).toEqual([{ kind: 'exit', paneId: id, exitCode: 3 }]);
+    expect(store().exitedPanes[id]).toBe(true);
+  });
+
+  it('emits spawn-failed when the PTY listeners cannot start', async () => {
+    listenMock.mockReset().mockRejectedValueOnce(new Error('listener registration failed'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const events: RawTerminalEvent[] = [];
+      const unsubscribe = subscribeRawTerminalEvents(events.push.bind(events));
+
+      const id = await store().addPane('/proj');
+      unsubscribe();
+
+      expect(store().exitedPanes[id]).toBe(true);
+      expect(events).toEqual([
+        { kind: 'spawn-failed', paneId: id, error: expect.any(Error) },
+      ]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

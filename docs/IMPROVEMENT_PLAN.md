@@ -177,6 +177,7 @@ Updated at phase boundaries; completed implementation detail lives in git histor
 | 2 - State integrity and recovery | Complete | structured load outcomes, recovery UI, request-sequence tokens, locked read-modify-writes, transactional snapshots, BOM handling, `.saple/` exclude disclosure |
 | 3 - Review, swarm, and process correctness | **Complete (code)** | all work items and automated checks landed; two environment-dependent QA/CI runs deferred into Phase 4 - see Phase 3 status |
 | 4 - Observability, testing, and release hardening | **Complete (code)** | durable app log + privileged-action audit log, diagnostics report, failure escalation/dedupe, IPC contract registry tests, coverage baseline, sidecar pinning, SHA-pinned Actions, Dependabot/audit job, release gate; signing/notarization and maintainer-side pins deferred - see Phase 4 status |
+| 5 - Architecture deepening | Complete | single-owner path policy with coded errors, terminal transport/bridge inversion, coordinator-link and crash-recovery extraction from swarmStore, provider facts table (Rust + renderer), memory layout owner, sidecar module split, coded IPC error surfaces - see Phase 5 notes |
 
 ---
 ## Phase 4 - Observability, testing, and release hardening
@@ -346,6 +347,22 @@ Deferred to their natural owners (environment/tooling-dependent, not code work):
 - Each cross-cutting policy has one module and one interface.
 - Deleting the new modules would spread meaningful complexity back across callers—the deletion test passes.
 - No one-implementation speculative interfaces are introduced.
+
+### Status (updated at the end of the Phase 5 session)
+
+All seven work items landed on `traycer/saple-bridge-cosmic-eagle` as behavior-preserving refactors plus structured errors:
+
+1. `refactor(paths)` + `feat(paths)` - `project_roots.rs` is the single owner of root registration, containment, protected paths, and destructive-target rules; path-policy failures carry `CodedError` codes (`root_not_approved`, `path_outside_root`, `protected_path`, `destructive_target`, `invalid_path`).
+2. `refactor(terminal)` - terminalStore is a raw pane/output/exit transport; `src/lib/terminalSwarmBridge.ts` maps events to swarm/Kanban transitions; all circular-import dynamic imports in terminalStore are deleted (projectStore keeps one that works around a direct store cycle, documented).
+3. `refactor(swarm)` - live-coordinator digest delivery extracted to `src/lib/swarmCoordinatorLink.ts` and crash reconciliation to `src/lib/swarmCrashRecovery.ts`, both dependency-injected and unit-tested without the store; scheduler stays with swarm state.
+4. `refactor(providers)` - one static facts table in Rust (`providers.rs`) derives launch commands, probes, keychain services, credential env vars, and blocklists; renderer-side facts centralized in `src/lib/providerFacts.ts`.
+5. `feat(pty)` / `feat(memory)` / `feat(errors)` - coded IPC surfaces where callers branch: PTY lifecycle (`pty_not_found`, `already_exists`), memory snapshots (`already_exists`), prompt files (`invalid_path`, `root_not_approved`). The renderer parses both wire shapes via `parseIpcError`; remaining string-only surfaces deliberately stay uncoded until something needs to branch on them (no speculative vocabulary).
+6. `refactor(memory)` - `memory_layout.rs` owns mode resolution, per-mode write fan-out, and snapshot roots; renderer display prefix centralized in `src/lib/memoryLayout.ts`.
+7. `refactor(sidecar)` - sidecar binary path resolution, staging, stale-config healing, and the tool probe moved from `project.rs` to `sidecar.rs`; command names and payloads unchanged.
+
+Automated checks: 147 Rust tests (up from 126 at phase start) including error-code serialization, PTY/snapshot code assertions, provider table consistency, memory layout modes; 344 frontend tests including bridge mapping, coordinator-link exactly-once pump, crash reconciliation, and provider-fact contracts.
+
+Deferred deliberately: converting every remaining `Result<_, String>` command surface to `CodedError` - done only where a consumer branches, per the no-speculative-interfaces rule.
 
 ---
 

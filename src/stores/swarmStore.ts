@@ -25,8 +25,9 @@ import { parseAgentOutcome } from '../lib/controlPlane';
 import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
 import { buildAgentPrompt } from '../lib/swarmPrompts';
 import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, capDigestLog, truncateDigest, MAX_PENDING_DIGESTS, type DigestEntry } from '../lib/swarmDigest';
-import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
+import { consumePendingAgentExits, reconcileLoadedAgents } from '../lib/swarmCrashRecovery';
 import { removeAgentFromRoster, findHungAgents, findDeadlockedAgents } from '../lib/swarmScheduler';
+import { createCoordinatorLink } from '../lib/swarmCoordinatorLink';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 import { useNotificationStore } from './notificationStore';
 import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
@@ -481,142 +482,9 @@ export const isAcceptanceCommandApproved = (
 ): boolean =>
   !!swarmId && approvals?.swarmId === swarmId && approvals.hashes.includes(commandHash);
 
-// P13: pty-exits for panes whose project isn't the loaded one, recorded by terminalStore and
-// replayed by loadSwarmState (after the marker-tail check, which wins when both exist). In-memory
-// on purpose: the switch-and-return scenario lives within one app session; across a restart the
-// PTYs are dead anyway and the existing orphan reconciliation applies.
-const pendingAgentExits = new Map<string, Map<string, number | null | undefined>>();
-
-export const recordPendingAgentExit = (
-  projectPath: string,
-  terminalId: string,
-  exitCode: number | null | undefined,
-): void => {
-  const forProject = pendingAgentExits.get(projectPath) ?? new Map();
-  forProject.set(terminalId, exitCode);
-  pendingAgentExits.set(projectPath, forProject);
-};
-
-const consumePendingAgentExits = (projectPath: string) => {
-  const forProject = pendingAgentExits.get(projectPath) ?? new Map<string, number | null | undefined>();
-  pendingAgentExits.delete(projectPath);
-  return forProject;
-};
-
 // Statuses after which an agent will not run again without human/coordinator action. Mirrors the
 // scheduler's `allFinished` set.
 const FINISHED_AGENT_STATUSES: AgentStatus[] = ['done', 'failed', 'blocked', 'stopped'];
-
-// ---- Phase 3: live coordinator ---------------------------------------------------------------
-// The coordinator stays alive in an interactive TUI for the whole swarm; Bridge injects results
-// digests into its PTY as typed user turns. Module-level like the scan guard: one live swarm per
-// app session. Injection only happens when the pane has been quiet for IDLE_QUIET_MS (the "at its
-// input prompt" heuristic); digests wait in the PERSISTED `pendingDigests` queue while it is
-// busy, paused, or another project is loaded, and are re-pumped on resume/re-arm.
-const IDLE_QUIET_MS = 3000;
-const DIGEST_ENTER_DELAY_MS = 150;
-let coordinatorWatch: { paneId: string; unsubscribe: () => void } | null = null;
-let coordinatorLastOutputAt = 0;
-let digestTimer: ReturnType<typeof setTimeout> | null = null;
-
-const stopCoordinatorWatch = () => {
-  coordinatorWatch?.unsubscribe();
-  coordinatorWatch = null;
-  if (digestTimer) {
-    clearTimeout(digestTimer);
-    digestTimer = null;
-  }
-};
-
-const watchCoordinatorPane = (paneId: string) => {
-  if (coordinatorWatch?.paneId === paneId) return;
-  coordinatorWatch?.unsubscribe();
-  coordinatorLastOutputAt = Date.now();
-  const unsubscribe = useTerminalStore.getState().subscribeOutput(paneId, () => {
-    coordinatorLastOutputAt = Date.now();
-  });
-  coordinatorWatch = { paneId, unsubscribe };
-};
-
-// Drain pending digests into the coordinator's PTY, one per idle window. Exactly-once: a digest
-// is removed from `pendingDigests` only after BOTH PTY writes succeeded - a failed or dropped
-// write (paused swarm, project switch, full PTY input queue) leaves it queued for re-delivery,
-// so resume/switch-back/re-arm yields exactly one more delivery, never zero.
-const pumpDigests = () => {
-  if (digestTimer) return;
-  const tick = async () => {
-    digestTimer = null;
-    const state = useSwarmStore.getState();
-    const paneId = coordinatorWatch?.paneId;
-    const coordinator = state.activeAgents.find((a) => a.role === 'coordinator');
-    if (!paneId || !coordinator || coordinator.terminalId !== paneId || state.status !== 'running') {
-      return; // digests stay queued in pendingDigests until conditions return
-    }
-    if (state.pendingDigests.length === 0) {
-      if (state.coordinatorState === 'digesting') useSwarmStore.setState({ coordinatorState: 'idle' });
-      return;
-    }
-    const quietFor = Date.now() - coordinatorLastOutputAt;
-    if (quietFor < IDLE_QUIET_MS) {
-      digestTimer = setTimeout(tick, IDLE_QUIET_MS - quietFor + 50);
-      return;
-    }
-    const digest = state.pendingDigests[0];
-    useSwarmStore.setState({ coordinatorState: 'digesting' });
-    try {
-      // Bracketed paste so the TUI treats embedded newlines as pasted text; Enter follows as its
-      // own keypress (mirrors the Rust-side interactive prompt delivery). write_pty reports
-      // `accepted: false` when the pane's input queue is full and the bytes were dropped -
-      // structured payloads must never be silently lost, so a drop keeps the digest queued.
-      const paste = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: `\u001b[200~${digest}\u001b[201~` });
-      if (!paste?.accepted) {
-        // Nothing was typed - safe to retry the whole delivery later.
-        scheduleDigestRetry();
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, DIGEST_ENTER_DELAY_MS));
-      let enter = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: '\r' });
-      if (!enter?.accepted) {
-        // The paste is already in the TUI's input; only the submit keystroke was dropped.
-        // Re-queuing the WHOLE digest would duplicate the text, so retry just the Enter
-        // once after the next quiet window, then consider it delivered (the text sits in
-        // the coordinator's input where the operator can see it).
-        await new Promise((resolve) => setTimeout(resolve, IDLE_QUIET_MS));
-        enter = await invoke<{ accepted: boolean }>('write_pty', { id: paneId, data: '\r' }).catch(() => ({ accepted: false }));
-      }
-      useSwarmStore.setState((s) => ({ pendingDigests: s.pendingDigests.slice(1) }));
-    } catch (error) {
-      console.error('Failed to inject digest into coordinator PTY:', error);
-      scheduleDigestRetry(); // keep the digest queued; try again after the next quiet window
-      return;
-    }
-    coordinatorLastOutputAt = Date.now(); // injection counts as activity: wait for quiet again
-    scheduleDigestRetry();
-  };
-  digestTimer = setTimeout(tick, 0);
-};
-
-const scheduleDigestRetry = () => {
-  if (digestTimer) return;
-  digestTimer = setTimeout(() => {
-    digestTimer = null;
-    void pumpDigestsTick();
-  }, IDLE_QUIET_MS);
-};
-
-const pumpDigestsTick = () => {
-  pumpDigests();
-};
-
-// Test seam: the pump timer is module-level state that survives between tests. Switching to
-// fake timers orphans a pending handle (the variable stays non-null and blocks scheduling),
-// so tests must clear it alongside `vi.useRealTimers()`.
-export const _resetDigestPumpForTests = (): void => {
-  if (digestTimer) {
-    clearTimeout(digestTimer);
-    digestTimer = null;
-  }
-};
 
 // Phase 3 hung-agent alerts: a lightweight interval (armed once per session) checks running
 // agents against the configured threshold and raises ONE operator alert per agent per run.
@@ -800,7 +668,7 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
 
     // Phase 3: track the live coordinator's output for the busy/idle injection heuristic.
     if (interactive) {
-      watchCoordinatorPane(paneId);
+      coordinatorLink.watch(paneId);
       useSwarmStore.setState({ coordinatorState: 'planning' });
     }
 
@@ -935,52 +803,21 @@ export const useSwarmStore = create<SwarmState>()(
         try {
           const parsed = JSON.parse(content);
 
-          // Crash/restart reconciliation: state.json can say an agent is running while its PTY
-          // no longer exists (app restarted mid-run). Left alone, those zombies stay "running"
-          // forever and dependents never start. Downgrade them to failed (Relaunch stays one
-          // click away) and pause a running swarm so continuing is a deliberate Resume.
-          //
-          // P13, checked first: an agent may have FINISHED while this project wasn't loaded — its
-          // signal was dropped by the live handlers on purpose. Recover it here instead of failing
-          // it: the scoped marker still sits in the pane's rolling signal tail (fast path), and a
-          // pty-exit that fired while away was recorded as a pending exit (safety net). Recovered
-          // transitions run through updateAgentStatus below so completion side effects (outcome
-          // artifacts, run close-out, scheduler advance) all fire exactly as if the user had been
-          // watching.
-          const loadedAgents: SwarmAgent[] = parsed.agents || [];
+          // Crash/restart reconciliation (see lib/swarmCrashRecovery): running/starting agents
+          // whose pane is gone are failed (or recovered from a marker tail / pending exit), and
+          // an interrupted run pauses so continuing is a deliberate Resume. Recovered transitions
+          // replay below through updateAgentStatus so completion side effects fire exactly as if
+          // the user had been watching.
           const liveSessions = useTerminalStore.getState().sessions;
           const pendingExits = consumePendingAgentExits(projectPath);
-          let orphaned = false;
-          const recovered: Array<{ agentId: string; status: AgentStatus; statusReason?: string }> = [];
-          const reconciledAgents = loadedAgents.map((agent) => {
-            if (agent.status !== 'running' && agent.status !== 'starting') return agent;
-            if (agent.terminalId) {
-              const tail = getPaneSignalTail(agent.terminalId);
-              if (tail) {
-                const scopedReview = hasReviewSignal(tail, agent.marker);
-                const recoveredStatus = getSwarmStatusFromOutput(tail, scopedReview, agent.marker);
-                if (recoveredStatus) {
-                  recovered.push({ agentId: agent.id, status: recoveredStatus });
-                  return agent;
-                }
-              }
-              if (pendingExits.has(agent.terminalId)) {
-                const transition = exitFallbackTransition(pendingExits.get(agent.terminalId));
-                recovered.push({ agentId: agent.id, ...transition });
-                return agent;
-              }
-              if (liveSessions[agent.terminalId]) return agent;
-            }
-            orphaned = true;
-            return {
-              ...agent,
-              status: 'failed' as AgentStatus,
-              terminalId: undefined,
-              statusReason: 'Agent terminal was lost (app restarted mid-run) — relaunch to continue.',
-            };
-          });
-          const loadedStatus = parsed.status || 'idle';
-          const status = orphaned && loadedStatus === 'running' ? 'paused' : loadedStatus;
+          const { agents: reconciledAgents, status, orphaned, recovered } =
+            reconcileLoadedAgents<SwarmAgent>({
+              agents: parsed.agents || [],
+              loadedStatus: parsed.status || 'idle',
+              liveSessions,
+              getSignalTail: getPaneSignalTail,
+              pendingExits,
+            });
 
           set({
             loadedProjectPath: projectPath,
@@ -1033,11 +870,11 @@ export const useSwarmStore = create<SwarmState>()(
           const liveCoordinator = reconciledAgents.find(
             (a) => a.role === 'coordinator' && a.status === 'running' && a.terminalId && liveSessions[a.terminalId],
           );
-          if (liveCoordinator?.terminalId) watchCoordinatorPane(liveCoordinator.terminalId);
+          if (liveCoordinator?.terminalId) coordinatorLink.watch(liveCoordinator.terminalId);
           // Phase 3: re-arm delivery + hung-watch after a project switch/restart. Undelivered
           // digests resume exactly-once from pendingDigests; nothing is re-sent that already
           // landed (they were popped only after their PTY writes succeeded).
-          pumpDigests();
+          coordinatorLink.pump();
           ensureHungWatch();
           // P13: replay recovered transitions now that this project's agents are loaded. Each one
           // persists, notifies, closes out the run/outcome, and advances dependents.
@@ -1462,15 +1299,15 @@ export const useSwarmStore = create<SwarmState>()(
           providerSupportsTurnInjection(coordinator.provider) &&
           coordinator.status === 'running' &&
           !!coordinator.terminalId &&
-          coordinatorWatch?.paneId === coordinator.terminalId &&
+          coordinatorLink.isWatching(coordinator.terminalId) &&
           !useTerminalStore.getState().exitedPanes?.[coordinator.terminalId];
         if (injectable) {
-          // Queue for exactly-once injection; pumpDigests pops only after the PTY write lands.
+          // Queue for exactly-once injection; the pump pops only after the PTY write lands.
           // A paused/stopped swarm or a full PTY input queue leaves it here for re-delivery.
           set((state) => ({
             pendingDigests: [...state.pendingDigests, truncateDigest(digest)].slice(-MAX_PENDING_DIGESTS),
           }));
-          pumpDigests();
+          coordinatorLink.pump();
         } else if (options.relaunch !== false) {
           // Digest-relaunch fallback: a fresh coordinator whose prompt embeds the digest log.
           await get().relaunchAgent(projectPath, coordinator.id);
@@ -1643,7 +1480,7 @@ export const useSwarmStore = create<SwarmState>()(
         await get().saveSwarmState(projectPath);
         ensureHungWatch();
         // Phase 3: deliver any digest that was queued when the swarm paused.
-        pumpDigests();
+        coordinatorLink.pump();
         await get().checkAndRunNextAgents(projectPath);
       },
 
@@ -1651,7 +1488,7 @@ export const useSwarmStore = create<SwarmState>()(
         // Phase 3: drop the live-coordinator machinery (output watch, pump timer) before the
         // panes die under it. Undelivered pendingDigests are dropped WITH the run - the run is
         // over, and a new swarm starts with an empty queue anyway.
-        stopCoordinatorWatch();
+        coordinatorLink.stop();
         // Deactivate BEFORE tearing panes down: the removePane awaits below yield to PTY-output
         // handlers, and a concurrent [AGENT_DONE] -> checkAndRunNextAgents must see the swarm as
         // stopped or it launches a fresh agent mid-shutdown, outside the kill list.
@@ -2249,3 +2086,29 @@ export const useSwarmStore = create<SwarmState>()(
     }
   )
 );
+
+// Phase 3 live coordinator: one link per app session (one live swarm at a time). It owns the pane
+// watch and pump timers; every store/state access flows through these deps, so the delivery loop
+// itself lives dependency-free in lib/swarmCoordinatorLink.
+const coordinatorLink = createCoordinatorLink({
+  getSnapshot: () => {
+    const s = useSwarmStore.getState();
+    return {
+      running: s.status === 'running',
+      coordinatorPaneId: s.activeAgents.find((a) => a.role === 'coordinator')?.terminalId,
+      pendingDigests: s.pendingDigests,
+      coordinatorState: s.coordinatorState,
+    };
+  },
+  setCoordinatorState: (coordinatorState) => useSwarmStore.setState({ coordinatorState }),
+  onDigestDelivered: () =>
+    useSwarmStore.setState((s) => ({ pendingDigests: s.pendingDigests.slice(1) })),
+  writePty: (id, data) => invoke<{ accepted: boolean }>('write_pty', { id, data }),
+  subscribeOutput: (paneId, onOutput) =>
+    useTerminalStore.getState().subscribeOutput(paneId, onOutput),
+});
+
+// Test seam kept on the store module for existing suites: see CoordinatorLink.resetForTests.
+export const _resetDigestPumpForTests = (): void => {
+  coordinatorLink.resetForTests();
+};

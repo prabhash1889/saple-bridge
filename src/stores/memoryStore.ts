@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useConfirmStore } from './confirmStore';
+import { hasIpcErrorCode, parseIpcError } from '../lib/errors';
 
 export interface MemoryNode {
   id: string;
@@ -227,8 +228,8 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       // snapshot requires an explicitly confirmed overwrite flag.
       await invoke('create_memory_snapshot', { projectPath, name, overwrite });
     } catch (err) {
-      const message = String(err);
-      if (!overwrite && message.includes('already exists')) {
+      const info = parseIpcError(err);
+      if (!overwrite && hasIpcErrorCode(err, 'already_exists')) {
         // Refuse-to-clobber surfaced by Rust - ask before replacing the old snapshot.
         set({ loading: false });
         useConfirmStore.getState().confirm({
@@ -241,7 +242,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
         });
         return;
       }
-      set({ error: `Failed to create snapshot: ${message}`, loading: false });
+      set({ error: `Failed to create snapshot: ${info.message}`, loading: false });
       return;
     }
     const snapshots = await invoke<string[]>('list_memory_snapshots', { projectPath });

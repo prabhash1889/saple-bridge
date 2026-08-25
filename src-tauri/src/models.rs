@@ -64,7 +64,7 @@ fn list_provider_models_inner(provider: &str) -> Vec<String> {
     let Some((url, auth, array_key, id_field)) = models_source(provider) else {
         return Vec::new();
     };
-    let key = match get_api_key_inner(format!("saple_provider_{}_api_key", provider)) {
+    let key = match get_api_key_inner(crate::providers::keychain_service(provider)) {
         Ok(k) if !k.is_empty() => k,
         _ => return Vec::new(), // no key stored — skip discovery, don't surface an error
     };
