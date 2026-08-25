@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
+use crate::error_code::CodedError;
 use crate::memory_layout;
 use crate::project_roots::ProjectRootRegistry;
 
@@ -477,7 +478,7 @@ pub async fn create_memory_snapshot(
     name: String,
     overwrite: Option<bool>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         create_memory_snapshot_inner(project_path, name, overwrite.unwrap_or(false))
@@ -490,14 +491,16 @@ pub async fn create_memory_snapshot(
 /// byte-for-byte, and only then atomically swap it into place. An existing snapshot is never
 /// overwritten unless the caller explicitly confirms (`overwrite = true`, backed by a UI
 /// confirmation), and any failure leaves the previous snapshot untouched.
-fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: bool) -> Result<(), String> {
+fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: bool) -> Result<(), CodedError> {
     if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return Err("Snapshot name must contain only alphanumeric characters, dashes, or underscores".to_string());
+        return Err(CodedError::invalid_path(
+            "Snapshot name must contain only alphanumeric characters, dashes, or underscores",
+        ));
     }
 
     let memory_dir = memory_layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
-        return Err("No memories found to snapshot".to_string());
+        return Err(CodedError::internal("No memories found to snapshot"));
     }
 
     let snapshots_dir = memory_layout::snapshots_dir(&project_path);
@@ -515,8 +518,11 @@ fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: b
     }
     fs::create_dir_all(&snapshots_dir).map_err(|e| e.to_string())?;
 
-    let staged = copy_dir_all(&memory_dir, &tmp_dir)
-        .and_then(|_| verify_snapshot_copies_source(&memory_dir, &tmp_dir).map_err(|e| e.to_string()));
+    let staged: Result<(), CodedError> = (|| {
+        copy_dir_all(&memory_dir, &tmp_dir)?;
+        verify_snapshot_copies_source(&memory_dir, &tmp_dir)?;
+        Ok(())
+    })();
     if let Err(e) = staged {
         let _ = fs::remove_dir_all(&tmp_dir);
         return Err(e);
@@ -526,19 +532,19 @@ fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: b
     if snapshot_dir.exists() {
         if !overwrite {
             let _ = fs::remove_dir_all(&tmp_dir);
-            return Err(format!(
+            return Err(CodedError::already_exists(format!(
                 "Snapshot {} already exists. Confirm overwrite to replace it.",
                 name
-            ));
+            )));
         }
         fs::remove_dir_all(&snapshot_dir).map_err(|e| {
             let _ = fs::remove_dir_all(&tmp_dir);
-            e.to_string()
+            CodedError::from(e.to_string())
         })?;
     }
     if let Err(e) = crate::fs_lock::rename_with_retry(&tmp_dir, &snapshot_dir) {
         let _ = fs::remove_dir_all(&tmp_dir);
-        return Err(e);
+        return Err(e.into());
     }
 
     Ok(())
@@ -549,11 +555,12 @@ pub async fn restore_memory_snapshot(
     project_path: String,
     name: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || restore_memory_snapshot_inner(project_path, name))
         .await
         .map_err(|e| e.to_string())?
+        .map_err(CodedError::from)
 }
 
 fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(), String> {
@@ -1495,7 +1502,8 @@ Inline `[[inline-code]]` should not count either.
         fs::write(&note_path, "v2").unwrap();
         let err = create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false)
             .expect_err("unconfirmed overwrite must be refused");
-        assert!(err.contains("already exists"), "got: {}", err);
+        assert_eq!(err.code, crate::error_code::ErrorCode::AlreadyExists);
+        assert!(err.message.contains("already exists"), "got: {}", err.message);
         let kept = fs::read_to_string(project.join(".saple/snapshots/target/general/note.md")).unwrap();
         assert_eq!(kept, "v1", "existing snapshot must not be clobbered");
 
