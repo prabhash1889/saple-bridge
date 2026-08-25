@@ -21,7 +21,8 @@ import {
 import { notifyTaskReadyForReview } from './desktopNotifications';
 import { useKanbanStore, recordPendingTaskReview } from '../stores/kanbanStore';
 import { useProjectStore } from '../stores/projectStore';
-import { useSwarmStore, recordPendingAgentExit } from '../stores/swarmStore';
+import { useSwarmStore } from '../stores/swarmStore';
+import { recordPendingAgentExit } from './swarmCrashRecovery';
 import {
   getPaneSignalTail,
   subscribeRawTerminalEvents,

@@ -64,12 +64,12 @@ vi.mock('../lib/desktopNotifications', () => ({
 
 import {
   useSwarmStore,
-  recordPendingAgentExit,
   hashAcceptanceCommand,
   _resetDigestPumpForTests,
   type SwarmAgent,
   type AgentStatus,
 } from './swarmStore';
+import { recordPendingAgentExit } from '../lib/swarmCrashRecovery';
 import { hashAcceptanceOutput } from '../lib/swarmDigest';
 import { useProjectStore } from './projectStore';
 import type { WizardLaunchInput } from '../types/wizard';

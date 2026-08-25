@@ -24,7 +24,7 @@ import { parseAgentOutcome } from '../lib/controlPlane';
 import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
 import { buildAgentPrompt } from '../lib/swarmPrompts';
 import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, capDigestLog, truncateDigest, MAX_PENDING_DIGESTS, type DigestEntry } from '../lib/swarmDigest';
-import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../lib/agentSignals';
+import { consumePendingAgentExits, reconcileLoadedAgents } from '../lib/swarmCrashRecovery';
 import { removeAgentFromRoster, findHungAgents, findDeadlockedAgents } from '../lib/swarmScheduler';
 import { createCoordinatorLink } from '../lib/swarmCoordinatorLink';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
@@ -481,28 +481,6 @@ export const isAcceptanceCommandApproved = (
 ): boolean =>
   !!swarmId && approvals?.swarmId === swarmId && approvals.hashes.includes(commandHash);
 
-// P13: pty-exits for panes whose project isn't the loaded one, recorded by terminalStore and
-// replayed by loadSwarmState (after the marker-tail check, which wins when both exist). In-memory
-// on purpose: the switch-and-return scenario lives within one app session; across a restart the
-// PTYs are dead anyway and the existing orphan reconciliation applies.
-const pendingAgentExits = new Map<string, Map<string, number | null | undefined>>();
-
-export const recordPendingAgentExit = (
-  projectPath: string,
-  terminalId: string,
-  exitCode: number | null | undefined,
-): void => {
-  const forProject = pendingAgentExits.get(projectPath) ?? new Map();
-  forProject.set(terminalId, exitCode);
-  pendingAgentExits.set(projectPath, forProject);
-};
-
-const consumePendingAgentExits = (projectPath: string) => {
-  const forProject = pendingAgentExits.get(projectPath) ?? new Map<string, number | null | undefined>();
-  pendingAgentExits.delete(projectPath);
-  return forProject;
-};
-
 // Statuses after which an agent will not run again without human/coordinator action. Mirrors the
 // scheduler's `allFinished` set.
 const FINISHED_AGENT_STATUSES: AgentStatus[] = ['done', 'failed', 'blocked', 'stopped'];
@@ -823,52 +801,21 @@ export const useSwarmStore = create<SwarmState>()(
         try {
           const parsed = JSON.parse(content);
 
-          // Crash/restart reconciliation: state.json can say an agent is running while its PTY
-          // no longer exists (app restarted mid-run). Left alone, those zombies stay "running"
-          // forever and dependents never start. Downgrade them to failed (Relaunch stays one
-          // click away) and pause a running swarm so continuing is a deliberate Resume.
-          //
-          // P13, checked first: an agent may have FINISHED while this project wasn't loaded — its
-          // signal was dropped by the live handlers on purpose. Recover it here instead of failing
-          // it: the scoped marker still sits in the pane's rolling signal tail (fast path), and a
-          // pty-exit that fired while away was recorded as a pending exit (safety net). Recovered
-          // transitions run through updateAgentStatus below so completion side effects (outcome
-          // artifacts, run close-out, scheduler advance) all fire exactly as if the user had been
-          // watching.
-          const loadedAgents: SwarmAgent[] = parsed.agents || [];
+          // Crash/restart reconciliation (see lib/swarmCrashRecovery): running/starting agents
+          // whose pane is gone are failed (or recovered from a marker tail / pending exit), and
+          // an interrupted run pauses so continuing is a deliberate Resume. Recovered transitions
+          // replay below through updateAgentStatus so completion side effects fire exactly as if
+          // the user had been watching.
           const liveSessions = useTerminalStore.getState().sessions;
           const pendingExits = consumePendingAgentExits(projectPath);
-          let orphaned = false;
-          const recovered: Array<{ agentId: string; status: AgentStatus; statusReason?: string }> = [];
-          const reconciledAgents = loadedAgents.map((agent) => {
-            if (agent.status !== 'running' && agent.status !== 'starting') return agent;
-            if (agent.terminalId) {
-              const tail = getPaneSignalTail(agent.terminalId);
-              if (tail) {
-                const scopedReview = hasReviewSignal(tail, agent.marker);
-                const recoveredStatus = getSwarmStatusFromOutput(tail, scopedReview, agent.marker);
-                if (recoveredStatus) {
-                  recovered.push({ agentId: agent.id, status: recoveredStatus });
-                  return agent;
-                }
-              }
-              if (pendingExits.has(agent.terminalId)) {
-                const transition = exitFallbackTransition(pendingExits.get(agent.terminalId));
-                recovered.push({ agentId: agent.id, ...transition });
-                return agent;
-              }
-              if (liveSessions[agent.terminalId]) return agent;
-            }
-            orphaned = true;
-            return {
-              ...agent,
-              status: 'failed' as AgentStatus,
-              terminalId: undefined,
-              statusReason: 'Agent terminal was lost (app restarted mid-run) — relaunch to continue.',
-            };
-          });
-          const loadedStatus = parsed.status || 'idle';
-          const status = orphaned && loadedStatus === 'running' ? 'paused' : loadedStatus;
+          const { agents: reconciledAgents, status, orphaned, recovered } =
+            reconcileLoadedAgents<SwarmAgent>({
+              agents: parsed.agents || [],
+              loadedStatus: parsed.status || 'idle',
+              liveSessions,
+              getSignalTail: getPaneSignalTail,
+              pendingExits,
+            });
 
           set({
             loadedProjectPath: projectPath,

@@ -36,6 +36,8 @@ const swarmState = vi.hoisted(() => ({
 const recordPendingAgentExit = vi.hoisted(() => vi.fn());
 vi.mock('../stores/swarmStore', () => ({
   useSwarmStore: { getState: () => swarmState },
+}));
+vi.mock('./swarmCrashRecovery', () => ({
   recordPendingAgentExit,
 }));
 
