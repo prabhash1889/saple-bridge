@@ -9,7 +9,7 @@ import { ToastHost } from './components/common/ToastHost';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { ShortcutsHelpDialog } from './components/common/ShortcutsHelpDialog';
 import { RoomSkeleton } from './components/common/RoomSkeleton';
-import { useProjectStore, ViewType } from './stores/projectStore';
+import { useProjectStore, ROOM_ORDER, type ViewType } from './stores/projectStore';
 import { useKanbanStore } from './stores/kanbanStore';
 import { useSwarmStore } from './stores/swarmStore';
 import { useAgentSessionStore } from './stores/agentSessionStore';
@@ -208,11 +208,11 @@ function App() {
         setPreviewOpen((prev) => !prev);
       }
 
-      // 3. Switch rooms: Alt + 1-9
+      // 3. Switch rooms: Alt + 1-9 (positions come from the shared ROOM_ORDER so hints
+      // and bindings can't drift apart).
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const index = parseInt(e.key, 10) - 1;
-        const rooms: ViewType[] = ['dashboard', 'terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'settings'];
-        const view = rooms[index];
+        const view = ROOM_ORDER[index];
         if (view) {
           const requiresProject = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor'].includes(view);
           if (!requiresProject || currentProjectPath) {

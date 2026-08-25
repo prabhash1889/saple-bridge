@@ -28,41 +28,19 @@ import { useSwarmStore } from '../../stores/swarmStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useThemeStore, ThemeMode, THEME_OPTIONS } from '../../stores/themeStore';
 import bridgeMark from '../../assets/logo/saple-bridge-mark.png';
-
-const workspaceEntries: Array<{
-  id: ViewType;
-  title: string;
-  description: string;
-  hint: string;
-  icon: React.ElementType;
-  alpha?: boolean;
-}> = [
-  {
-    id: 'terminals',
-    title: 'Saple Bridge',
-    description: 'Open the command room and arrange local terminal agents.',
-    hint: '1',
-    icon: Terminal,
-  },
-  {
-    id: 'swarm',
-    title: 'Saple Swarm',
-    description: 'Coordinate multi-agent missions for the current workspace.',
-    hint: '2',
-    icon: Users,
-  },
-  {
-    id: 'editor',
-    title: 'Saple Canvas',
-    description: 'Inspect files and shape workspace context.',
-    hint: '3',
-    icon: Grid2X2,
-  },
-];
+import { workspaceEntries } from './workspaceEntries';
 
 const getWorkspaceName = (path: string) => {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
+};
+
+// Icons for the shared workspaceEntries list (kept here so the entries module stays
+// dependency-free and its shortcut hints stay unit-testable).
+const ENTRY_ICONS: Record<string, React.ElementType> = {
+  terminals: Terminal,
+  swarm: Users,
+  editor: Grid2X2,
 };
 
 // Compact relative timestamp ("just now", "5m ago", "3h ago", "2d ago") for the
@@ -435,7 +413,7 @@ export const ProjectDashboard: React.FC = () => {
 
         <div className="saple-start-actions" role="list">
           {workspaceEntries.map((entry) => {
-            const Icon = entry.icon;
+            const Icon = ENTRY_ICONS[entry.id] ?? FolderOpen;
             return (
               <button
                 key={entry.id}
@@ -449,7 +427,6 @@ export const ProjectDashboard: React.FC = () => {
                 <span className="saple-start-entry-copy">
                   <span>
                     {entry.title}
-                    {entry.alpha && <em>ALPHA</em>}
                   </span>
                   <small>{entry.description}</small>
                 </span>
