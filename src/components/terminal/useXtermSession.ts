@@ -10,6 +10,7 @@ import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { writeTextToClipboard } from '../../lib/clipboard';
+import { hasIpcErrorCode } from '../../lib/errors';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
 import {
   copyTerminalSelection,
@@ -522,7 +523,9 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
           cols: nextSize.cols,
           rows: nextSize.rows
         }).catch(err => {
-          if (retries > 0 && String(err).includes('not found')) {
+          // The spawn->first-resize race: the pane id is registered a beat later, so retry.
+          // Branch on the stable code; fall back to text for surfaces not yet coded.
+          if (retries > 0 && (hasIpcErrorCode(err, 'pty_not_found') || String(err).includes('not found'))) {
             setTimeout(() => applyInitialSize(retries - 1, delay * 1.5), delay);
           } else {
             console.error('Initial PTY resize failed:', err);
