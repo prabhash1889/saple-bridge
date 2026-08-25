@@ -8,7 +8,7 @@ UI rendering, view routing, and frontend state live in `../../src/`.
 
 The `saple-memory` MCP server is not hosted by this crate. It lives in the sibling `../../saple-mcp` repository and is bundled as a Tauri sidecar binary through `bundle.externalBin`.
 
-Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundled path in `project.rs`, and writes `.mcp.json` or `mcp_config.json` for external clients.
+Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`; `sidecar.rs` owns the sidecar binary (path resolution, per-user staging, stale-config healing, tool-catalog probe), while `project.rs` writes `.mcp.json` or `mcp_config.json` for external clients.
 
 ## Entry Points
 
@@ -21,7 +21,8 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundl
 | --- | --- | --- |
 | PTY | `pty.rs` | Spawn, write, resize, and kill native PTY sessions; stream output to React |
 | Proc tree | `proc_tree.rs` | Whole-process-tree termination: Windows Job Objects, Unix process-group kill |
-| Project | `project.rs` | Workspace config, workspace summary, and MCP config wiring |
+| Project | `project.rs` | Workspace config, workspace summary, and MCP config install/status |
+| Sidecar | `sidecar.rs` | `saple-mcp` sidecar binary: path resolution, per-user staging, stale `.mcp.json` healing, and the one-shot tool-catalog probe |
 | Path policy | `project_roots.rs` | Approved-root registry plus the single contained-path policy: containment resolution, protected writer paths (`.git/**`), destructive-target rules |
 | Error codes | `error_code.rs` | Small serializable `CodedError` (`{ code, message }`) with stable snake_case codes for path-policy failures; string surfaces flatten it to its message |
 | Memory | `memory.rs` | Parse memory markdown, graph wikilinks, manage snapshots |
