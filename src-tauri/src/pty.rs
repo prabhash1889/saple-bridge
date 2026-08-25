@@ -8,9 +8,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 
-// Process-tree cleanup moved to the shared proc_tree module (Phase 3): review verification and
+// Process-tree cleanup lives in the shared proc_tree module (Phase 3): review verification and
 // acceptance runners need the same Job Object / process-group teardown as PTY panes.
-use crate::proc_tree::JobObject;
 
 // How often the emitter thread coalesces PTY output before sending a `pty-output`
 // event to the webview. Without this, a chatty process (AI CLIs streaming tokens,
@@ -292,6 +291,42 @@ fn is_provider_env_key(key: &str) -> bool {
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn spawn_pty(
+    id: String,
+    cwd: String,
+    env: std::collections::HashMap<String, String>,
+    ai_provider: Option<String>,
+    model: Option<String>,
+    prompt_file: Option<String>,
+    custom_command: Option<String>,
+    session_uuid: Option<String>,
+    interactive_prompt: Option<bool>,
+    app_handle: AppHandle,
+    registry: State<'_, PtyRegistry>,
+    roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
+) -> Result<(), String> {
+    // Phase 4 audit: spawning a PTY is a privileged action (it runs shells and agent CLIs inside
+    // an approved root). One line per spawn attempt - success or refusal - with the provider tag
+    // so pane launches are distinguishable from plain shells in the audit trail.
+    let started = Instant::now();
+    let provider_tag = ai_provider.clone().unwrap_or_else(|| "shell".to_string());
+    let audited_cwd = cwd.clone();
+    let result = spawn_pty_inner(
+        id, cwd, env, ai_provider, model, prompt_file, custom_command, session_uuid,
+        interactive_prompt, app_handle, registry, roots,
+    )
+    .await;
+    let audited = result.as_ref().map(|()| crate::audit::Outcome::ok()).map_err(|e| e.clone());
+    crate::audit::record(
+        "renderer",
+        &format!("spawn_pty({})", provider_tag),
+        Some(&audited_cwd),
+        started,
+        &audited,
+    );
+    result
+}
+
+async fn spawn_pty_inner(
     id: String,
     cwd: String,
     env: std::collections::HashMap<String, String>,
@@ -805,9 +840,24 @@ pub async fn write_pty(
     // UI responsive and kill_pty able to run.
     match writer_tx.try_send(data.into_bytes()) {
         Ok(()) => Ok(PtyWriteOutcome { accepted: true }),
-        Err(mpsc::TrySendError::Full(_)) => Ok(PtyWriteOutcome { accepted: false }),
+        Err(mpsc::TrySendError::Full(_)) => {
+            // Phase 4 audit: dropped structured input (a digest or prompt that never reached the
+            // child) is exactly the kind of silent privileged-path failure the audit trail must
+            // capture. Successful interactive keystrokes are NOT audited - they would flood the
+            // trail with noise and bury the real events.
+            crate::audit::record(
+                "renderer",
+                "write_pty",
+                None,
+                Instant::now(),
+                &Err("input dropped: child stopped reading stdin".to_string()),
+            );
+            Ok(PtyWriteOutcome { accepted: false })
+        }
         Err(mpsc::TrySendError::Disconnected(_)) => {
-            Err(format!("PTY session {} writer closed", id))
+            let err = format!("PTY session {} writer closed", id);
+            crate::audit::record("renderer", "write_pty", None, Instant::now(), &Err(err.clone()));
+            Err(err)
         }
     }
 }

@@ -9,6 +9,7 @@ import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
 import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, getPlanSignalFromOutput, exitFallbackTransition } from '../lib/agentSignals';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
+import { recordFailure } from '../lib/failureTracking';
 import type { AgentProvider } from '../types/provider';
 
 export type AiProvider = Extract<AgentProvider, 'codex' | 'claude' | 'gemini' | 'openrouter' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'grok' | 'custom'>;
@@ -341,6 +342,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
   // is failed (not left "running" forever), so its dependents stop waiting on a dead terminal.
   const failPaneSpawn = (id: string, err: unknown) => {
     console.error(`Failed to spawn PTY session ${id}:`, err);
+    recordFailure('pty-launch', `Terminal failed to start: ${String(err)}`);
     get().appendOutput(
       id,
       `\r\n\x1b[31m[failed to start terminal: ${String(err)} — close this pane and try again]\x1b[0m\r\n`,

@@ -4,6 +4,7 @@ import { toErrorMessage } from '../lib/errors';
 import { createId } from '../lib/id';
 import { enqueueWrite } from '../lib/writeQueue';
 import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
+import { recordFailure } from '../lib/failureTracking';
 import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
 import { invoke } from '@tauri-apps/api/core';
 import type { Task, TaskColumn, TaskPriority } from '../types/task';
@@ -182,6 +183,7 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
       await saveTasks(projectPath, updatedTasks);
     } catch (err: unknown) {
       set({ tasks: previous, error: `Failed to save task: ${toErrorMessage(err)}` });
+      recordFailure('state-save', `Failed to save task: ${toErrorMessage(err)}`);
     }
   },
 
@@ -199,6 +201,7 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
       await saveTasks(projectPath, updatedTasks);
     } catch (err: unknown) {
       set({ tasks: previous, error: `Failed to update task: ${toErrorMessage(err)}` });
+      recordFailure('state-save', `Failed to update task: ${toErrorMessage(err)}`);
     }
   },
 
@@ -214,6 +217,7 @@ export const useKanbanStore = create<KanbanState>((set, get) => ({
       await saveTasks(projectPath, updatedTasks);
     } catch (err: unknown) {
       set({ tasks: previous, error: `Failed to delete task: ${toErrorMessage(err)}` });
+      recordFailure('state-save', `Failed to delete task: ${toErrorMessage(err)}`);
     }
   },
 

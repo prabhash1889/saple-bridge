@@ -1,14 +1,16 @@
 // Wrapper for the `tauri` CLI invoked via `npm run tauri <subcommand>`.
 //
 // For `npm run tauri build` it:
-//   1. Bumps the patch version in tauri.conf.json + package.json (so every
-//      build is a distinct version, e.g. 1.0.0 -> 1.0.1 -> 1.0.2).
+//   1. Bumps the patch version in tauri.conf.json + package.json ONLY when explicitly asked
+//      (SAPLE_RELEASE_BUILD=1). Plain local builds never touch version files.
 //   2. Runs the real `tauri build` (forwarding any extra flags).
-//   3. Collects the produced installers into ./build/v<version>/.
+//   3. Collects the produced installers into ./build/v<version>/ and records the staged
+//      sidecar binary's SHA-256 next to them.
 //
 // Any other subcommand (dev, icon, ...) is passed straight through to tauri.
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
@@ -47,7 +49,11 @@ function parseTargetTriple(list) {
   return null;
 }
 
-// --- build: bump version (local QA builds only) ---------------------------
+// --- build: version handling ----------------------------------------------
+// Version files are only ever mutated on an EXPLICIT release build (SAPLE_RELEASE_BUILD=1).
+// Plain `npm run tauri:build` builds the committed version untouched, so local QA runs no
+// longer dirty tauri.conf.json / package.json / Cargo.toml. Release versions are minted by
+// `npm run release` (scripts/release.mjs); CI builds always use the committed/tagged version.
 const confPath = join(root, 'src-tauri', 'tauri.conf.json');
 const pkgPath = join(root, 'package.json');
 const cargoPath = join(root, 'src-tauri', 'Cargo.toml');
@@ -55,13 +61,7 @@ const cargoPath = join(root, 'src-tauri', 'Cargo.toml');
 const conf = JSON.parse(readFileSync(confPath, 'utf8'));
 let newVersion = String(conf.version);
 
-// In CI (the tag-driven release workflow, where tauri-action invokes this script through the
-// package.json `tauri` script) the version is whatever `npm run release` committed and tagged —
-// bumping here would make the built version drift +1 from the tag and from latest.json.
-// The auto-bump is a convenience for local throwaway QA builds only.
-if (process.env.CI) {
-  console.log(`\n→ CI build: using committed version v${newVersion} (no auto-bump)\n`);
-} else {
+if (process.env.SAPLE_RELEASE_BUILD === '1') {
   const [major, minor, patch] = newVersion.split('.').map((n) => parseInt(n, 10) || 0);
   newVersion = `${major}.${minor}.${patch + 1}`;
 
@@ -77,7 +77,9 @@ if (process.env.CI) {
   const cargoToml = readFileSync(cargoPath, 'utf8');
   writeFileSync(cargoPath, cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${newVersion}"`));
 
-  console.log(`\n→ Building Saple Bridge v${newVersion}\n`);
+  console.log(`\n→ Building Saple Bridge v${newVersion} (release build)\n`);
+} else {
+  console.log(`\n→ Building Saple Bridge v${newVersion} (no auto-bump; set SAPLE_RELEASE_BUILD=1 to bump)\n`);
 }
 
 // --- run the actual build ------------------------------------------------
@@ -133,4 +135,29 @@ if (count === 0) {
   console.log('  (no installers found — check src-tauri/target/release/bundle/)');
 } else {
   console.log(`\n✓ ${count} file(s) copied to ${outDir}\n`);
+}
+
+// --- record sidecar supply-chain hashes ----------------------------------
+// The staged sidecar under src-tauri/binaries/ is what actually ships inside the bundle.
+// Record its SHA-256 next to the installers so each build's inputs are auditable/reproducible.
+function sha256File(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+const binariesDir = join(root, 'src-tauri', 'binaries');
+let sidecarLines = [];
+try {
+  sidecarLines = readdirSync(binariesDir)
+    .filter((name) => /^saple-mcp-/.test(name) && !name.includes('.stale'))
+    .sort()
+    .map((name) => `${sha256File(join(binariesDir, name))}  ${name}`);
+} catch {
+  // No staged sidecar (e.g. a bare cargo-only build) — nothing to record.
+}
+if (sidecarLines.length > 0) {
+  mkdirSync(outDir, { recursive: true });
+  const sumsPath = join(outDir, 'sidecar.SHA256SUMS');
+  writeFileSync(sumsPath, sidecarLines.join('\n') + '\n');
+  console.log(`→ Sidecar SHA-256 recorded in build/v${newVersion}/sidecar.SHA256SUMS`);
+  for (const line of sidecarLines) console.log(`  • ${line}`);
 }
