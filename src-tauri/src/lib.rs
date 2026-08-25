@@ -20,6 +20,7 @@ mod state_load;
 mod watcher;
 mod app_log;
 mod audit;
+mod diag_report;
 
 use project_roots::ProjectRootRegistry;
 
@@ -210,6 +211,7 @@ pub fn run() {
             watcher::watch_swarm_dir,
             watcher::unwatch_swarm_dir,
             app_log::log_renderer_error,
+            diag_report::collect_diagnostics,
             browser::browser_open_tab,
             browser::browser_close_tab,
             browser::browser_set_bounds,
