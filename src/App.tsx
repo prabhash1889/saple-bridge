@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState, useEffect, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { StatusBar } from './components/layout/StatusBar';
@@ -18,6 +19,8 @@ import { useTerminalStore } from './stores/terminalStore';
 import { useBrowserStore } from './stores/browserStore';
 import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
+import { useConfirmStore } from './stores/confirmStore';
+import { getLiveAgents, describeLiveAgents } from './lib/liveAgents';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
 import { startJuneDispatcher } from './lib/juneDispatcher';
 import { startTerminalSwarmBridge } from './lib/terminalSwarmBridge';
@@ -93,6 +96,31 @@ function App() {
   // silently when opened.
   useEffect(() => {
     void useProjectStore.getState().validateStoredPaths();
+  }, []);
+
+  // Confirm before quitting while agents are still working. The native close request is
+  // cancelled and replaced by the shared confirm dialog; confirming destroys the window
+  // (bypassing this handler) after the user has explicitly accepted losing the agents.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested((event) => {
+      const live = getLiveAgents();
+      const total = live.swarm.length + live.terminals.length;
+      if (total === 0) return;
+      event.preventDefault();
+      useConfirmStore.getState().confirm({
+        title: 'Agents are still running',
+        message:
+          `${describeLiveAgents(live)} still running. Closing now terminates ${total === 1 ? 'it' : 'them'}. ` +
+          `Quit anyway?`,
+        confirmLabel: 'Quit anyway',
+        onConfirm: () => {
+          void getCurrentWindow().destroy();
+        },
+      });
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
   }, []);
 
   useEffect(() => {
