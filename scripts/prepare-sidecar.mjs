@@ -32,7 +32,7 @@ const isWindows = process.platform === 'win32';
 
 // Reviewed commit of ../saple-mcp the sidecar may be built from. Empty means "not yet recorded":
 // local runs warn, CI fails. Set this to the full 40-char SHA after reviewing a saple-mcp commit.
-const SAPLE_MCP_PINNED_SHA = '';
+const SAPLE_MCP_PINNED_SHA = '95b1d787375f48005816498108ce018c7db7a8e5';
 
 function fail(msg) {
   console.error(`\nERROR: ${msg}\n`);
