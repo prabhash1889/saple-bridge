@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../lib/id';
 import { enqueueWrite } from '../lib/writeQueue';
+import { recordFailure } from '../lib/failureTracking';
 import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
@@ -825,6 +826,7 @@ const launchAgentProcess = async (projectPath: string, agent: SwarmAgent) => {
     await updateAgentStatus(projectPath, agent.id, 'running', { terminalId: paneId, startedAt: Date.now() });
   } catch (error) {
     console.error(`Failed to launch agent ${agent.id}:`, error);
+    recordFailure('swarm-launch', `Failed to launch agent ${agent.name}: ${String(error)}`);
     await updateAgentStatus(projectPath, agent.id, 'failed', { statusReason: `Launch failed: ${error}` });
   }
 };
@@ -1055,7 +1057,9 @@ export const useSwarmStore = create<SwarmState>()(
         // P1: follow this project's swarm dir with the Rust watcher so mailbox/handoff/outcome/plan
         // edits push into the room in ms instead of being polled. No-ops when the dir doesn't exist
         // yet (no swarm has run here); re-armed on the next load once it does.
-        void invoke('watch_swarm_dir', { projectPath }).catch(() => {});
+        void invoke('watch_swarm_dir', { projectPath }).catch((err) => {
+          recordFailure('watcher', `Failed to watch the swarm directory: ${String(err)}`);
+        });
       },
 
       saveSwarmState: async (projectPath) => {
@@ -1106,6 +1110,7 @@ export const useSwarmStore = create<SwarmState>()(
           );
         } catch (error) {
           console.error('Failed to save swarm state:', error);
+          recordFailure('state-save', `Failed to save swarm state: ${String(error)}`);
         }
       },
 
@@ -1973,6 +1978,7 @@ export const useSwarmStore = create<SwarmState>()(
 
               launchAgentProcess(projectPath, agent).catch(err => {
                 console.error(`Error launching agent ${agent.id}:`, err);
+                recordFailure('swarm-launch', `Failed to launch agent ${agent.name}: ${String(err)}`);
               });
             }
           }

@@ -8,6 +8,7 @@ import type { AgentSession, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { AgentRole } from '../types/agent';
 import { registerLaunch, recordRunOutcome, writeOutcomeArtifacts } from '../lib/controlPlane';
+import { recordFailure } from '../lib/failureTracking';
 
 interface AgentSessionState {
   sessions: AgentSession[];
@@ -120,6 +121,7 @@ export const useAgentSessionStore = create<AgentSessionState>()(
         );
       } catch (error) {
         console.error('Failed to save agent sessions:', error);
+        recordFailure('state-save', `Failed to save agent session history: ${String(error)}`);
       }
     },
 
@@ -153,6 +155,7 @@ export const useAgentSessionStore = create<AgentSessionState>()(
         session.runId = ids.runId;
       } catch (error) {
         console.error('Failed to register control-plane records for session:', error);
+        recordFailure('control-plane', `Failed to register agent launch records: ${String(error)}`);
       }
 
       set((state) => ({
@@ -201,6 +204,7 @@ export const useAgentSessionStore = create<AgentSessionState>()(
         await recordRunOutcome(projectPath, session.runId, status, outcome);
       } catch (error) {
         console.error('Failed to record completion outcome:', error);
+        recordFailure('control-plane', `Failed to record agent completion outcome: ${String(error)}`);
       }
     },
 

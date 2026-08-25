@@ -19,6 +19,7 @@ import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
 import { startJuneDispatcher } from './lib/juneDispatcher';
+import { recordFailure } from './lib/failureTracking';
 
 const TerminalGrid = lazy(() => import('./components/terminal/TerminalGrid').then((module) => ({ default: module.TerminalGrid })));
 const KanbanBoard = lazy(() => import('./components/kanban/KanbanBoard').then((module) => ({ default: module.KanbanBoard })));
@@ -111,7 +112,9 @@ function App() {
       void refreshWorkspace();
       // Follow the active project with a Rust file watcher so external .saple edits (MCP
       // sidecar, agents) force-reload these stores before the next save clobbers them.
-      void invoke('watch_project_files', { projectPath: currentProjectPath }).catch(() => {});
+      void invoke('watch_project_files', { projectPath: currentProjectPath }).catch((err) => {
+        recordFailure('watcher', `Failed to watch workspace state files: ${String(err)}`);
+      });
       // Phase 2: keep .saple/ out of git via the repo's private exclude file. Disclose it
       // when the file was actually modified so the user is never surprised by the change.
       void invoke<boolean>('ensure_saple_git_excluded', { projectPath: currentProjectPath })
