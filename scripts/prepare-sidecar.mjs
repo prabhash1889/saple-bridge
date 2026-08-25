@@ -9,6 +9,15 @@
 // same target by setting SAPLE_MCP_TARGET=<triple> (or passing --target=<triple>) AND building
 // Bridge with `tauri build --target <triple>` — that keeps the staged file name, Bridge's baked
 // TARGET (build.rs), and the bundle layout all in agreement.
+//
+// Supply-chain pinning:
+//   SAPLE_MCP_PINNED_SHA below must hold the reviewed commit SHA of ../saple-mcp that sidecar
+//   builds are allowed to use. Before every build this script compares the sibling checkout's
+//   HEAD against the pin and refuses to stage anything from an unreviewed commit.
+//   - Update the pin by reviewing the new saple-mcp commit, then pasting its full SHA here AND
+//     into the `SAPLE_MCP_SHA` repository variable used by .github/workflows/release.yml.
+//   - Until a pin is recorded, local builds print a loud warning; CI fails closed so a release
+//     can never ship an unpinned sidecar.
 
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, existsSync, readFileSync, renameSync } from 'node:fs';
@@ -20,6 +29,52 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const bridgeRoot = resolve(__dirname, '..');
 const mcpRoot = resolve(bridgeRoot, '..', 'saple-mcp'); // sibling repo under SAPLE-ALL
 const isWindows = process.platform === 'win32';
+
+// Reviewed commit of ../saple-mcp the sidecar may be built from. Empty means "not yet recorded":
+// local runs warn, CI fails. Set this to the full 40-char SHA after reviewing a saple-mcp commit.
+const SAPLE_MCP_PINNED_SHA = '';
+
+function fail(msg) {
+  console.error(`\nERROR: ${msg}\n`);
+  process.exit(1);
+}
+
+// Verify the sibling checkout's HEAD matches the reviewed pin (see header comment).
+function verifySidecarPin() {
+  if (!existsSync(join(mcpRoot, '.git'))) {
+    fail(
+      `the saple-mcp sibling repo was not found at ${mcpRoot}.\n` +
+        `Clone it next to this repo (so the layout is <workspace>/saple-bridge + <workspace>/saple-mcp),\n` +
+        `then check out commit ${SAPLE_MCP_PINNED_SHA || '(the SHA pinned in scripts/prepare-sidecar.mjs)'}.`
+    );
+  }
+  const rev = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: mcpRoot, encoding: 'utf8', shell: isWindows });
+  if (rev.status !== 0) {
+    fail(`could not read the HEAD of the saple-mcp checkout at ${mcpRoot}: ${rev.stderr || rev.stdout}`);
+  }
+  const head = rev.stdout.trim();
+  const pin = process.env.SAPLE_MCP_SHA || SAPLE_MCP_PINNED_SHA;
+  if (!pin) {
+    const msg =
+      `SAPLE_MCP_PINNED_SHA is empty in scripts/prepare-sidecar.mjs — the sidecar source is UNPINNED.\n` +
+      `To record the pin: review saple-mcp at ${head}, then paste its full SHA into\n` +
+      `scripts/prepare-sidecar.mjs and the SAPLE_MCP_SHA repository variable (release workflow).`;
+    if (process.env.CI) fail(`${msg}\nCI refuses to build from an unpinned sidecar source.`);
+    console.warn(`\nWARNING: ${msg}\n`);
+    return;
+  }
+  if (head !== pin) {
+    fail(
+      `saple-mcp checkout is at ${head} but the reviewed pin is ${pin}.\n` +
+        `Check out the pinned commit (git -C "${mcpRoot}" checkout ${pin}), or, if the new commit has\n` +
+        `been reviewed, update the pin in scripts/prepare-sidecar.mjs and the SAPLE_MCP_SHA\n` +
+        `repository variable to ${head}.`
+    );
+  }
+  console.log(`✓ saple-mcp HEAD matches reviewed pin ${pin}`);
+}
+
+verifySidecarPin();
 
 // Resolve the target triple: explicit override (env or --target) else the rustc host.
 // Accept both `--target=<triple>` and the space form `--target <triple>` (two argv entries).
@@ -50,9 +105,10 @@ const srcName = targetIsWindows ? 'saple-mcp.exe' : 'saple-mcp';
 const destName = `saple-mcp-${triple}${targetIsWindows ? '.exe' : ''}`;
 
 // Only pass --target to cargo when cross-compiling; a redundant --target needs the std component
-// installed for that triple, so avoid it for the native default.
+// installed for that triple, so avoid it for the native default. `--locked` keeps the build on the
+// reviewed Cargo.lock (release reproducibility; a stale lockfile is a deliberate build failure).
 const isHostBuild = !process.env.SAPLE_MCP_TARGET && !argTarget;
-const cargoArgs = isHostBuild ? ['build', '--release'] : ['build', '--release', '--target', triple];
+const cargoArgs = isHostBuild ? ['build', '--release', '--locked'] : ['build', '--release', '--locked', '--target', triple];
 
 console.log(`\n→ Building saple-mcp (${triple}) from ${mcpRoot}\n`);
 const build = spawnSync('cargo', cargoArgs, { cwd: mcpRoot, stdio: 'inherit', shell: isWindows });
