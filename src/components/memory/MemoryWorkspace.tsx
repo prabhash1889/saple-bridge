@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { FolderOpen } from 'lucide-react';
+import { AlertTriangle, FolderOpen, RotateCw } from 'lucide-react';
 import { useMemoryStore } from '../../stores/memoryStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { MemoryList } from './MemoryList';
@@ -15,7 +15,9 @@ const KEYBOARD_RESIZE_STEP = 24;
 
 export const MemoryWorkspace: React.FC = () => {
   const { currentProjectPath, openWorkspace, setActiveView } = useProjectStore();
-  const { loadGraph, activeNote } = useMemoryStore();
+  const loadGraph = useMemoryStore((state) => state.loadGraph);
+  const activeNote = useMemoryStore((state) => state.activeNote);
+  const memoryError = useMemoryStore((state) => state.error);
   const layout = useWorkspacePaneLayoutStore((state) =>
     currentProjectPath ? state.getLayout(currentProjectPath) : state.getLayout('__default__')
   );
@@ -93,8 +95,29 @@ export const MemoryWorkspace: React.FC = () => {
   }
 
   return (
+    <div className="memory-workspace">
+      {memoryError && (
+        <div role="alert" className="state-recovery-banner">
+          <div className="state-recovery-header">
+            <AlertTriangle className="h-5 w-5" aria-hidden style={{ color: 'var(--color-danger)' }} />
+            <div>
+              <p className="font-semibold">Memory graph failed to load</p>
+              <p className="state-recovery-error">{memoryError}</p>
+            </div>
+          </div>
+          <div className="state-recovery-actions">
+            <button
+              type="button"
+              disabled={useMemoryStore.getState().loading}
+              onClick={() => currentProjectPath && void loadGraph(currentProjectPath)}
+            >
+              <RotateCw aria-hidden /> Retry
+            </button>
+          </div>
+        </div>
+      )}
     <div
-      className="memory-workspace resizable-memory-layout"
+      className="resizable-memory-layout"
       style={{ gridTemplateColumns: `${layout.memoryListWidth}px 6px minmax(0, 1fr)` }}
     >
       {/* Sidebar note list browser */}
@@ -117,6 +140,7 @@ export const MemoryWorkspace: React.FC = () => {
       <div className="memory-viewport">
         {activeNote ? <MemoryEditor /> : <MemoryGraph />}
       </div>
+    </div>
     </div>
   );
 };

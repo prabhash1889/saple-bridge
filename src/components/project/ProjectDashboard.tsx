@@ -14,6 +14,7 @@ import {
   Layers3,
   Network,
   PanelTop,
+  RotateCw,
   Terminal,
   Trash2,
   Users,
@@ -84,6 +85,10 @@ export const ProjectDashboard: React.FC = () => {
     stalePaths,
     dismissStalePath,
     relocateWorkspace,
+    workspaceError,
+    currentWorkspaceId,
+    openWorkspaceInstance,
+    clearWorkspaceError,
   } = useProjectStore();
   const openWorkspacePaths = openWorkspaces.map((w) => w.path);
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -191,6 +196,22 @@ export const ProjectDashboard: React.FC = () => {
   const runningAgents = activeAgents.filter((agent) => ['running', 'waiting', 'review'].includes(agent.status));
   const showFirstRunWalkthrough = !currentProjectPath && workspaceHistory.length === 0;
 
+  // Recovery for a failed workspace load (config/summary registration failed): retry the
+  // same open flow, or jump to diagnostics to find out why.
+  const handleWorkspaceRetry = () => {
+    clearWorkspaceError();
+    if (currentWorkspaceId) {
+      void openWorkspaceInstance(currentWorkspaceId);
+    } else if (currentProjectPath) {
+      void useProjectStore.getState().refreshWorkspace();
+    }
+  };
+
+  const handleRunDiagnostics = () => {
+    useProjectStore.getState().setPendingSettingsTab('diagnostics');
+    setActiveView('settings');
+  };
+
   const legacyHomePanel = currentProjectPath ? (
     <section className="dashboard-shell home-legacy-panel">
       <div className="workspace-summary-band">
@@ -221,6 +242,30 @@ export const ProjectDashboard: React.FC = () => {
       </div>
 
       {workspaceLoading && <div className="loading-bar">Loading workspace...</div>}
+
+      {workspaceError && (
+        <div role="alert" className="state-recovery-banner">
+          <div className="state-recovery-header">
+            <AlertTriangle className="h-5 w-5" aria-hidden style={{ color: 'var(--color-danger)' }} />
+            <div>
+              <p className="font-semibold">Workspace failed to load</p>
+              <p className="state-recovery-error">{workspaceError}</p>
+              <p className="state-recovery-hint">Retry the load, or run diagnostics to check what is wrong.</p>
+            </div>
+          </div>
+          <div className="state-recovery-actions">
+            <button type="button" disabled={workspaceLoading} onClick={handleWorkspaceRetry}>
+              <RotateCw aria-hidden /> Retry
+            </button>
+            <button type="button" onClick={handleRunDiagnostics}>
+              Run diagnostics
+            </button>
+            <button type="button" onClick={clearWorkspaceError}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="metric-grid home-metric-grid">
         <button className="metric-card accent-command" onClick={() => setActiveView('terminals')}>

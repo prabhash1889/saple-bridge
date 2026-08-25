@@ -113,6 +113,7 @@ interface ProjectState {
   validateStoredPaths: () => Promise<void>;
   dismissStalePath: (path: string) => void;
   relocateWorkspace: (fromPath: string, toPath: string) => Promise<void>;
+  clearWorkspaceError: () => void;
   setProjectPath: (path: string | null) => void;
   setActiveView: (view: ViewType) => void;
   setPendingSettingsTab: (tab: string | null) => void;
@@ -204,6 +205,8 @@ export const useProjectStore = create<ProjectState>()(
         },
 
         dismissStalePath: (path) => set((state) => ({ stalePaths: state.stalePaths.filter((p) => p !== path) })),
+
+        clearWorkspaceError: () => set({ workspaceError: null }),
 
         // Point an existing workspace at its new on-disk location: updates every persisted
         // record that references the old path (instances, recents, history). When the

@@ -338,8 +338,17 @@ export const KanbanBoard: React.FC = () => {
 
       {/* Error state */}
       {error && (
-        <div style={errorBannerStyle}>
-          <span>Error loading tasks: {error}</span>
+        <div style={{ ...errorBannerStyle, alignItems: 'center', gap: 10 }}>
+          <span style={{ flex: 1 }}>Error loading tasks: {error}</span>
+          <button
+            type="button"
+            className="text-btn"
+            disabled={!currentProjectPath || loading}
+            onClick={() => currentProjectPath && void loadTasks(currentProjectPath, true)}
+            title="Retry loading the task board"
+          >
+            Retry
+          </button>
         </div>
       )}
 
