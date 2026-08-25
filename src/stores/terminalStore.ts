@@ -2,14 +2,39 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useConfirmStore } from './confirmStore';
-import { useKanbanStore, recordPendingTaskReview } from './kanbanStore';
 import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
-import { hasReviewSignal, mightContainSignal, mightContainAgentMarker, getSwarmStatusFromOutput, getPlanSignalFromOutput, exitFallbackTransition } from '../lib/agentSignals';
-import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
 import type { AgentProvider } from '../types/provider';
+
+// The terminal layer is a dumb transport: it records raw PTY output and pane lifecycle moments
+// and emits them as RawTerminalEvents. It deliberately knows nothing about swarm agents or
+// Kanban tasks - interpreting those signals is the job of src/lib/terminalSwarmBridge.ts, which
+// subscribes below. Keeping this boundary one-way (bridge -> stores) is what lets swarmStore
+// keep its static import of this module without forming an import cycle.
+export type RawTerminalEvent =
+  | { kind: 'output'; paneId: string; data: string }
+  | { kind: 'exit'; paneId: string; exitCode?: number | null }
+  | { kind: 'spawn-failed'; paneId: string; error: unknown };
+
+type RawTerminalEventListener = (event: RawTerminalEvent) => void;
+
+const rawEventListeners = new Set<RawTerminalEventListener>();
+
+// Subscribe to raw terminal transport events. Returns an unsubscribe function.
+export const subscribeRawTerminalEvents = (listener: RawTerminalEventListener): (() => void) => {
+  rawEventListeners.add(listener);
+  return () => {
+    rawEventListeners.delete(listener);
+  };
+};
+
+const emitRawTerminalEvent = (event: RawTerminalEvent) => {
+  for (const listener of Array.from(rawEventListeners)) {
+    listener(event);
+  }
+};
 
 export type AiProvider = Extract<AgentProvider, 'codex' | 'claude' | 'gemini' | 'openrouter' | 'opencode' | 'cursor' | 'droid' | 'copilot' | 'pi' | 'grok' | 'custom'>;
 
@@ -156,14 +181,14 @@ const appendSignalTail = (paneId: string, data: string) => {
   return next;
 };
 
-// P13: the tail is also the recovery record for lifecycle markers that fired while the pane's
-// project wasn't the loaded one — swarmStore re-reads it on loadSwarmState to catch agents that
-// finished (marker still in the tail) while the user was in a different project.
+// P13: the tail is also the recovery record for lifecycle signals that fired while the pane's
+// project wasn't the loaded one - swarmStore re-reads it on loadSwarmState to catch agents that
+// finished (marker still in the tail) while the user was in a different project. Live detection
+// reads it too: terminalSwarmBridge inspects it during each raw output event.
 export const getPaneSignalTail = (paneId: string): string => paneSignalTails.get(paneId) ?? '';
 
 let outputFlushFrame: number | null = null;
 let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let swarmStorePromise: Promise<typeof import('./swarmStore')> | null = null;
 let ptyOutputUnlisten: UnlistenFn | null = null;
 let ptyExitUnlisten: UnlistenFn | null = null;
 let ptyListenerStartPromise: Promise<void> | null = null;
@@ -335,10 +360,11 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
   };
 
   // A PTY that never started (bad provider CLI, keychain error, ConPTY failure) used to leave a
-  // blank pane and only a console.error — indistinguishable from a frozen terminal. Surface the
+  // blank pane and only a console.error - indistinguishable from a frozen terminal. Surface the
   // failure the same way a `pty-exit` does: print a visible notice into the pane and mark it
   // exited, so the pane reads as failed rather than hung. A swarm agent whose pane never started
-  // is failed (not left "running" forever), so its dependents stop waiting on a dead terminal.
+  // is failed (not left "running" forever), so its dependents stop waiting on a dead terminal;
+  // that transition is the bridge's job (spawn-failed event below).
   const failPaneSpawn = (id: string, err: unknown) => {
     console.error(`Failed to spawn PTY session ${id}:`, err);
     get().appendOutput(
@@ -346,19 +372,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
       `\r\n\x1b[31m[failed to start terminal: ${String(err)} — close this pane and try again]\x1b[0m\r\n`,
     );
     set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
-
-    const projectPath = useProjectStore.getState().currentProjectPath;
-    if (!projectPath) return;
-    swarmStorePromise ??= import('./swarmStore');
-    swarmStorePromise
-      .then(({ useSwarmStore }) => {
-        const agent = useSwarmStore.getState().activeAgents.find((a) => a.terminalId === id);
-        if (!agent || (agent.status !== 'running' && agent.status !== 'starting')) return;
-        void useSwarmStore.getState().updateAgentStatus(projectPath, agent.id, 'failed', {
-          statusReason: `Terminal failed to start: ${String(err)}`,
-        });
-      })
-      .catch((e) => console.error('Failed to import swarmStore dynamically:', e));
+    emitRawTerminalEvent({ kind: 'spawn-failed', paneId: id, error: err });
   };
 
   return {
@@ -410,121 +424,31 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
         // handling - and `ptyOutputListenerStarted` only flips once both are live.
         try {
           ptyOutputUnlisten = await listen<{ id: string; data: string }>('pty-output', (event) => {
-        const { id, data } = event.payload;
-        get().appendOutput(id, data);
+            const { id, data } = event.payload;
+            get().appendOutput(id, data);
 
-        // Detect lifecycle markers against the rolling tail (not the raw chunk) so a
-        // marker split across two PTY bursts is still caught. The cheap substring pre-filter
-        // skips the regex battery entirely for ordinary output (the common case).
-        const signalTail = appendSignalTail(id, data);
-        if (!mightContainSignal(signalTail)) return;
+            // Rolling per-pane tail of raw output, kept here alongside the other per-pane
+            // buffers so pane teardown clears it in one place. Updated BEFORE the raw event
+            // fires so consumers (the bridge reads it for marker detection) already see this
+            // chunk during the event.
+            appendSignalTail(id, data);
+            emitRawTerminalEvent({ kind: 'output', paneId: id, data });
+          });
 
-        // P13: route lifecycle signals by the PANE's own project, not whichever project the UI
-        // currently shows — a swarm/task agent keeps running (and finishing) after the user
-        // switches folders, and its signal must not be applied to (or dropped by) the wrong
-        // project's stores.
-        const projectPath = get().sessions[id]?.workspacePath || useProjectStore.getState().currentProjectPath;
+          // A PTY whose child exited (or whose reader gave up after persistent errors) emits
+          // `pty-exit`. Surface it as a visible, dimmed notice inside the pane so an ended session is
+          // obvious instead of looking like a frozen terminal. Ignore it for panes the user already
+          // closed (session gone). This goes through the normal output path, not the signal tail, so
+          // the injected notice is never mistaken for an agent marker.
+          ptyExitUnlisten = await listen<{ id: string; exitCode?: number | null }>('pty-exit', (event) => {
+            const { id, exitCode } = event.payload;
+            if (!get().sessions[id]) return;
+            get().appendOutput(id, '\r\n\x1b[2m[process exited — close this pane to start a new one]\x1b[0m\r\n');
+            set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
 
-        // Review-request + kanban run on the bare (unscoped) markers: task panes and interactive
-        // terminals have no per-agent marker to scope against.
-        const reviewMatched = hasReviewSignal(signalTail);
-        if (reviewMatched) {
-          get().requestReview(id);
-          if (projectPath) {
-            const kanban = useKanbanStore.getState();
-            if (kanban.loadedProjectPath === projectPath) {
-              const task = kanban.tasks.find((t) => t.terminalId === id);
-              if (task && task.column !== 'review') {
-                void kanban.updateTask(projectPath, task.id, { column: 'review' });
-                notifyTaskReadyForReview(task.title);
-              }
-            } else {
-              // Pane belongs to a project whose kanban isn't loaded — queue the review move;
-              // loadTasks applies it (if a task actually links this pane) when the project opens.
-              recordPendingTaskReview(projectPath, id);
-            }
-          }
-        }
-
-        // Swarm completion is matched against the LINKED agent's own marker, so an agent can't be
-        // advanced by another pane's output or by echoing the generic marker name. Only reach for
-        // swarm state when the tail actually holds a marker keyword (skips `arr[0]`-style typing).
-        if (projectPath && mightContainAgentMarker(signalTail)) {
-          swarmStorePromise ??= import('./swarmStore');
-          swarmStorePromise
-            .then(({ useSwarmStore }) => {
-              // P13: only the loaded project's swarm can transition here. Another project's agent
-              // recovers from this pane's signal tail when its swarm loads (see loadSwarmState).
-              if (useSwarmStore.getState().loadedProjectPath !== projectPath) return;
-              const linkedAgent = useSwarmStore.getState().activeAgents.find((agent) => agent.terminalId === id);
-              if (!linkedAgent) return;
-              // Swarm v2: a coordinator's plan marker drives plan intake (materialize workers). The
-              // watcher event is the fallback; the marker is the primary, ms-latency trigger.
-              if (getPlanSignalFromOutput(signalTail, linkedAgent.marker)) {
-                void useSwarmStore.getState().ingestPlan(projectPath);
-              }
-              const scopedReview = hasReviewSignal(signalTail, linkedAgent.marker);
-              const nextSwarmStatus = getSwarmStatusFromOutput(signalTail, scopedReview, linkedAgent.marker);
-              if (!nextSwarmStatus || linkedAgent.status === nextSwarmStatus) return;
-              // Mirror the pane's review badge for a scoped review marker (the bare-marker path
-              // above misses `[REVIEW_REQUESTED:<token>]`).
-              if (nextSwarmStatus === 'review') get().requestReview(id);
-              void useSwarmStore.getState().updateAgentStatus(projectPath, linkedAgent.id, nextSwarmStatus);
-            })
-            .catch((err) => console.error('Failed to import swarmStore dynamically:', err));
-        }
-      });
-
-      // A PTY whose child exited (or whose reader gave up after persistent errors) emits
-      // `pty-exit`. Surface it as a visible, dimmed notice inside the pane so an ended session is
-      // obvious instead of looking like a frozen terminal. Ignore it for panes the user already
-      // closed (session gone). This goes through the normal output path, not the signal tail, so
-      // the injected notice is never mistaken for an agent marker.
-      ptyExitUnlisten = await listen<{ id: string; exitCode?: number | null }>('pty-exit', (event) => {
-        const { id, exitCode } = event.payload;
-        if (!get().sessions[id]) return;
-        get().appendOutput(id, '\r\n\x1b[2m[process exited — close this pane to start a new one]\x1b[0m\r\n');
-        set((state) => (state.exitedPanes[id] ? {} : { exitedPanes: { ...state.exitedPanes, [id]: true } }));
-
-        // P13: same pane-project routing as the output handler.
-        const projectPath = get().sessions[id]?.workspacePath || useProjectStore.getState().currentProjectPath;
-        if (!projectPath) return;
-
-        // Completion fallback: lifecycle markers are the fast path, process exit is the safety
-        // net. A swarm agent still running/starting when its PTY exits gets a terminal state
-        // instead of hanging the swarm forever — clean/unknown exit parks it in review (human
-        // confirms; auto-approve agents advance straight to done), a non-zero exit fails it.
-        swarmStorePromise ??= import('./swarmStore');
-        swarmStorePromise
-          .then(({ useSwarmStore, recordPendingAgentExit }) => {
-            if (useSwarmStore.getState().loadedProjectPath !== projectPath) {
-              // P13: this pane's project isn't loaded, so its swarm can't transition now. Record
-              // the exit; loadSwarmState replays it (marker tail first, exit fallback second).
-              recordPendingAgentExit(projectPath, id, exitCode);
-              return;
-            }
-            const agent = useSwarmStore.getState().activeAgents.find((a) => a.terminalId === id);
-            if (!agent || (agent.status !== 'running' && agent.status !== 'starting')) return;
-            const { status, statusReason } = exitFallbackTransition(exitCode);
-            void useSwarmStore.getState().updateAgentStatus(projectPath, agent.id, status, { statusReason });
-          })
-          .catch((err) => console.error('Failed to import swarmStore dynamically:', err));
-
-        // Same safety net for Kanban task panes: an agent that exits cleanly without printing a
-        // review marker still moves its task to the review column instead of sitting "in
-        // progress" against a dead terminal. Non-zero/unknown exits leave the column untouched.
-        if (exitCode === 0) {
-          const kanban = useKanbanStore.getState();
-          if (kanban.loadedProjectPath === projectPath) {
-            const task = kanban.tasks.find((t) => t.terminalId === id);
-            if (task && task.column === 'progress') {
-              void kanban.updateTask(projectPath, task.id, { column: 'review' });
-              notifyTaskReadyForReview(task.title);
-            }
-          } else {
-            recordPendingTaskReview(projectPath, id); // applied by loadTasks when the project opens (P13)
-          }
-        }
+            // The transport only records that the pane is dead; swarm/Kanban fallbacks live in
+            // terminalSwarmBridge.
+            emitRawTerminalEvent({ kind: 'exit', paneId: id, exitCode });
           });
         } catch (err) {
           // A registration failed: unwind the first so a retry can't double-deliver output,

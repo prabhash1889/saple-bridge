@@ -19,6 +19,7 @@ import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
 import { startJuneDispatcher } from './lib/juneDispatcher';
+import { startTerminalSwarmBridge } from './lib/terminalSwarmBridge';
 
 const TerminalGrid = lazy(() => import('./components/terminal/TerminalGrid').then((module) => ({ default: module.TerminalGrid })));
 const KanbanBoard = lazy(() => import('./components/kanban/KanbanBoard').then((module) => ({ default: module.KanbanBoard })));
@@ -79,6 +80,11 @@ function App() {
       void unlisten.then((fn) => fn());
     };
   }, []);
+
+  // Terminal lifecycle events drive swarm/Kanban transitions through the bridge module; the
+  // terminal store itself is a dumb transport. Start it at app init so no pane can spawn before
+  // its events have a consumer.
+  useEffect(() => startTerminalSwarmBridge(), []);
 
   useEffect(() => {
     if (HEAVY_VIEWS.includes(activeView)) {
