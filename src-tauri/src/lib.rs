@@ -6,6 +6,7 @@ mod project;
 mod keychain;
 mod models;
 mod memory;
+mod memory_layout;
 mod git;
 mod review;
 mod control_plane;

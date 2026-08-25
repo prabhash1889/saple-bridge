@@ -25,6 +25,7 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundl
 | Path policy | `project_roots.rs` | Approved-root registry plus the single contained-path policy: containment resolution, protected writer paths (`.git/**`), destructive-target rules |
 | Error codes | `error_code.rs` | Small serializable `CodedError` (`{ code, message }`) with stable snake_case codes for path-policy failures; string surfaces flatten it to its message |
 | Memory | `memory.rs` | Parse memory markdown, graph wikilinks, manage snapshots |
+| Memory layout | `memory_layout.rs` | Single owner of memory layout: mode resolution from `.saple/config.json`, note directories per mode (`saple`, `bridge-compatible`, `both`), snapshot root |
 | Keychain | `keychain.rs` | OS keychain wrapper through the `keyring` crate |
 | Git | `git.rs` | Git status, diff, staging, and commit helpers |
 | Review | `review.rs` | Review records and verification command support |

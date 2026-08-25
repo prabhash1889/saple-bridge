@@ -143,7 +143,6 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
         ".saple/swarm/mailbox",
         ".saple/swarm/handoffs",
         ".saple/swarm/context",
-        ".saple/memory",
         ".saple/review",
     ];
     for dir in &dirs {
@@ -152,13 +151,12 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
             fs::create_dir_all(&path).map_err(|e| format!("Failed to create {}: {}", dir, e))?;
         }
     }
-    
-    // Also check memory mode to ensure .bridgememory exists if needed
-    let mode = crate::memory::get_memory_mode(&project_path);
-    if mode == "bridge-compatible" || mode == "both" {
-        let path = get_project_file_path(&project_path, ".bridgememory")?;
+
+    // Memory directories come from the layout owner so mode rules live in one place.
+    for dir in crate::memory_layout::required_dir_names(&project_path) {
+        let path = get_project_file_path(&project_path, dir)?;
         if !path.exists() {
-            fs::create_dir_all(&path).map_err(|e| format!("Failed to create .bridgememory: {}", e))?;
+            fs::create_dir_all(&path).map_err(|e| format!("Failed to create {}: {}", dir, e))?;
         }
     }
 
@@ -350,7 +348,7 @@ fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: Str
     let has_saple_config = canonical_base.join(".saple").join("config.json").exists();
     
     // Check bridge memory
-    let has_bridge_memory = canonical_base.join(".bridgememory").exists();
+    let has_bridge_memory = crate::memory_layout::bridge_memory_dir(&project_path).exists();
     
     // Check MCP config
     let has_mcp_config = canonical_base.join(".mcp.json").exists() || canonical_base.join("mcp_config.json").exists();
