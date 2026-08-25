@@ -18,6 +18,7 @@ mod fs_lock;
 mod project_roots;
 mod state_load;
 mod watcher;
+mod app_log;
 
 use project_roots::ProjectRootRegistry;
 
@@ -74,6 +75,12 @@ pub fn run() {
     builder
         .setup(|app| {
             use tauri::Manager;
+            // Durable logs (Phase 4): app log + privileged-action audit live under the OS
+            // application log directory. Best-effort: if resolution or creation fails, logging
+            // degrades to a silent no-op rather than blocking startup.
+            if let Ok(dir) = app.path().app_log_dir() {
+                app_log::init(dir);
+            }
             // Stage the sidecar to its stable per-user path before any project opens, so
             // `.mcp.json` never has to reference the (versioned, ACL-restricted on MSIX)
             // install directory. Release only: dev resolves the repo-local staging path.
@@ -201,6 +208,7 @@ pub fn run() {
             watcher::unwatch_project_files,
             watcher::watch_swarm_dir,
             watcher::unwatch_swarm_dir,
+            app_log::log_renderer_error,
             browser::browser_open_tab,
             browser::browser_close_tab,
             browser::browser_set_bounds,
