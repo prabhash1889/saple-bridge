@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::error_code::CodedError;
 use crate::keychain;
 
 
@@ -196,17 +197,24 @@ fn is_safe_model(model: &str) -> bool {
 /// A prompt file is interpolated into the shell command line as a redirect source. Require it
 /// to be free of shell metacharacters, project-contained (relative, no `..` — enforced by
 /// `get_project_file_path`), and already existing.
-fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
+fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), CodedError> {
     const FORBIDDEN: &[char] = &['"', '\'', '`', '$', '<', '>', '|', ';', '&', '\n', '\r'];
     if prompt_file.contains(FORBIDDEN) {
-        return Err("Prompt file path contains forbidden characters".to_string());
+        return Err(CodedError::invalid_path(
+            "Prompt file path contains forbidden characters",
+        ));
     }
     if cwd.is_empty() {
-        return Err("Prompt file requires a project working directory".to_string());
+        return Err(CodedError::root_not_approved(
+            "Prompt file requires a project working directory",
+        ));
     }
     let resolved = crate::project_roots::get_project_file_path(cwd, prompt_file)?;
     if !resolved.is_file() {
-        return Err(format!("Prompt file not found in project: {}", prompt_file));
+        return Err(CodedError::invalid_path(format!(
+            "Prompt file not found in project: {}",
+            prompt_file
+        )));
     }
     Ok(())
 }
@@ -265,7 +273,7 @@ pub async fn spawn_pty(
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
     roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     // Trust boundary (Phase 1): a pane may only run inside an approved project root or,
     // as the one deliberate exception, the user's home directory (plain home shells).
     if !cwd.is_empty() {
@@ -276,7 +284,7 @@ pub async fn spawn_pty(
     // reader/emitter/writer threads (kill_pty would only ever reap the survivor). Check up front
     // (cheap, before spawning anything); the insert below re-checks to close the race window.
     if registry.sessions.lock().unwrap().contains_key(&id) {
-        return Err(format!("PTY session {} already exists", id));
+        return Err(CodedError::already_exists(format!("PTY session {} already exists", id)));
     }
 
     // Resolved on the async task (needs the AppHandle); consumed inside the blocking
@@ -548,7 +556,10 @@ pub async fn spawn_pty(
                 job.terminate();
             }
             let _ = new_session.child.kill();
-            return Err(format!("PTY session {} already exists", id));
+            return Err(CodedError::already_exists(format!(
+                "PTY session {} already exists",
+                id
+            )));
         }
         sessions.insert(id.clone(), session.clone());
     }
@@ -726,7 +737,7 @@ pub async fn write_pty(
     id: String,
     data: String,
     registry: State<'_, PtyRegistry>,
-) -> Result<PtyWriteOutcome, String> {
+) -> Result<PtyWriteOutcome, CodedError> {
     // Clone the sender under the lock, then release it — we never block while holding the mutex,
     // and the actual write happens on the per-session writer thread. This is what lets a wedged
     // child (one that stopped reading its stdin) still be closed: a stuck write can no longer pin
@@ -735,7 +746,7 @@ pub async fn write_pty(
         let sessions = registry.sessions.lock().unwrap();
         let session_arc = sessions
             .get(&id)
-            .ok_or_else(|| format!("PTY session {} not found", id))?;
+            .ok_or_else(|| CodedError::pty_not_found(format!("PTY session {} not found", id)))?;
         let session = session_arc.lock().unwrap();
         session
             .writer_tx
@@ -750,9 +761,10 @@ pub async fn write_pty(
     match writer_tx.try_send(data.into_bytes()) {
         Ok(()) => Ok(PtyWriteOutcome { accepted: true }),
         Err(mpsc::TrySendError::Full(_)) => Ok(PtyWriteOutcome { accepted: false }),
-        Err(mpsc::TrySendError::Disconnected(_)) => {
-            Err(format!("PTY session {} writer closed", id))
-        }
+        Err(mpsc::TrySendError::Disconnected(_)) => Err(CodedError::internal(format!(
+            "PTY session {} writer closed",
+            id
+        ))),
     }
 }
 
@@ -762,18 +774,18 @@ pub async fn resize_pty(
     cols: u16,
     rows: u16,
     registry: State<'_, PtyRegistry>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     let session_arc = registry
         .sessions
         .lock()
         .unwrap()
         .get(&id)
         .cloned()
-        .ok_or_else(|| format!("PTY session {} not found", id))?;
+        .ok_or_else(|| CodedError::pty_not_found(format!("PTY session {} not found", id)))?;
 
     // Off the main thread (see `write_pty`): `master.resize` can block, and a synchronous command
     // would stall the UI thread during the burst of resizes a window maximize/restore produces.
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), CodedError> {
         let session = session_arc.lock().unwrap();
         let size = PtySize {
             cols,
@@ -781,7 +793,11 @@ pub async fn resize_pty(
             pixel_width: 0,
             pixel_height: 0,
         };
-        session.pair.master.resize(size).map_err(|e| e.to_string())
+        session
+            .pair
+            .master
+            .resize(size)
+            .map_err(|e| CodedError::internal(e.to_string()))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -791,13 +807,13 @@ pub async fn resize_pty(
 pub fn kill_pty(
     id: String,
     registry: State<'_, PtyRegistry>,
-) -> Result<(), String> {
+) -> Result<(), CodedError> {
     let session_arc = registry
         .sessions
         .lock()
         .unwrap()
         .remove(&id)
-        .ok_or_else(|| format!("PTY session {} not found", id))?;
+        .ok_or_else(|| CodedError::pty_not_found(format!("PTY session {} not found", id)))?;
 
     thread::spawn(move || {
         // Kill the child and take the thread handles + the input sender while holding the lock,
@@ -913,6 +929,32 @@ mod tests {
         assert!(validate_prompt_file(cwd, ".saple/a\" | curl evil; \".md").is_err());
         assert!(validate_prompt_file(cwd, ".saple/missing.md").is_err());
         assert!(validate_prompt_file("", ".saple/agents/prompts/p.md").is_err());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn prompt_file_failures_carry_stable_error_codes() {
+        use crate::error_code::ErrorCode;
+        let dir = temp_project();
+        let cwd = dir.to_str().unwrap();
+
+        let metachars = validate_prompt_file(cwd, ".saple/a\" | curl evil; \".md")
+            .expect_err("metacharacters must be refused");
+        assert_eq!(metachars.code, ErrorCode::InvalidPath);
+
+        let missing = validate_prompt_file(cwd, ".saple/missing.md")
+            .expect_err("missing file must be refused");
+        assert_eq!(missing.code, ErrorCode::InvalidPath);
+
+        let no_project =
+            validate_prompt_file("", ".saple/agents/prompts/p.md").expect_err("empty cwd");
+        assert_eq!(no_project.code, ErrorCode::RootNotApproved);
+
+        // Containment refusals flow through the shared path policy unchanged.
+        let traversal = validate_prompt_file(cwd, "../outside.md")
+            .expect_err("traversal must be refused");
+        assert_eq!(traversal.code, ErrorCode::PathOutsideRoot);
+
         fs::remove_dir_all(dir).ok();
     }
 
