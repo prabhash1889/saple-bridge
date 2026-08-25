@@ -527,6 +527,33 @@ pub async fn cancel_run_command(cancel_token: String) -> Result<bool, String> {
     }
 }
 
+/// Audited wrapper around [`run_shell_with_timeout_impl`] (Phase 4): every shell execution -
+/// review verification, swarm acceptance, anything that adopts this runner - lands one line in
+/// the privileged-action audit log with source, cwd, exit/stop reason, and duration.
+pub(crate) fn run_shell_with_timeout(
+    source: &str,
+    project_path: &str,
+    command_str: &str,
+    timeout: Duration,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<(Output, ShellStop), String> {
+    let started = Instant::now();
+    let result = run_shell_with_timeout_impl(project_path, command_str, timeout, cancel);
+    let audited = result
+        .as_ref()
+        .map(|(output, stop)| crate::audit::Outcome {
+            exit_code: output.status.code(),
+            stop: match stop {
+                ShellStop::Completed => None,
+                ShellStop::TimedOut => Some("timed-out"),
+                ShellStop::Cancelled => Some("cancelled"),
+            },
+        })
+        .map_err(|e| e.clone());
+    crate::audit::record(source, "shell.run", Some(project_path), started, &audited);
+    result
+}
+
 /// Run a shell command in `project_path`, capturing stdout/stderr, killing the WHOLE process tree
 /// after `timeout` or on `cancel`. Returns `(output, stop_reason)`.
 ///
@@ -538,7 +565,7 @@ pub async fn cancel_run_command(cancel_token: String) -> Result<bool, String> {
 /// On Windows this uses PowerShell (matching the interactive terminal panes in `pty.rs`) rather
 /// than `cmd.exe`, so commands behave the same whether the user types them or review verification
 /// issues them.
-pub(crate) fn run_shell_with_timeout(
+pub(crate) fn run_shell_with_timeout_impl(
     project_path: &str,
     command_str: &str,
     timeout: Duration,
@@ -663,7 +690,7 @@ fn run_verification_command_inner(
     // before spawn and removed afterwards so stale cancels can't hit a later run.
     let cancel = cancel_token.as_deref().map(register_cancel_token);
     // The token is removed regardless of outcome so stale cancels can never hit a later run.
-    let result = run_shell_with_timeout(&project_path, &command_str, VERIFICATION_TIMEOUT, cancel);
+    let result = run_shell_with_timeout("review", &project_path, &command_str, VERIFICATION_TIMEOUT, cancel);
     take_cancel_token(cancel_token.as_deref().unwrap_or(""));
     let (output, stop) = result?;
 
@@ -912,7 +939,7 @@ mod tests {
         let cmd = "$n=0; while ($n -lt 30000) { 'x' * 80; $n++ }; [Console]::Error.WriteLine(('e' * 80) * 12000); exit 0";
         let started = Instant::now();
         let (output, stop) =
-            run_shell_with_timeout(&dir, cmd, Duration::from_secs(60), None).unwrap();
+            run_shell_with_timeout("test", &dir, cmd, Duration::from_secs(60), None).unwrap();
         assert_eq!(stop, ShellStop::Completed, "a healthy verbose command must complete");
         assert!(output.status.success());
         assert!(output.stdout.len() > 1_500_000, "stdout must be fully drained");
@@ -932,6 +959,7 @@ mod tests {
         let dir_for_runner = dir.clone();
         let handle = std::thread::spawn(move || {
             run_shell_with_timeout(
+                "test",
                 &dir_for_runner,
                 "Start-Sleep -Seconds 30",
                 Duration::from_secs(60),
@@ -977,7 +1005,7 @@ mod tests {
         };
 
         let short = Duration::from_secs(2);
-        let (output, stop) = run_shell_with_timeout(&dir_str, &cmd, short, None).unwrap();
+        let (output, stop) = run_shell_with_timeout("test", &dir_str, &cmd, short, None).unwrap();
         assert_eq!(stop, ShellStop::TimedOut);
         let _ = output;
 

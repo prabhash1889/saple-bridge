@@ -410,6 +410,38 @@ mod tests {
     }
 
     #[test]
+    fn atomic_write_failure_leaves_no_temp_files_or_partial_state() {
+        // Phase 4: the failure path must be as tidy as the success path - an unwritable
+        // destination reports an error, never creates or clobbers anything.
+        let dir = std::env::temp_dir().join(format!("saple-fslock-fail-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        // Case 1: parent directory does not exist.
+        let missing_parent = dir.join("nope").join("state.json");
+        let err = atomic_write(&missing_parent, b"data").expect_err("write without a parent must fail");
+        assert!(err.contains("Failed to write temp file"), "got: {}", err);
+
+        // Case 2: the "parent directory" is actually a regular file.
+        let blocker = dir.join("blocker");
+        fs::write(&blocker, b"i am a file").unwrap();
+        let through_file = blocker.join("child.json");
+        let err = atomic_write(&through_file, b"data").expect_err("write through a file parent must fail");
+        assert!(err.contains("Failed to write temp file"), "got: {}", err);
+        // The blocking file's own bytes are untouched.
+        assert_eq!(fs::read_to_string(&blocker).unwrap(), "i am a file");
+
+        // No stray temp files were left anywhere under the base dir.
+        let strays: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .collect();
+        assert!(strays.is_empty(), "failed writes must not leave temp files: {:?}", strays.len());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn transient_rename_failures_are_retried_then_recovered() {
         let dir = std::env::temp_dir().join(format!("saple-fslock-rename-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();

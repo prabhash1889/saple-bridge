@@ -24,8 +24,9 @@ npm run prepare-sidecar  # Manually build and stage ../saple-mcp
 
 Build script behavior (`scripts/tauri.mjs`):
 
-- `npm run tauri:build` auto-bumps the patch version in `tauri.conf.json`, `package.json`, and `Cargo.toml`, then collects installers into `build/v<version>/`. Diffs in those three files (plus `Cargo.lock`) after a build are expected; do not hand-edit version numbers.
-- Sidecar staging runs through `beforeDevCommand`/`beforeBuildCommand` in `src-tauri/tauri.conf.json`.
+- `npm run tauri:build` builds the committed version and collects installers into `build/v<version>/`. It does NOT modify version files. Only an explicit release build (`SAPLE_RELEASE_BUILD=1 npm run tauri:build`) auto-bumps the patch version in `tauri.conf.json`, `package.json`, and `Cargo.toml`; do not hand-edit version numbers.
+- Each build records the staged sidecar binary's SHA-256 into `build/v<version>/sidecar.SHA256SUMS`.
+- Sidecar staging runs through `beforeDevCommand`/`beforeBuildCommand` in `src-tauri/tauri.conf.json`. The sidecar is built with `cargo --locked`, and `scripts/prepare-sidecar.mjs` verifies the `../saple-mcp` checkout HEAD against `SAPLE_MCP_PINNED_SHA` (CI fails while the pin is unrecorded; see `docs/RELEASE_ENVIRONMENT.md`).
 - Dev mode applies `src-tauri/tauri.dev.conf.json` as a config overlay, which re-adds the Vite dev-server origins to the CSP. The production CSP in `tauri.conf.json` does not include them.
 
 Rust:

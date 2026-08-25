@@ -44,7 +44,9 @@ const entryLines = (entries: DigestEntry[]): string[] => {
 // through free text riding inside a digest.
 const MARKER_PATTERN = /\[(?:AGENT_DONE|AGENT_FAILED|PLAN_READY|PLAN_UPDATED|REVIEW_REQUESTED)[^\]]*\]/gi;
 // ANSI escape sequences and other C0 controls except newline/tab.
+// eslint-disable-next-line no-control-regex -- matching control characters is the whole point of a sanitizer
 const ESCAPE_PATTERN = /\x1B(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|[@-Z\\-_])/g;
+// eslint-disable-next-line no-control-regex -- matching control characters is the whole point of a sanitizer
 const CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
 
 export const MAX_WORKER_TEXT_CHARS = 600;

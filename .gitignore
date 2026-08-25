@@ -28,6 +28,7 @@ lerna-debug.log*
 
 # Node
 node_modules/
+coverage/
 
 # Python
 .venv/

@@ -6,6 +6,7 @@ import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
 import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
+import { recordFailure } from '../lib/failureTracking';
 import type { AgentProvider } from '../types/provider';
 
 // The terminal layer is a dumb transport: it records raw PTY output and pane lifecycle moments
@@ -367,6 +368,7 @@ export const useTerminalStore = create<TerminalState>()((set, get) => {
   // that transition is the bridge's job (spawn-failed event below).
   const failPaneSpawn = (id: string, err: unknown) => {
     console.error(`Failed to spawn PTY session ${id}:`, err);
+    recordFailure('pty-launch', `Terminal failed to start: ${String(err)}`);
     get().appendOutput(
       id,
       `\r\n\x1b[31m[failed to start terminal: ${String(err)} — close this pane and try again]\x1b[0m\r\n`,
