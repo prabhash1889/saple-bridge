@@ -95,6 +95,10 @@ export const ProjectDashboard: React.FC = () => {
   const { panes, sessions, setFocusedPane } = useTerminalStore();
   const tasks = useKanbanStore((state) => state.tasks);
   const memories = useMemoryStore((state) => state.nodes);
+  // The home page must not show a premature zero for memory counts: gate them on the
+  // graph actually having been loaded (and kept fresh) for this project.
+  const memoryLoaded = useMemoryStore((state) => !!currentProjectPath && state.loadedProjectPath === currentProjectPath);
+  const memoryLoading = useMemoryStore((state) => state.loading);
   const activeAgents = useSwarmStore((state) => state.activeAgents);
   const providers = useProviderStore((state) => state.providers);
   const themeMode = useThemeStore((state) => state.mode);
@@ -291,7 +295,7 @@ export const ProjectDashboard: React.FC = () => {
         <button className="metric-card accent-memory" onClick={() => setActiveView('memory')}>
           <Database size={18} />
           <span>Memory Notes</span>
-          <strong>{memories.length}</strong>
+          <strong>{!memoryLoaded ? (memoryLoading ? '...' : '-') : memories.length}</strong>
         </button>
       </div>
 
@@ -361,8 +365,10 @@ export const ProjectDashboard: React.FC = () => {
             <Network size={16} />
             <span>Recent Memories</span>
           </div>
-          {memories.length === 0 ? (
+          {memoryLoaded && memories.length === 0 ? (
             <div className="compact-empty">No memory notes found.</div>
+          ) : !memoryLoaded ? (
+            <div className="compact-empty">{memoryLoading ? 'Loading memory...' : 'Memory has not been loaded for this workspace yet.'}</div>
           ) : (
             memories.slice(0, 5).map((memory) => (
               <article key={memory.id} className="dashboard-list-item">

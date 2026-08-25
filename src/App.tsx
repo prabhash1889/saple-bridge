@@ -11,6 +11,7 @@ import { ShortcutsHelpDialog } from './components/common/ShortcutsHelpDialog';
 import { RoomSkeleton } from './components/common/RoomSkeleton';
 import { useProjectStore, ROOM_ORDER, type ViewType } from './stores/projectStore';
 import { useKanbanStore } from './stores/kanbanStore';
+import { useMemoryStore } from './stores/memoryStore';
 import { useSwarmStore } from './stores/swarmStore';
 import { useAgentSessionStore } from './stores/agentSessionStore';
 import { useTerminalStore } from './stores/terminalStore';
@@ -122,6 +123,9 @@ function App() {
       // would otherwise short-circuit and keep stale localStorage swarm state).
       void loadSwarmState(currentProjectPath, true);
       void loadAgentSessions(currentProjectPath);
+      // Load the memory graph with the rest of the workspace state so the home page's
+      // memory counts are real numbers from disk, not a premature zero.
+      void useMemoryStore.getState().loadGraph(currentProjectPath);
       void refreshWorkspace();
       // Follow the active project with a Rust file watcher so external .saple edits (MCP
       // sidecar, agents) force-reload these stores before the next save clobbers them.
@@ -161,6 +165,7 @@ function App() {
       if (file === 'tasks') void useKanbanStore.getState().loadTasks(projectPath, true);
       else if (file === 'swarm') void useSwarmStore.getState().loadSwarmState(projectPath, true);
       else if (file === 'sessions') void useAgentSessionStore.getState().loadSessions(projectPath, true);
+      else if (file === 'memory') void useMemoryStore.getState().loadGraph(projectPath);
     }).then((fn) => {
       unlisten = fn;
     });
