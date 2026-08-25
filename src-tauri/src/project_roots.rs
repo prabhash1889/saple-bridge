@@ -230,6 +230,146 @@ pub fn release_project_root(
     registry.release_root(Path::new(&path))
 }
 
+// --- Contained-path policy --------------------------------------------------------------------
+//
+// Every command that turns a renderer-supplied relative path into a filesystem path funnels
+// through this section, next to the root registry it complements: the registry answers "is this
+// project approved", these functions answer "does this relative target stay inside it". Keeping
+// both in one module gives cross-cutting path policy a single owner and a single test surface.
+
+/// Canonical form of the project directory itself, or a clear error when it has vanished or is
+/// not a directory.
+pub(crate) fn canonical_base(project_path: &str) -> Result<PathBuf, String> {
+    Path::new(project_path)
+        .canonicalize()
+        .map_err(|e| format!("Base path error: {}", e))
+}
+
+/// Reject renderer-supplied relative paths that could never be contained: absolute paths
+/// (`Path::join` would silently discard the base), `..` traversal, and Windows root/prefix
+/// components.
+fn validate_relative_path(file_path: &str) -> Result<(), String> {
+    use std::path::Component;
+
+    let rel = Path::new(file_path);
+    if rel.is_absolute() {
+        return Err("Access denied: absolute paths are not allowed".to_string());
+    }
+    for comp in rel.components() {
+        match comp {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err("Access denied: path escapes the project workspace".to_string());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Resolve `file_path` against an already-canonical base and prove containment, without any
+/// filesystem side effects. An existing target comes back canonicalized (symlinks resolved, so a
+/// link pointing outside the workspace is caught); a not-yet-existing target comes back as the
+/// joined path after proving its nearest existing ancestor sits inside the base, so a symlinked
+/// parent cannot trick later directory creation into escaping.
+pub(crate) fn contained_target(canonical_base: &Path, file_path: &str) -> Result<PathBuf, String> {
+    validate_relative_path(file_path)?;
+    let target = canonical_base.join(Path::new(file_path));
+
+    // If the target already exists, canonicalize the *full* path (resolving symlinks) and confirm
+    // containment before handing it back.
+    if target.exists() {
+        let canonical_target = target.canonicalize().map_err(|e| format!("Target path error: {}", e))?;
+        if !path_starts_with(&canonical_target, canonical_base) {
+            return Err("Access denied: path is outside the project workspace".to_string());
+        }
+        return Ok(canonical_target);
+    }
+
+    // Target doesn't exist yet (a write that will create it). Prove containment by canonicalizing
+    // the nearest existing ancestor *before* creating any directories - so a symlinked parent
+    // can't trick us into create_dir_all outside the workspace.
+    if let Some(parent) = target.parent() {
+        let mut existing = parent;
+        while !existing.exists() {
+            match existing.parent() {
+                Some(p) => existing = p,
+                None => break,
+            }
+        }
+        let canonical_existing = existing
+            .canonicalize()
+            .map_err(|e| format!("Parent path error: {}", e))?;
+        if !path_starts_with(&canonical_existing, canonical_base) {
+            return Err("Access denied: path is outside the project workspace".to_string());
+        }
+    }
+
+    Ok(target)
+}
+
+fn create_missing_parents(target: &Path) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dirs: {}", e))?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a contained read/edit target for the open project. Contained targets that do not exist
+/// yet get their parent directories created as a side effect (writes rely on this; `fs_lock`
+/// writes fail without an existing parent).
+pub(crate) fn get_project_file_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
+    let canonical_base = canonical_base(project_path)?;
+    let target = contained_target(&canonical_base, file_path)?;
+    create_missing_parents(&target)?;
+    Ok(target)
+}
+
+/// Whether any component of `path` names the git internals directory. Applied to both
+/// the raw relative path and the fully resolved absolute path so symlinked escapes
+/// into `.git` are caught too. Windows filesystems are case-insensitive, so `.GIT`
+/// must hit the same block; on Unix a differently-cased name is an unrelated folder.
+fn has_git_component(path: &Path) -> bool {
+    path.components().any(|c| {
+        let name = c.as_os_str();
+        if cfg!(windows) {
+            name.eq_ignore_ascii_case(".git")
+        } else {
+            name == ".git"
+        }
+    })
+}
+
+/// Contained-path policy for generic file writers: identical to
+/// [`get_project_file_path`] plus a `.git/**` block. Git internals are owned by
+/// `git.rs`, which runs intentional git commands; raw writes from the editor layer
+/// must never corrupt them. The raw relative path is checked first so requesting a
+/// not-yet-existing `.git/hooks/...` target cannot make [`get_project_file_path`]
+/// create `.git` subdirectories as a side effect.
+pub(crate) fn get_project_write_path(project_path: &str, file_path: &str) -> Result<PathBuf, String> {
+    if has_git_component(Path::new(file_path)) {
+        return Err("Access denied: writing inside .git is not allowed".to_string());
+    }
+    let full_path = get_project_file_path(project_path, file_path)?;
+    if has_git_component(&full_path) {
+        return Err("Access denied: writing inside .git is not allowed".to_string());
+    }
+    Ok(full_path)
+}
+
+/// Refuse destructive operations whose target resolves to the workspace root itself
+/// (`file_path = ""`, `"."`, `"./"`). [`contained_target`] proves containment but
+/// treats the root as contained, so without this a delete request for `.` would move
+/// the entire project to the trash.
+pub(crate) fn ensure_not_workspace_root(project_path: &str, target: &Path) -> Result<(), String> {
+    let canonical_base = canonical_base(project_path)?;
+    if target == canonical_base {
+        return Err("Access denied: refusing to operate on the project workspace itself".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +560,118 @@ mod tests {
         let child = dir.join("anything.txt");
         fs::write(&child, "x").unwrap();
         assert!(!registry.verify_path_inside_approved_root(&child));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // --- contained-path policy ---------------------------------------------------------------
+
+    #[test]
+    fn resolver_allows_relative_paths_inside_workspace() {
+        let dir = temp_project();
+        let p = get_project_file_path(dir.to_str().unwrap(), ".saple/tasks.json").unwrap();
+        assert!(p.starts_with(&dir));
+        assert!(dir.join(".saple").exists(), "parent dir created");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolver_rejects_parent_dir_traversal() {
+        let dir = temp_project();
+        let err = get_project_file_path(dir.to_str().unwrap(), "../escape.txt").unwrap_err();
+        assert!(err.contains("escapes"), "got: {}", err);
+        let err2 = get_project_file_path(dir.to_str().unwrap(), ".saple/../../escape.txt").unwrap_err();
+        assert!(err2.contains("escapes"), "got: {}", err2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolver_rejects_absolute_paths() {
+        let dir = temp_project();
+        let abs = if cfg!(windows) { "C:\\Windows\\System32\\drivers\\etc\\hosts" } else { "/etc/passwd" };
+        let err = get_project_file_path(dir.to_str().unwrap(), abs).unwrap_err();
+        assert!(err.contains("absolute") || err.contains("escapes"), "got: {}", err);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolver_does_not_create_dirs_when_path_escapes() {
+        let dir = temp_project();
+        let _ = get_project_file_path(dir.to_str().unwrap(), "../sibling/deep/path.txt");
+        let escaped = dir.parent().unwrap().join("sibling");
+        assert!(!escaped.exists(), "must not create directories outside the workspace");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolver_allows_long_nested_relative_path() {
+        let dir = temp_project();
+        let long_rel = format!(".saple/{}/note.md", "a/".repeat(40));
+        let p = get_project_file_path(dir.to_str().unwrap(), &long_rel).unwrap();
+        assert!(p.starts_with(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writer_policy_rejects_git_internal_paths() {
+        let dir = temp_project();
+        let project = dir.to_str().unwrap().to_string();
+
+        let err = get_project_write_path(&project, ".git/config").unwrap_err();
+        assert!(err.contains(".git"), "got: {}", err);
+        let err = get_project_write_path(&project, ".git/hooks/pre-commit").unwrap_err();
+        assert!(err.contains(".git"), "got: {}", err);
+
+        // Windows filesystems are case-insensitive: an upper-cased component must hit
+        // the same block instead of reaching the real .git directory.
+        #[cfg(windows)]
+        {
+            let err = get_project_write_path(&project, ".GIT/config").unwrap_err();
+            assert!(err.contains(".git"), "got: {}", err);
+        }
+
+        // The raw-path check must run before containment resolution, so no `.git`
+        // directories were created as a side effect of rejecting the write.
+        assert!(!dir.join(".git").exists(), ".git must not be created by a rejected write");
+
+        // A normal contained write is untouched.
+        let p = get_project_write_path(&project, "docs/note.md").expect("contained write path must resolve");
+        assert!(p.starts_with(&dir));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn destructive_target_rule_rejects_workspace_root_itself() {
+        let dir = temp_project();
+        fs::write(dir.join("keep.txt"), "sentinel").unwrap();
+
+        for rel in ["", ".", "./"] {
+            let target = get_project_file_path(dir.to_str().unwrap(), rel).unwrap();
+            let err = ensure_not_workspace_root(dir.to_str().unwrap(), &target).unwrap_err();
+            assert!(err.contains("workspace itself"), "rel {:?} must be rejected, got: {}", rel, err);
+        }
+        assert!(dir.join("keep.txt").exists());
+
+        // A contained child stays allowed.
+        let child = get_project_file_path(dir.to_str().unwrap(), "keep.txt").unwrap();
+        ensure_not_workspace_root(dir.to_str().unwrap(), &child).expect("child target must pass");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn contained_target_never_creates_directories() {
+        let dir = temp_project();
+        let base = canonical_base(dir.to_str().unwrap()).unwrap();
+
+        // Missing nested target resolves (ancestor proof) but creates nothing.
+        let t = contained_target(&base, "not-yet/deep/file.txt").unwrap();
+        assert!(!t.exists());
+        assert!(!dir.join("not-yet").exists(), "resolution must stay side-effect free");
+
+        // Traversal is rejected before any join.
+        assert!(contained_target(&base, "../outside.txt").is_err());
+
         let _ = fs::remove_dir_all(&dir);
     }
 }

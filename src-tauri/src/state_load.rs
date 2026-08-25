@@ -11,7 +11,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-use crate::project::get_project_file_path;
+use crate::project_roots::get_project_file_path;
 
 /// Outcome of loading a persisted state file. Serialized to the renderer with a `status` tag so
 /// the frontend can branch on `missing | loaded | corrupt | locked | ioError`.

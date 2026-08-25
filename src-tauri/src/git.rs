@@ -3,7 +3,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
-use crate::project::get_project_file_path;
+use crate::project_roots::get_project_file_path;
 use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
