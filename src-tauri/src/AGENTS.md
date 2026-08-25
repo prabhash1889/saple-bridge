@@ -30,6 +30,8 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`, resolves the bundl
 | Files | `files.rs` | File tree and text-file helpers |
 | Diagnostics | `diagnostics.rs` | Environment and provider diagnostics |
 | Locking | `fs_lock.rs` | Serialized and atomic file writes |
+| App log | `app_log.rs` | Durable size-capped application log with secret redaction; `log_renderer_error` command |
+| Audit | `audit.rs` | Privileged-action audit trail (shell runs, PTY spawns, destructive file ops) |
 
 ## Contracts
 
