@@ -15,6 +15,7 @@ import {
   Network,
   PanelTop,
   RotateCw,
+  ShieldCheck,
   Terminal,
   Trash2,
   Users,
@@ -46,6 +47,30 @@ const ENTRY_ICONS: Record<string, React.ElementType> = {
   terminals: Terminal,
   swarm: Users,
   editor: Grid2X2,
+};
+
+// Compact provider readiness status, shared by the empty-home card and the onboarding step.
+const ProviderChecklist: React.FC = () => {
+  const providers = useProviderStore((state) => state.providers);
+  return (
+    <div className="provider-checklist">
+      {providers.filter((p) => p.provider !== 'custom').map((p) => {
+        const signed = p.signedIn === true;
+        const ready = p.authenticated === true || signed;
+        const pending = p.authenticated === null && !signed;
+        return (
+          <span key={p.provider}>
+            <span className={`status-dot ${ready ? 'ready' : pending ? 'pending' : 'missing'}`} />
+            {p.label}
+            {p.authenticated === true && ' - key saved'}
+            {p.authenticated !== true && signed && ' - signed in'}
+            {!ready && !pending && ' - auth needed'}
+            {pending && ' - checking...'}
+          </span>
+        );
+      })}
+    </div>
+  );
 };
 
 // Compact relative timestamp ("just now", "5m ago", "3h ago", "2d ago") for the
@@ -89,6 +114,9 @@ export const ProjectDashboard: React.FC = () => {
     currentWorkspaceId,
     openWorkspaceInstance,
     clearWorkspaceError,
+    onboardingOpen,
+    onboardingDismissed,
+    dismissOnboarding,
   } = useProjectStore();
   const openWorkspacePaths = openWorkspaces.map((w) => w.path);
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -100,7 +128,6 @@ export const ProjectDashboard: React.FC = () => {
   const memoryLoaded = useMemoryStore((state) => !!currentProjectPath && state.loadedProjectPath === currentProjectPath);
   const memoryLoading = useMemoryStore((state) => state.loading);
   const activeAgents = useSwarmStore((state) => state.activeAgents);
-  const providers = useProviderStore((state) => state.providers);
   const themeMode = useThemeStore((state) => state.mode);
   const setThemeMode = useThemeStore((state) => state.setMode);
   const confirm = useConfirmStore((state) => state.confirm);
@@ -198,7 +225,13 @@ export const ProjectDashboard: React.FC = () => {
   const reviewTasks = tasks.filter((task) => task.column === 'review');
   const activeTasks = tasks.filter((task) => task.column === 'backlog' || task.column === 'progress');
   const runningAgents = activeAgents.filter((agent) => ['running', 'waiting', 'review'].includes(agent.status));
-  const showFirstRunWalkthrough = !currentProjectPath && workspaceHistory.length === 0;
+  // First run: no workspace has ever been opened and the user hasn't dismissed the
+  // walkthrough. It can also be re-opened on demand (Help / command palette).
+  const walkthroughVisible = (!currentProjectPath && !onboardingDismissed && workspaceHistory.length === 0) || onboardingOpen;
+
+  React.useEffect(() => {
+    if (walkthroughVisible) void useProviderStore.getState().refreshReadiness();
+  }, [walkthroughVisible]);
 
   // Recovery for a failed workspace load (config/summary registration failed): retry the
   // same open flow, or jump to diagnostics to find out why.
@@ -215,6 +248,65 @@ export const ProjectDashboard: React.FC = () => {
     useProjectStore.getState().setPendingSettingsTab('diagnostics');
     setActiveView('settings');
   };
+
+  const handleOpenProviderSetup = () => {
+    useProjectStore.getState().setPendingSettingsTab('providers');
+    setActiveView('settings');
+  };
+
+  // Getting-started walkthrough: automatic on true first run, and re-openable any time
+  // (command palette / Help). Includes live provider readiness so new users see whether
+  // an agent can actually run before they commit to a workspace.
+  const walkthroughPanel = walkthroughVisible ? (
+    <section className="surface onboarding-panel" aria-label="Getting started walkthrough">
+      <div className="panel-heading">
+        <Layers3 size={16} />
+        <span>Start Here</span>
+        <button
+          type="button"
+          className="text-btn"
+          onClick={dismissOnboarding}
+          title="Hide the walkthrough"
+          aria-label="Hide the walkthrough"
+          style={{ marginLeft: 'auto', padding: 2, display: 'flex', lineHeight: 0 }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <div className="onboarding-steps">
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><FolderOpen size={16} /></span>
+          <strong>Open a repo folder</strong>
+          <p>Bridge creates the local `.saple` workspace files inside your project.</p>
+        </article>
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><Terminal size={16} /></span>
+          <strong>Launch a terminal</strong>
+          <p>Use the Command Room for shells, coding agents, and live logs.</p>
+        </article>
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><ClipboardList size={16} /></span>
+          <strong>Create a task</strong>
+          <p>Move tasks through backlog, progress, review, and done.</p>
+        </article>
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><ShieldCheck size={16} /></span>
+          <strong>Connect a provider</strong>
+          <p>Agents need at least one provider with a saved key or CLI sign-in.</p>
+          <ProviderChecklist />
+          <button type="button" className="text-btn" onClick={handleOpenProviderSetup}>
+            Set up providers in Settings
+          </button>
+        </article>
+      </div>
+      {!currentProjectPath && (
+        <button onClick={() => handleOpenWorkspace('terminals')} className="primary onboarding-primary-action">
+          <FolderOpen size={16} />
+          Open first workspace
+        </button>
+      )}
+    </section>
+  ) : null;
 
   const legacyHomePanel = currentProjectPath ? (
     <section className="dashboard-shell home-legacy-panel">
@@ -379,6 +471,10 @@ export const ProjectDashboard: React.FC = () => {
           )}
         </section>
       </div>
+
+      {walkthroughPanel && (
+        <div style={{ marginTop: 12 }}>{walkthroughPanel}</div>
+      )}
     </section>
   ) : (
     <section className="dashboard-shell no-workspace home-legacy-panel">
@@ -394,34 +490,8 @@ export const ProjectDashboard: React.FC = () => {
         </button>
       </div>
 
-      {showFirstRunWalkthrough && (
-        <section className="surface onboarding-panel" aria-label="First run walkthrough">
-          <div className="panel-heading">
-            <Layers3 size={16} />
-            <span>Start Here</span>
-          </div>
-          <div className="onboarding-steps">
-            <article className="onboarding-step">
-              <span className="onboarding-step-icon"><FolderOpen size={16} /></span>
-              <strong>Open a repo folder</strong>
-              <p>Bridge creates the local `.saple` workspace files inside your project.</p>
-            </article>
-            <article className="onboarding-step">
-              <span className="onboarding-step-icon"><Terminal size={16} /></span>
-              <strong>Launch a terminal</strong>
-              <p>Use the Command Room for shells, coding agents, and live logs.</p>
-            </article>
-            <article className="onboarding-step">
-              <span className="onboarding-step-icon"><ClipboardList size={16} /></span>
-              <strong>Create a task</strong>
-              <p>Move tasks through backlog, progress, review, and done.</p>
-            </article>
-          </div>
-          <button onClick={() => handleOpenWorkspace('terminals')} className="primary onboarding-primary-action">
-            <FolderOpen size={16} />
-            Open first workspace
-          </button>
-        </section>
+      {walkthroughPanel && (
+        <div style={{ marginBottom: 12 }}>{walkthroughPanel}</div>
       )}
 
       <div className="empty-dashboard-grid home-empty-grid">
@@ -481,23 +551,7 @@ export const ProjectDashboard: React.FC = () => {
             <Terminal size={16} />
             <span>Provider Readiness</span>
           </div>
-          <div className="provider-checklist">
-            {providers.filter((p) => p.provider !== 'custom').map((p) => {
-              const signed = p.signedIn === true;
-              const ready = p.authenticated === true || signed;
-              const pending = p.authenticated === null && !signed;
-              return (
-                <span key={p.provider}>
-                  <span className={`status-dot ${ready ? 'ready' : pending ? 'pending' : 'missing'}`} />
-                  {p.label}
-                  {p.authenticated === true && ' - key saved'}
-                  {p.authenticated !== true && signed && ' - signed in'}
-                  {!ready && !pending && ' - auth needed'}
-                  {pending && ' - checking...'}
-                </span>
-              );
-            })}
-          </div>
+          <ProviderChecklist />
         </section>
 
         <section className="surface">

@@ -3,7 +3,7 @@ import {
   Search, Terminal, ClipboardList, Network, Users,
   GitPullRequest, Settings, FolderOpen, ShieldCheck,
   HelpCircle, Play, ChevronRight, CornerDownLeft, ArrowLeft, Keyboard,
-  MessageSquarePlus, Send, Bot, Monitor
+  MessageSquarePlus, Send, Bot, Monitor, Rocket
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore, AiProvider } from '../../stores/terminalStore';
@@ -353,6 +353,19 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
         action: () => {
           onClose();
           useShortcutsHelpStore.getState().open();
+        },
+      },
+      {
+        id: 'getting_started',
+        name: 'Show Getting Started Walkthrough',
+        description: 'Reopen the first-run guide with provider readiness checks',
+        category: 'Help',
+        icon: Rocket,
+        action: () => {
+          onClose();
+          const project = useProjectStore.getState();
+          project.openOnboarding();
+          project.setActiveView('dashboard');
         },
       },
     ];

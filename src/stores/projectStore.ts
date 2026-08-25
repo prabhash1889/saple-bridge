@@ -109,11 +109,18 @@ interface ProjectState {
   // One-shot request for which Settings tab to open on next render (e.g. the command palette's
   // "Run diagnostics"). ProjectSettings consumes and clears it on mount/change.
   pendingSettingsTab: string | null;
+  // First-run walkthrough control: `onboardingOpen` force-shows the panel (Help menu /
+  // command palette), `onboardingDismissed` persists that the user cleared the automatic
+  // first-run variant so it stops reappearing.
+  onboardingOpen: boolean;
+  onboardingDismissed: boolean;
 
   validateStoredPaths: () => Promise<void>;
   dismissStalePath: (path: string) => void;
   relocateWorkspace: (fromPath: string, toPath: string) => Promise<void>;
   clearWorkspaceError: () => void;
+  openOnboarding: () => void;
+  dismissOnboarding: () => void;
   setProjectPath: (path: string | null) => void;
   setActiveView: (view: ViewType) => void;
   setPendingSettingsTab: (tab: string | null) => void;
@@ -184,8 +191,14 @@ export const useProjectStore = create<ProjectState>()(
         workspaceError: null,
         stalePaths: [],
         pendingSettingsTab: null,
+        onboardingOpen: false,
+        onboardingDismissed: false,
 
         setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
+
+        openOnboarding: () => set({ onboardingOpen: true }),
+
+        dismissOnboarding: () => set({ onboardingOpen: false, onboardingDismissed: true }),
 
         // Cold-start validation of every persisted workspace path. Uses the same Rust
         // summary command the dashboard health dots use; a missing folder is surfaced so
@@ -501,6 +514,7 @@ export const useProjectStore = create<ProjectState>()(
         recentProjects: state.recentProjects,
         workspaceHistory: state.workspaceHistory,
         openWorkspaces: state.openWorkspaces,
+        onboardingDismissed: state.onboardingDismissed,
       }),
     }
   )
