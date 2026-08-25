@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { CheckCircle, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { CheckCircle, ClipboardCopy, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
+import { writeTextToClipboard } from '../../../lib/clipboard';
 import { UpdatesSection } from './UpdatesSection';
 
 // Shape of the `run_diagnostics` Rust command result, limited to the fields this tab reads.
@@ -20,15 +21,69 @@ interface DiagnosticsResult {
   };
 }
 
+// Shape of the `collect_diagnostics` Rust command result (Phase 4 support bundle).
+interface DiagnosticsReport {
+  generatedAt: string;
+  appName: string;
+  appVersion: string;
+  appIdentifier: string;
+  os: string;
+  arch: string;
+  projectPath: string | null;
+  ptySessionCount: number;
+  projectWatcherActive: boolean;
+  swarmWatcherActive: boolean;
+  logTail: string[];
+  logTruncated: boolean;
+  auditRecent: string[];
+  auditEntryCount: number;
+}
+
+function formatDiagnosticsReport(r: DiagnosticsReport): string {
+  const lines = [
+    `${r.appName} diagnostics report`,
+    `Generated: ${r.generatedAt}`,
+    `Version: ${r.appVersion} (${r.appIdentifier})`,
+    `OS: ${r.os} (${r.arch})`,
+    `Project: ${r.projectPath ?? '(none open)'}`,
+    `Terminal sessions: ${r.ptySessionCount}`,
+    `Project watcher active: ${r.projectWatcherActive ? 'yes' : 'no'}`,
+    `Swarm watcher active: ${r.swarmWatcherActive ? 'yes' : 'no'}`,
+    '',
+    `--- App log (last ${r.logTail.length} line${r.logTail.length === 1 ? '' : 's'}${r.logTruncated ? ', older lines omitted' : ''}) ---`,
+    ...(r.logTail.length > 0 ? r.logTail : ['(empty)']),
+    '',
+    `--- Audit log (${r.auditEntryCount} total entries, last ${r.auditRecent.length} below) ---`,
+    ...(r.auditRecent.length > 0 ? r.auditRecent : ['(empty)']),
+  ];
+  return lines.join('\n');
+}
+
 export const DiagnosticsTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
 
   const [diagLoading, setDiagLoading] = useState(false);
   const [diagResult, setDiagResult] = useState<DiagnosticsResult | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
+  const [copyLoading, setCopyLoading] = useState(false);
 
   const successNotification = (msg: string, desc?: string) => useNotificationStore.getState().success(msg, desc);
   const errorNotification = (msg: string, desc?: string) => useNotificationStore.getState().error(msg, desc);
+
+  const copyDiagnosticsReport = async () => {
+    setCopyLoading(true);
+    try {
+      const report = await invoke<DiagnosticsReport>('collect_diagnostics', {
+        projectPath: currentProjectPath || null,
+      });
+      await writeTextToClipboard(formatDiagnosticsReport(report));
+      successNotification('Diagnostics report copied to clipboard.');
+    } catch (err) {
+      errorNotification(`Failed to copy diagnostics report: ${String(err)}`);
+    } finally {
+      setCopyLoading(false);
+    }
+  };
 
   return (
     <>
@@ -65,6 +120,10 @@ export const DiagnosticsTab: React.FC = () => {
         >
           <RefreshCw size={14} className={diagLoading ? 'spin' : ''} />
           <span>{diagLoading ? 'Running Diagnostics...' : 'Run Diagnostics'}</span>
+        </button>
+        <button onClick={copyDiagnosticsReport} disabled={copyLoading}>
+          <ClipboardCopy size={14} className={copyLoading ? 'spin' : ''} />
+          <span>{copyLoading ? 'Copying...' : 'Copy diagnostics report'}</span>
         </button>
       </div>
 
