@@ -40,6 +40,7 @@ Bridge stages the sidecar with `scripts/prepare-sidecar.mjs`; `sidecar.rs` owns 
 - Validate project paths against the selected project directory before reading or writing.
 - All path-policy decisions (containment, protected paths, destructive targets) flow through `project_roots.rs`; do not re-implement containment checks in command modules.
 - Path-policy failures return `error_code::CodedError` (`root_not_approved`, `path_outside_root`, `protected_path`, `destructive_target`, `invalid_path`, `internal`); surfaces still carrying plain strings flatten it via the provided `From` impls.
+- Coded IPC error surfaces: path policy (`project_roots.rs`, `files.rs`, `project.rs`), PTY lifecycle (`pty.rs`: duplicate ids are `already_exists`, unregistered sessions `pty_not_found`), memory snapshots (`memory.rs`: unconfirmed overwrite is `already_exists`), and the sidecar probe (`sidecar.rs`). Extend the vocabulary only when a caller can branch on the code; otherwise keep plain strings and let the renderer's `parseIpcError` treat them as uncoded.
 - Keep PTY process lifecycle in Rust.
 - Store credentials only through the OS keychain account `saple_bridge_user`.
 - Return structured data to React; do not rely on the renderer to validate sensitive paths.
