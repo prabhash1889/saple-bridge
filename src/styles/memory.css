@@ -24,7 +24,7 @@
 }
 
 .memory-empty-card p {
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-muted);
   margin-top: 4px;
   margin-bottom: 20px;

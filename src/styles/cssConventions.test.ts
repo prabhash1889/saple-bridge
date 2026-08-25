@@ -42,4 +42,21 @@ describe('styles css conventions', () => {
     }
     expect(offenders, `literal hex backgrounds found:\n${offenders.join('\n')}`).toEqual([]);
   });
+
+  it('keeps text font sizes on the type scale (--text-*)', () => {
+    // tokens.css defines the scale itself; display/icon glyph sizes above the
+    // largest step (22px) keep literal px on purpose.
+    const offenders: string[] = [];
+    for (const { name, text } of CSS_FILES) {
+      if (name === 'tokens.css') continue;
+      const lines = text.split(/\r?\n/);
+      lines.forEach((line, idx) => {
+        const match = line.match(/^\s*font-size:\s*(\d+(?:\.\d+)?)px/);
+        if (match && Number.parseFloat(match[1]) <= 22) {
+          offenders.push(`${name}:${idx + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(offenders, `off-scale font sizes found:\n${offenders.join('\n')}`).toEqual([]);
+  });
 });

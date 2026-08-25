@@ -37,7 +37,7 @@
 }
 
 .task-dialog-header h3 {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -67,7 +67,7 @@
 }
 
 .task-dialog-field label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -107,7 +107,7 @@
 
 .task-dialog-footer button {
   padding: 6px 16px;
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .kanban-empty-icon {
@@ -116,7 +116,7 @@
 }
 
 .kanban-empty-text {
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-muted);
   margin-top: 4px;
   margin-bottom: 20px;
@@ -147,7 +147,7 @@
 }
 
 .task-drawer-criteria-text {
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-primary);
 }
 
