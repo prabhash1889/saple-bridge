@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // projectStore pulls in Tauri IPC at import time via its actions; none of the reducers under
 // test (moveWorkspace / renameWorkspace) call it, so a no-op mock is enough to load the module.
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// The path-validation tests below rewire this mock per test.
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
 import { useProjectStore, type WorkspaceInstance } from './projectStore';
 
@@ -83,5 +85,55 @@ describe('projectStore.removeRecentProject', () => {
     const state = useProjectStore.getState();
     expect(state.recentProjects).toEqual([]);
     expect(state.workspaceHistory).toEqual([]);
+  });
+});
+
+describe('projectStore stale path validation + relocation', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useProjectStore.setState({
+      currentProjectPath: null,
+      currentWorkspaceId: null,
+      openWorkspaces: [],
+      recentProjects: [],
+      workspaceHistory: [],
+      stalePaths: [],
+    });
+  });
+
+  it('flags persisted paths that no longer exist', async () => {
+    useProjectStore.setState({
+      recentProjects: ['/gone'],
+      workspaceHistory: [{ path: '/here', name: 'here', openedAt: 1 }],
+    });
+    // checkPathExists resolves through get_workspace_summary.
+    invokeMock.mockImplementation((_cmd: string, args: { projectPath: string }) =>
+      args.projectPath === '/gone' ? Promise.reject(new Error('missing')) : Promise.resolve({ writable: true }),
+    );
+
+    await useProjectStore.getState().validateStoredPaths();
+
+    expect(useProjectStore.getState().stalePaths).toEqual(['/gone']);
+  });
+
+  it('relocates every persisted record and reloads the active workspace', async () => {
+    useProjectStore.setState({
+      currentProjectPath: '/old',
+      currentWorkspaceId: 'a',
+      currentProjectName: 'old',
+      openWorkspaces: [{ id: 'a', path: '/old', name: 'old' }],
+      recentProjects: ['/old', '/other'],
+      workspaceHistory: [{ path: '/old', name: 'old', openedAt: 1 }],
+      stalePaths: ['/old'],
+    });
+
+    await useProjectStore.getState().relocateWorkspace('/old', '/new');
+
+    const state = useProjectStore.getState();
+    expect(state.openWorkspaces[0].path).toBe('/new');
+    expect(state.currentProjectPath).toBe('/new');
+    expect(state.recentProjects).toEqual(['/new', '/other']);
+    expect(state.workspaceHistory[0].path).toBe('/new');
+    expect(state.stalePaths).toEqual([]);
   });
 });

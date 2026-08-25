@@ -87,6 +87,13 @@ function App() {
   // its events have a consumer.
   useEffect(() => startTerminalSwarmBridge(), []);
 
+  // Cold-start validation: every persisted workspace path (active, open, recents) is checked
+  // once so moved/deleted folders surface with relocate/remove actions instead of failing
+  // silently when opened.
+  useEffect(() => {
+    void useProjectStore.getState().validateStoredPaths();
+  }, []);
+
   useEffect(() => {
     if (HEAVY_VIEWS.includes(activeView)) {
       setMountedHeavyViews((prev) => (prev.has(activeView) ? prev : new Set(prev).add(activeView)));

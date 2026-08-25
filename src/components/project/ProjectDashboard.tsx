@@ -21,8 +21,11 @@ import {
   XCircle,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { useBrowserStore } from '../../stores/browserStore';
+import { useConfirmStore } from '../../stores/confirmStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useMemoryStore } from '../../stores/memoryStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { useProjectStore, ViewType } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
 import { useSwarmStore } from '../../stores/swarmStore';
@@ -78,6 +81,9 @@ export const ProjectDashboard: React.FC = () => {
     checkPathExists,
     openWorkspaces,
     removeRecentProject,
+    stalePaths,
+    dismissStalePath,
+    relocateWorkspace,
   } = useProjectStore();
   const openWorkspacePaths = openWorkspaces.map((w) => w.path);
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -88,6 +94,7 @@ export const ProjectDashboard: React.FC = () => {
   const providers = useProviderStore((state) => state.providers);
   const themeMode = useThemeStore((state) => state.mode);
   const setThemeMode = useThemeStore((state) => state.setMode);
+  const confirm = useConfirmStore((state) => state.confirm);
   const [recentHealth, setRecentHealth] = React.useState<Record<string, boolean | 'checking'>>(() => ({ ...recentHealthCache }));
 
   React.useEffect(() => {
@@ -139,6 +146,44 @@ export const ProjectDashboard: React.FC = () => {
       return next;
     });
     removeRecentProject(path);
+  };
+
+  // Recovery for a stale persisted path (validated at cold start): point the workspace at
+  // its new location, or drop it from workspaces + recents entirely.
+  const handleRelocateStale = async (fromPath: string) => {
+    try {
+      const newPath = await invoke<string | null>('select_directory');
+      if (!newPath) return;
+      await relocateWorkspace(fromPath, newPath);
+      useNotificationStore.getState().success(
+        'Workspace relocated',
+        `${getWorkspaceName(fromPath)} now points at ${newPath}.`,
+      );
+    } catch (error) {
+      console.error('Failed to relocate workspace:', error);
+      useNotificationStore.getState().error(`Failed to relocate workspace: ${String(error)}`);
+    }
+  };
+
+  const handleForgetStale = (path: string) => {
+    confirm({
+      title: 'Remove missing workspace?',
+      message: `"${getWorkspaceName(path)}" could not be found on disk. This removes it from your open workspaces and recents. Your files are not touched.`,
+      confirmLabel: 'Remove',
+      onConfirm: () => {
+        const store = useProjectStore.getState();
+        // Close every open instance of that path first so its PTYs and browser session
+        // don't outlive it (same teardown the sidebar close uses).
+        for (const instance of store.openWorkspaces.filter((w) => w.path === path)) {
+          void useTerminalStore.getState().closeWorkspaceTerminals(instance.id);
+          void useBrowserStore.getState().closeWorkspaceBrowser(instance.id);
+          store.closeWorkspace(instance.id);
+          void invoke('release_project_root', { path }).catch(() => {});
+        }
+        handleRemoveRecent(path);
+        dismissStalePath(path);
+      },
+    });
   };
 
   const reviewTasks = tasks.filter((task) => task.column === 'review');
@@ -424,6 +469,38 @@ export const ProjectDashboard: React.FC = () => {
   return (
     <section className="home-split" aria-label="Saple Bridge home">
       <div className="home-split-left">
+        {stalePaths.length > 0 && (
+          <div role="alert" className="state-recovery-banner" style={{ marginBottom: 12 }}>
+            <div className="state-recovery-header">
+              <AlertTriangle className="h-5 w-5" aria-hidden style={{ color: 'var(--color-warning)' }} />
+              <div>
+                <p className="font-semibold">Workspace folder not found</p>
+                {stalePaths.map((path) => (
+                  <p key={path} className="state-recovery-path"><code>{path}</code></p>
+                ))}
+                <p className="state-recovery-hint">
+                  These folders were moved or deleted. Relocate a workspace to its new
+                  location, or remove it from the list.
+                </p>
+              </div>
+            </div>
+            <div className="state-recovery-actions">
+              {stalePaths.map((path) => (
+                <React.Fragment key={path}>
+                  <button type="button" disabled={workspaceLoading} onClick={() => void handleRelocateStale(path)}>
+                    <FolderOpen aria-hidden /> Relocate {getWorkspaceName(path)}
+                  </button>
+                  <button type="button" onClick={() => handleForgetStale(path)}>
+                    <X aria-hidden /> Remove
+                  </button>
+                  <button type="button" onClick={() => dismissStalePath(path)}>
+                    Dismiss
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        )}
         {legacyHomePanel}
       </div>
 
