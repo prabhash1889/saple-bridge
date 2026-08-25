@@ -19,6 +19,7 @@ mod process_ext;
 mod proc_tree;
 mod fs_lock;
 mod project_roots;
+mod sidecar;
 mod state_load;
 mod watcher;
 
@@ -81,7 +82,7 @@ pub fn run() {
             // `.mcp.json` never has to reference the (versioned, ACL-restricted on MSIX)
             // install directory. Release only: dev resolves the repo-local staging path.
             #[cfg(not(debug_assertions))]
-            project::ensure_stable_sidecar();
+            sidecar::ensure_stable_sidecar();
             // June control endpoint: a per-process token, then start the loopback server only if the
             // user opted in (default off, no open port). See june_control.rs.
             app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
@@ -138,7 +139,7 @@ pub fn run() {
             project::get_workspace_summary,
             project::install_mcp_config,
             project::check_mcp_status,
-            project::test_mcp_tools,
+            sidecar::test_mcp_tools,
             keychain::set_api_key,
             keychain::has_api_key,
             keychain::delete_api_key,
