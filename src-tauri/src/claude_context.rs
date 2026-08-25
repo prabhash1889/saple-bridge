@@ -36,15 +36,10 @@ fn project_slug(path: &str) -> String {
         .collect()
 }
 
-/// <CLAUDE_CONFIG_DIR|~/.claude> — same config-dir resolution as diagnostics.rs.
+/// <CLAUDE_CONFIG_DIR|~/.claude> - resolution owned by providers.rs (shared with the
+/// Claude sign-in probe in diagnostics).
 fn claude_config_dir() -> Option<PathBuf> {
-    std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("USERPROFILE")
-                .or_else(|| std::env::var_os("HOME"))
-                .map(|h| PathBuf::from(h).join(".claude"))
-        })
+    crate::providers::claude_config_dir()
 }
 
 fn claude_projects_dir() -> Option<PathBuf> {

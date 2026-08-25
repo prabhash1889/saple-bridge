@@ -1,15 +1,18 @@
 use keyring::Entry;
 
+use crate::providers::{KEYCHAIN_SERVICE_PREFIX, KEYCHAIN_SERVICE_SUFFIX};
+
 const KEYCHAIN_USER: &str = "saple_bridge_user";
 
 /// The renderer may only touch keychain entries following the documented
-/// `saple_provider_<provider>_api_key` contract (see CLAUDE.md). `service` crosses the
-/// renderer→Rust trust boundary, so mutating commands reject anything else — the account is
-/// already pinned to `saple_bridge_user`, this closes off the service namespace too.
-fn validate_service_name(service: &str) -> Result<(), String> {
+/// `<PREFIX><provider><SUFFIX>` contract (see CLAUDE.md and providers.rs, which owns the
+/// namespace constants). `service` crosses the renderer→Rust trust boundary, so mutating
+/// commands reject anything else — the account is already pinned to `saple_bridge_user`,
+/// this closes off the service namespace too.
+pub(crate) fn validate_service_name(service: &str) -> Result<(), String> {
     let provider = service
-        .strip_prefix("saple_provider_")
-        .and_then(|rest| rest.strip_suffix("_api_key"))
+        .strip_prefix(KEYCHAIN_SERVICE_PREFIX)
+        .and_then(|rest| rest.strip_suffix(KEYCHAIN_SERVICE_SUFFIX))
         .unwrap_or("");
     let valid = !provider.is_empty()
         && provider
@@ -19,8 +22,8 @@ fn validate_service_name(service: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Invalid keychain service '{}': expected saple_provider_<provider>_api_key",
-            service
+            "Invalid keychain service '{}': expected {}<provider>{}",
+            service, KEYCHAIN_SERVICE_PREFIX, KEYCHAIN_SERVICE_SUFFIX
         ))
     }
 }
@@ -98,8 +101,7 @@ mod tests {
 /// user's real key.) The seam is here for a future real per-provider HTTP probe.
 #[tauri::command]
 pub async fn test_provider_connection(provider: String) -> Result<bool, String> {
-    let service = format!("saple_provider_{}_api_key", provider);
-    has_api_key(service).await
+    has_api_key(crate::providers::keychain_service(&provider)).await
 }
 
 #[tauri::command]

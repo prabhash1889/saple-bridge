@@ -9,10 +9,8 @@ use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
 // Path policy (containment resolution, protected writer paths, destructive targets) lives in
-// `project_roots` as of Phase 5; this re-export is a compatibility alias for out-of-scope
-// callers that still reference `crate::project::get_project_file_path` (pty.rs). New code
-// imports from `crate::project_roots` directly.
-pub(crate) use crate::project_roots::{get_project_file_path, get_project_write_path};
+// `project_roots` as of Phase 5; import from `crate::project_roots` directly.
+use crate::project_roots::{get_project_file_path, get_project_write_path};
 
 fn default_enable_edit_mode() -> bool {
     true

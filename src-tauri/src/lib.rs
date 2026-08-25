@@ -14,6 +14,7 @@ mod june_control;
 mod swarm;
 mod files;
 mod diagnostics;
+mod providers;
 mod process_ext;
 mod proc_tree;
 mod fs_lock;
@@ -197,8 +198,8 @@ pub fn run() {
             files::delete_path,
             files::search_in_files,
             diagnostics::run_diagnostics,
-            diagnostics::check_provider_cli,
-            diagnostics::check_provider_signin,
+            providers::check_provider_cli,
+            providers::check_provider_signin,
             watcher::watch_project_files,
             watcher::unwatch_project_files,
             watcher::watch_swarm_dir,
