@@ -135,24 +135,35 @@ const SECRET_KEYS: &[&str] = &[
 /// Strip anything resembling a credential from `message`: known token shapes, `Bearer ...`
 /// headers, and key/value pairs whose key names a secret. Absolute user paths are intentionally
 /// KEPT - they are needed to diagnose anything - but values that look like credentials go.
+///
+/// All three detectors run against the ORIGINAL text and share one mask, which is collapsed into
+/// `[REDACTED]` markers once at the end. Chaining string-to-string passes would instead feed each
+/// pass the previous pass's output, where the `[REDACTED]` markers themselves would confuse the
+/// value scanners (e.g. `api_key=sk-x` -> token pass -> kv pass re-masking around the marker).
 pub fn redact(message: &str) -> String {
     if message.is_empty() {
         return message.to_string();
     }
-    let after_tokens = redact_token_prefixes(message);
-    let after_bearer = redact_bearer_values(&after_tokens);
-    redact_key_values(&after_bearer)
+    let chars: Vec<char> = message.chars().collect();
+    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let mut masked = vec![false; chars.len()];
+    mask_token_prefixes(&chars, &lower, &mut masked);
+    mask_bearer_values(&chars, &lower, &mut masked);
+    mask_key_values(&chars, &lower, &mut masked);
+    rebuild(&chars, &masked)
 }
 
 fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-fn redact_token_prefixes(message: &str) -> String {
-    let chars: Vec<char> = message.chars().collect();
-    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
-    let mut masked = vec![false; chars.len()];
+fn mark(masked: &mut [bool], start: usize, end: usize) {
+    for m in &mut masked[start..end] {
+        *m = true;
+    }
+}
 
+fn mask_token_prefixes(chars: &[char], lower: &[char], masked: &mut [bool]) {
     for prefix in TOKEN_PREFIXES {
         let p: Vec<char> = prefix.chars().map(|c| c.to_ascii_lowercase()).collect();
         let mut i = 0;
@@ -169,9 +180,7 @@ fn redact_token_prefixes(message: &str) -> String {
                     j += 1;
                 }
                 if j > i + p.len() {
-                    for m in &mut masked[i + p.len()..j] {
-                        *m = true;
-                    }
+                    mark(masked, i + p.len(), j);
                     i = j;
                     continue;
                 }
@@ -179,15 +188,10 @@ fn redact_token_prefixes(message: &str) -> String {
             i += 1;
         }
     }
-
-    rebuild(&chars, &masked)
 }
 
-fn redact_bearer_values(message: &str) -> String {
-    let chars: Vec<char> = message.chars().collect();
-    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
+fn mask_bearer_values(chars: &[char], lower: &[char], masked: &mut [bool]) {
     let needle: Vec<char> = "bearer".chars().collect();
-    let mut masked = vec![false; chars.len()];
     let mut i = 0;
 
     while i + needle.len() <= lower.len() {
@@ -208,24 +212,16 @@ fn redact_bearer_values(message: &str) -> String {
                 j += 1;
             }
             if j > start {
-                for m in &mut masked[start..j] {
-                    *m = true;
-                }
+                mark(masked, start, j);
                 i = j;
                 continue;
             }
         }
         i += 1;
     }
-
-    rebuild(&chars, &masked)
 }
 
-fn redact_key_values(message: &str) -> String {
-    let chars: Vec<char> = message.chars().collect();
-    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
-    let mut masked = vec![false; chars.len()];
-
+fn mask_key_values(chars: &[char], lower: &[char], masked: &mut [bool]) {
     for key in SECRET_KEYS {
         let k: Vec<char> = key.chars().collect();
         let mut i = 0;
@@ -285,9 +281,7 @@ fn redact_key_values(message: &str) -> String {
                     }
                 }
                 if j > start {
-                    for m in &mut masked[start..j] {
-                        *m = true;
-                    }
+                    mark(masked, start, j);
                 }
                 i = j.max(end);
                 continue;
@@ -295,8 +289,6 @@ fn redact_key_values(message: &str) -> String {
             i += 1;
         }
     }
-
-    rebuild(&chars, &masked)
 }
 
 /// Collapse every masked span into a single `[REDACTED]` marker per span.
@@ -379,6 +371,20 @@ mod tests {
         assert_eq!(
             redact("timeout_seconds=90 retries=3"),
             "timeout_seconds=90 retries=3"
+        );
+    }
+
+    #[test]
+    fn stacked_detectors_collapse_to_one_marker() {
+        // A kv-named secret whose value ALSO matches a token shape must come out as one marker,
+        // not as fragments left behind by the passes re-scanning each other's markers.
+        assert_eq!(
+            redact("spawn failed: api_key=sk-abcdef123456"),
+            "spawn failed: api_key=[REDACTED]"
+        );
+        assert_eq!(
+            redact("{\"apiKey\": \"ghp_abcdefghijklmnopqrstuvwxyz\"}"),
+            "{\"apiKey\": [REDACTED]}"
         );
     }
 

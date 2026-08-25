@@ -19,6 +19,7 @@ mod project_roots;
 mod state_load;
 mod watcher;
 mod app_log;
+mod audit;
 
 use project_roots::ProjectRootRegistry;
 

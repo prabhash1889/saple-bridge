@@ -207,7 +207,7 @@ fn run_acceptance_command_inner(
     // the registry afterwards so a stale cancel can never kill a later acceptance run.
     let cancel = cancel_token.as_deref().map(crate::review::register_cancel_token);
     let result =
-        crate::review::run_shell_with_timeout(&project_path, &command_str, ACCEPTANCE_TIMEOUT, cancel);
+        crate::review::run_shell_with_timeout("swarm", &project_path, &command_str, ACCEPTANCE_TIMEOUT, cancel);
     crate::review::take_cancel_token(cancel_token.as_deref().unwrap_or(""));
     let (output, stop) = result?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();

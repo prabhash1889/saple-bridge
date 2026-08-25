@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use serde::{Serialize, Deserialize};
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use crate::process_ext::CommandNoWindow;
@@ -449,11 +450,25 @@ pub async fn delete_path(
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<(), String> {
     let registry = registry.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || delete_path_inner(&registry, project_path, file_path))
+    // Phase 4 audit: deletion is a destructive privileged action - record the target, project
+    // root, outcome, and duration regardless of whether it succeeded.
+    let started = Instant::now();
+    let pp = project_path.clone();
+    let fp = file_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || delete_path_inner(&registry, pp, fp))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+        .and_then(std::convert::identity);
+    let audited = result.as_ref().map(|()| crate::audit::Outcome::ok()).map_err(|e| e.clone());
+    crate::audit::record(
+        "renderer",
+        &format!("delete_path {}", file_path),
+        Some(&project_path),
+        started,
+        &audited,
+    );
+    result
 }
-
 // --- Workspace text search ----------------------------------------------------
 
 const MAX_SEARCH_HITS: usize = 500;
