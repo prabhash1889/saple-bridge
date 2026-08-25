@@ -28,6 +28,12 @@ pub enum ErrorCode {
     DestructiveTarget,
     /// The path itself is unusable (unresolvable, vanished, not a directory).
     InvalidPath,
+    /// A PTY session id is not (or no longer) registered. The renderer retries transient
+    /// races against a still-spawning session on this code instead of matching message text.
+    PtyNotFound,
+    /// The target name is already taken and the operation refuses to clobber without an
+    /// explicit confirmation flag (memory snapshots, duplicate PTY ids).
+    AlreadyExists,
     /// Any failure that is not a policy decision (io, parsing, spawn failures).
     Internal,
 }
@@ -62,6 +68,14 @@ impl CodedError {
 
     pub fn invalid_path(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::InvalidPath, message)
+    }
+
+    pub fn pty_not_found(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::PtyNotFound, message)
+    }
+
+    pub fn already_exists(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::AlreadyExists, message)
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
@@ -109,6 +123,8 @@ mod tests {
             (ErrorCode::ProtectedPath, "protected_path"),
             (ErrorCode::DestructiveTarget, "destructive_target"),
             (ErrorCode::InvalidPath, "invalid_path"),
+            (ErrorCode::PtyNotFound, "pty_not_found"),
+            (ErrorCode::AlreadyExists, "already_exists"),
             (ErrorCode::Internal, "internal"),
         ];
         for (code, wire) in cases {
@@ -139,6 +155,12 @@ mod tests {
 
         let from_str: CodedError = "plain slice".into();
         assert_eq!(from_str.code, ErrorCode::Internal);
+    }
+
+    #[test]
+    fn lifecycle_helpers_carry_their_codes() {
+        assert_eq!(CodedError::pty_not_found("gone").code, ErrorCode::PtyNotFound);
+        assert_eq!(CodedError::already_exists("taken").code, ErrorCode::AlreadyExists);
     }
 
     #[test]
