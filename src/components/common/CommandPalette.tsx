@@ -17,6 +17,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
 import { useFocusTrap } from '../../lib/useFocusTrap';
 import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
+import { providerKeychainService } from '../../lib/providerFacts';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -182,7 +183,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     if (!currentProjectPath) return;
 
     const provider = task.agentConfig?.provider || 'codex';
-    const isReady = await invoke<boolean>('has_api_key', { service: `saple_provider_${provider}_api_key` })
+    const isReady = await invoke<boolean>('has_api_key', { service: providerKeychainService(provider) })
       .catch(() => false);
 
     if (!isReady) {
@@ -228,7 +229,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     }
     const cfg = useProjectStore.getState().workspaceConfig;
     const provider = (cfg?.defaultProvider || 'claude') as AiProvider;
-    const isReady = await invoke<boolean>('has_api_key', { service: `saple_provider_${provider}_api_key` })
+    const isReady = await invoke<boolean>('has_api_key', { service: providerKeychainService(provider) })
       .catch(() => false);
     if (!isReady) {
       error(`Provider "${provider}" is not authenticated. Configure it in Settings.`);

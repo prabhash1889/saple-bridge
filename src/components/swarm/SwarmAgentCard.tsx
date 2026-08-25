@@ -1,7 +1,7 @@
 import React, { memo, useState } from 'react';
 import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft, XCircle, Info } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
-import { isHeadlessProvider } from '../../types/provider';
+import { isHeadlessProvider } from '../../lib/providerFacts';
 import type { AgentOutcome } from '../../types/agent';
 import { swarmStatusColor } from '../../lib/swarmStatus';
 import { ElapsedTime } from './ElapsedTime';

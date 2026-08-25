@@ -10,7 +10,7 @@ import { useConfirmStore } from '../../stores/confirmStore';
 import { readRunOutcome } from '../../lib/controlPlane';
 import { subscribeSwarmEvents } from '../../lib/swarmEvents';
 import type { AgentOutcome } from '../../types/agent';
-import { isHeadlessProvider } from '../../types/provider';
+import { isHeadlessProvider } from '../../lib/providerFacts';
 import { swarmStatusColor, SWARM_STATUS_LEGEND } from '../../lib/swarmStatus';
 import { SwarmGraph } from './SwarmGraph';
 import { SwarmAgentCard, AgentHandoff } from './SwarmAgentCard';

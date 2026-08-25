@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AgentProvider } from '../types/provider';
-import { PROVIDER_DEFAULT_MODEL } from '../components/swarm/wizard/providerMeta';
+import {
+  PROVIDER_CLI_COMMAND,
+  PROVIDER_DEFAULT_MODEL,
+  providerKeychainService,
+} from '../lib/providerFacts';
 
 interface ProviderEntry {
   provider: AgentProvider;
@@ -36,26 +40,20 @@ interface ProviderState {
   isReady: (provider: AgentProvider) => boolean;
 }
 
-const KEYCHAIN_SERVICE_PREFIX = 'saple_provider_';
-
-function keychainService(provider: AgentProvider): string {
-  return `${KEYCHAIN_SERVICE_PREFIX}${provider}_api_key`;
-}
-
 // `defaultModel` is sourced from PROVIDER_DEFAULT_MODEL (the single source of truth in
-// providerMeta) so model defaults aren't duplicated — and re-stamped stale — across stores.
+// providerFacts) so model defaults aren't duplicated - and re-stamped stale - across stores.
 const DEFAULT_PROVIDERS: ProviderEntry[] = [
-  { provider: 'codex', label: 'Codex', cliCommand: 'codex --version', defaultModel: PROVIDER_DEFAULT_MODEL.codex, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'claude', label: 'Claude', cliCommand: 'claude --version', defaultModel: PROVIDER_DEFAULT_MODEL.claude, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'gemini', label: 'Gemini', cliCommand: 'gemini --version', defaultModel: PROVIDER_DEFAULT_MODEL.gemini, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'openrouter', label: 'OpenRouter', cliCommand: '', defaultModel: PROVIDER_DEFAULT_MODEL.openrouter, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'opencode', label: 'OpenCode', cliCommand: 'opencode --version', defaultModel: PROVIDER_DEFAULT_MODEL.opencode, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'cursor', label: 'Cursor', cliCommand: 'cursor-agent --version', defaultModel: PROVIDER_DEFAULT_MODEL.cursor, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'droid', label: 'Droid', cliCommand: 'droid --version', defaultModel: PROVIDER_DEFAULT_MODEL.droid, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'copilot', label: 'Copilot', cliCommand: 'gh copilot --version', defaultModel: PROVIDER_DEFAULT_MODEL.copilot, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'pi', label: 'Pi', cliCommand: 'pi --version', defaultModel: PROVIDER_DEFAULT_MODEL.pi, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'grok', label: 'Grok', cliCommand: 'grok --version', defaultModel: PROVIDER_DEFAULT_MODEL.grok, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
-  { provider: 'custom', label: 'Custom', cliCommand: '', defaultModel: '', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'codex', label: 'Codex', cliCommand: PROVIDER_CLI_COMMAND.codex, defaultModel: PROVIDER_DEFAULT_MODEL.codex, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'claude', label: 'Claude', cliCommand: PROVIDER_CLI_COMMAND.claude, defaultModel: PROVIDER_DEFAULT_MODEL.claude, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'gemini', label: 'Gemini', cliCommand: PROVIDER_CLI_COMMAND.gemini, defaultModel: PROVIDER_DEFAULT_MODEL.gemini, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'openrouter', label: 'OpenRouter', cliCommand: PROVIDER_CLI_COMMAND.openrouter, defaultModel: PROVIDER_DEFAULT_MODEL.openrouter, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'opencode', label: 'OpenCode', cliCommand: PROVIDER_CLI_COMMAND.opencode, defaultModel: PROVIDER_DEFAULT_MODEL.opencode, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'cursor', label: 'Cursor', cliCommand: PROVIDER_CLI_COMMAND.cursor, defaultModel: PROVIDER_DEFAULT_MODEL.cursor, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'droid', label: 'Droid', cliCommand: PROVIDER_CLI_COMMAND.droid, defaultModel: PROVIDER_DEFAULT_MODEL.droid, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'copilot', label: 'Copilot', cliCommand: PROVIDER_CLI_COMMAND.copilot, defaultModel: PROVIDER_DEFAULT_MODEL.copilot, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'pi', label: 'Pi', cliCommand: PROVIDER_CLI_COMMAND.pi, defaultModel: PROVIDER_DEFAULT_MODEL.pi, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'grok', label: 'Grok', cliCommand: PROVIDER_CLI_COMMAND.grok, defaultModel: PROVIDER_DEFAULT_MODEL.grok, customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
+  { provider: 'custom', label: 'Custom', cliCommand: PROVIDER_CLI_COMMAND.custom, defaultModel: '', customModel: '', enabled: true, installed: null, version: null, authenticated: null, signedIn: null, error: null, checkedAt: null },
 ];
 
 // Currency token: overlapping refreshes (e.g. settings open + a save triggering another pass)
@@ -200,7 +198,7 @@ async function checkKeychain(provider: AgentProvider): Promise<boolean> {
   try {
     // Presence check only — the secret never crosses the IPC boundary.
     return await invoke<boolean>('has_api_key', {
-      service: keychainService(provider),
+      service: providerKeychainService(provider),
     });
   } catch {
     return false;
