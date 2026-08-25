@@ -17,6 +17,34 @@ body {
   user-select: none;
 }
 
+/* App chrome disables selection globally (above), but content surfaces the user
+   reads and copies from get selection back. Keep this list to read/copy
+   surfaces; interactive chrome (trees, tabs, toolbars) stays unselectable. */
+.md-preview,
+.md-preview pre,
+.md-preview code,
+.code-viewer-body,
+.code-content,
+.code-line,
+.diff-viewer,
+.diff-text,
+.diff-code-viewer-body,
+.split-diff-viewer,
+.split-diff-text,
+.error-banner-inline,
+.state-recovery-error,
+.state-recovery-path,
+.settings-log-body,
+.modal-container,
+.palette-dialog,
+.task-dialog-modal,
+.file-path-text,
+.file-search-group-path,
+.review-verify-file-path,
+.topbar-path-line {
+  user-select: text;
+}
+
 /* Scrollbars styling */
 ::-webkit-scrollbar {
   width: 6px;
