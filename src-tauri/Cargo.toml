@@ -71,7 +71,7 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 # PTY process-tree cleanup: each shell is placed in a Job Object so closing a pane kills the
 # AI CLI (and its children), not just powershell.exe. See `proc_tree` in src/pty.rs.
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
