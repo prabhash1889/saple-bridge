@@ -555,7 +555,8 @@ export const FileTree: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      file.isDir ? toggleExpanded(file.path) : handleFileClick(file.path);
+                      if (file.isDir) toggleExpanded(file.path);
+                      else handleFileClick(file.path);
                     }
                   }}
                 >
