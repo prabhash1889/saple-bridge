@@ -18,6 +18,7 @@ export interface WorkspaceConfig {
   maxParallelAgents: number;
   enableEditMode: boolean;
   verificationPresets: string[];
+  missionsEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }

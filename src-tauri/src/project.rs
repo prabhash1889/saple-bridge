@@ -31,6 +31,11 @@ pub struct WorkspaceConfig {
     /// `default` keeps configs written before this field existed deserializable.
     #[serde(default)]
     pub verification_presets: Vec<String>,
+    /// Feature flag for the Missions orchestration room (default off). Gates the room and
+    /// all mission Tauri commands once Phase M1 ships; until then nothing consumes it.
+    /// Default-off keeps configs written before this field existed deserializable.
+    #[serde(default)]
+    pub missions_enabled: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -217,6 +222,7 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
             max_parallel_agents: 12,
             enable_edit_mode: true,
             verification_presets: Vec::new(),
+            missions_enabled: false,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -628,6 +634,7 @@ mod tests {
             workspace_id: "w".into(), workspace_name: "w".into(), memory_mode: "saple".into(),
             default_provider: "codex".into(), default_model_by_provider: HashMap::new(),
             max_parallel_agents: 1, enable_edit_mode: true, verification_presets: vec![],
+            missions_enabled: false,
             created_at: String::new(), updated_at: String::new(),
         };
         let all_cases = |registry: &ProjectRootRegistry, path: String| -> Vec<(&'static str, Result<(), CodedError>)> {
@@ -673,6 +680,27 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&sibling);
+    }
+
+    #[test]
+    fn workspace_config_missions_flag_defaults_off_and_round_trips() {
+        // Config written before the flag existed must parse with the flag off.
+        let legacy = serde_json::json!({
+            "workspaceId": "w", "workspaceName": "w", "memoryMode": "saple",
+            "defaultProvider": "codex", "defaultModelByProvider": {},
+            "maxParallelAgents": 1, "enableEditMode": true, "verificationPresets": [],
+            "createdAt": "", "updatedAt": ""
+        });
+        let config: WorkspaceConfig = serde_json::from_value(legacy).unwrap();
+        assert!(!config.missions_enabled);
+
+        // Explicitly on survives a serialize/deserialize round trip.
+        let mut config = config;
+        config.missions_enabled = true;
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["missionsEnabled"], serde_json::json!(true));
+        let reparsed: WorkspaceConfig = serde_json::from_value(value).unwrap();
+        assert!(reparsed.missions_enabled);
     }
 
     #[test]
