@@ -271,12 +271,12 @@ export const KanbanBoard: React.FC = () => {
   }
 
   return (
-    <div style={boardContainerStyle}>
+    <div className="kanban-board">
       {/* Board Header */}
-      <div style={headerStyle}>
+      <div className="kanban-board-header">
         <div>
-          <h2 style={titleStyle}>Saple Board</h2>
-          <p style={subtitleStyle}>Workspace: <strong>{currentProjectName}</strong></p>
+          <h2 className="kanban-board-title">Saple Board</h2>
+          <p className="kanban-board-subtitle">Workspace: <strong>{currentProjectName}</strong></p>
         </div>
         <button onClick={handleCreateTask} className="primary" style={addBtnStyle}>
           <Plus size={16} />
@@ -285,7 +285,7 @@ export const KanbanBoard: React.FC = () => {
       </div>
 
       {/* Filter Toolbar */}
-      <div style={filterToolbarStyle}>
+      <div className="kanban-board-toolbar">
         <input
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
@@ -366,7 +366,7 @@ export const KanbanBoard: React.FC = () => {
       {loading ? (
         <div style={loadingStyle}>Loading task board state...</div>
       ) : (
-        <div style={columnsContainerStyle}>
+        <div className="kanban-columns">
           {COLUMNS.map(col => (
             <KanbanColumn
               key={col.id}
@@ -403,50 +403,10 @@ export const KanbanBoard: React.FC = () => {
 
 /* --- Inline CSS Styles --- */
 
-const boardContainerStyle: React.CSSProperties = {
-  height: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-  padding: '24px',
-  backgroundColor: 'var(--bg-app)',
-  overflow: 'hidden',
-};
-
-const headerStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: '16px',
-  flexShrink: 0,
-};
-
-const titleStyle: React.CSSProperties = {
-  fontSize: '20px',
-  fontWeight: 700,
-  color: 'var(--text-primary)',
-  letterSpacing: '-0.02em',
-};
-
-const subtitleStyle: React.CSSProperties = {
-  fontSize: '12px',
-  color: 'var(--text-secondary)',
-  marginTop: '2px',
-};
-
 const addBtnStyle: React.CSSProperties = {
   height: '32px',
   fontSize: '13px',
   padding: '6px 14px',
-};
-
-const filterToolbarStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '16px',
-  marginBottom: '20px',
-  flexWrap: 'wrap',
-  flexShrink: 0,
 };
 
 const searchInputStyle: React.CSSProperties = {
@@ -491,17 +451,6 @@ const loadingStyle: React.CSSProperties = {
   justifyContent: 'center',
   fontSize: '14px',
   color: 'var(--text-secondary)',
-};
-
-const columnsContainerStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: '16px',
-  flex: 1,
-  overflowX: 'auto',
-  overflowY: 'hidden',
-  height: '100%',
-  alignItems: 'flex-start',
-  paddingBottom: '8px',
 };
 
 const emptyContainerStyle: React.CSSProperties = {

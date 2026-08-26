@@ -626,6 +626,14 @@
   color: var(--text-secondary);
 }
 
+/* Shared narrow-window pass (breakpoints: 1100 / 860 / 680). */
+@media (max-width: 680px) {
+  .settings-session-grid,
+  .mcp-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .settings-mono {
   font-family: var(--font-mono);
 }

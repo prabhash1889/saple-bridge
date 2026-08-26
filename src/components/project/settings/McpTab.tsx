@@ -26,7 +26,7 @@ const mcpToolsListStyle: React.CSSProperties = {
   maxHeight: '240px',
   overflowY: 'auto',
   display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
   gap: '10px',
   padding: '12px',
   backgroundColor: 'var(--bg-app)',

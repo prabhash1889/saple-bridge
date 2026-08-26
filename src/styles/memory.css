@@ -55,3 +55,17 @@
   color: var(--text-muted);
   margin-bottom: 16px;
 }
+
+/* Shared narrow-window pass (breakpoints: 1100 / 860 / 680). The inline
+   grid-template-columns from the resizable layout wins over plain rules,
+   hence !important; the splitter is meaningless once stacked. */
+@media (max-width: 860px) {
+  .resizable-memory-layout {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: minmax(180px, 42%) minmax(0, 1fr);
+  }
+
+  .resizable-memory-layout .pane-splitter {
+    display: none;
+  }
+}
