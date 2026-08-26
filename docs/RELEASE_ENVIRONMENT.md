@@ -23,3 +23,18 @@ closed while no pin is recorded. To rotate the pin, review the new saple-mcp com
 
 - the `SAPLE_MCP_SHA` repository variable,
 - `SAPLE_MCP_PINNED_SHA` in `scripts/prepare-sidecar.mjs`.
+
+## Artifact verification
+
+Every release leg re-downloads its own installers from the draft release and then publishes
+three kinds of verification assets alongside them:
+
+| Asset | What it proves |
+| --- | --- |
+| `SHA256SUMS-windows.txt` / `-macos.txt` / `-linux.txt` | SHA-256 of every installer, computed from the uploaded bytes (not the build directory) |
+| `build-provenance-<os>.intoto.jsonl` | SLSA v1 provenance attestation, keyless-signed via Sigstore; verify with `gh attestation verify <artifact> -R prabhash1889/saple-bridge` |
+
+Users can check a download with `sha256sum -c SHA256SUMS-<os>.txt`; anyone can verify the
+provenance with `gh attestation verify`. The updater signature (`latest.json` + `.sig`
+files) remains the primary integrity channel for auto-updates; these assets cover manual
+downloads.

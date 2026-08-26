@@ -92,13 +92,6 @@ function App() {
   // its events have a consumer.
   useEffect(() => startTerminalSwarmBridge(), []);
 
-  // Cold-start validation: every persisted workspace path (active, open, recents) is checked
-  // once so moved/deleted folders surface with relocate/remove actions instead of failing
-  // silently when opened.
-  useEffect(() => {
-    void useProjectStore.getState().validateStoredPaths();
-  }, []);
-
   // Confirm before quitting while agents are still working. The native close request is
   // cancelled and replaced by the shared confirm dialog; confirming destroys the window
   // (bypassing this handler) after the user has explicitly accepted losing the agents.

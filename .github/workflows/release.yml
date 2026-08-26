@@ -12,8 +12,11 @@ on:
       - 'v*'
 
 # The release job needs to create the GitHub release and upload the installer + latest.json.
+# id-token is required by attest-build-provenance for keyless Sigstore signing of the
+# build-provenance attestations uploaded alongside the installers.
 permissions:
   contents: write
+  id-token: write
 
 # One release at a time, never cancelled: two tags pushed close together queue instead of racing
 # for the same draft release / latest.json.
@@ -36,6 +39,7 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
       # Two sibling checkouts: prepare-sidecar.mjs builds ../saple-mcp relative to the bridge root,
       # so the layout on disk must be <workspace>/saple-bridge and <workspace>/saple-mcp.
@@ -63,7 +67,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 20.19
           cache: npm
           cache-dependency-path: saple-bridge/package-lock.json
 
@@ -114,3 +118,61 @@ jobs:
           releaseName: 'Saple Bridge ${{ github.ref_name }}'
           releaseDraft: true
           args: --config src-tauri/tauri.release.conf.json
+
+      # Post-build verification chain for everything this leg produced:
+      #   1. pull the leg's installers back down from the draft release (what users get, not
+      #      what was on disk at build time - proves the uploaded bytes are the shipped bytes)
+      #   2. publish a per-platform SHA256SUMS file as a release asset
+      #   3. generate a SLSA build-provenance attestation (keyless Sigstore) and upload it
+      #
+      # Filenames are platform-suffixed because all three legs upload into the same draft.
+      - name: Collect built artifacts from draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.ref_name }}"
+          case "${{ matrix.os }}" in
+            windows-*) sums=windows; exts='exe|msi|zip' ;;
+            macos-*)   sums=macos;   exts='dmg|tar.gz|sig' ;;
+            ubuntu-*)  sums=linux;   exts='deb|rpm|AppImage' ;;
+          esac
+          # Download every draft asset once, then filter locally instead of passing
+          # per-platform globs to gh: a glob that matches nothing aborts the step and
+          # would red-X a finished build over a renamed artifact.
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir downloaded --clobber
+          mkdir -p artifacts
+          found=0
+          for f in downloaded/*; do
+            base=$(basename "$f")
+            if [[ "$base" =~ \.(${exts})$ ]]; then
+              cp "$f" artifacts/
+              found=1
+            fi
+          done
+          if [[ "$found" -ne 1 ]]; then
+            echo "::error::No ${sums} artifacts found in draft release $tag"
+            ls downloaded
+            exit 1
+          fi
+          (cd artifacts && sha256sum -- *) > "SHA256SUMS-$sums.txt"
+          cat "SHA256SUMS-$sums.txt"
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: artifacts/*
+
+      - name: Upload checksums and provenance to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Rename the attestation bundle per-platform: all legs upload into one draft
+          # release, and identical asset names would silently clobber each other.
+          platform=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+          bundle="build-provenance-${platform}.intoto.jsonl"
+          cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
+          gh release upload "${{ github.ref_name }}" SHA256SUMS-*.txt "$bundle" \
+            --clobber --repo "$GITHUB_REPOSITORY"

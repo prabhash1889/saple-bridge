@@ -1,6 +1,6 @@
 [package]
 name = "saple-bridge"
-version = "1.0.33"
+version = "1.0.34"
 description = "Saple Bridge — local-first agentic development workspace"
 authors = ["Saple"]
 edition = "2021"
