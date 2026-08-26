@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::SystemTime;
 use serde::{Serialize, Deserialize};
 use crate::error_code::CodedError;
 use crate::memory_layout;
@@ -184,7 +185,6 @@ fn yaml_unquote(s: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
 pub struct ParsedMemory {
     pub id: String,
     pub category: String,
@@ -192,9 +192,77 @@ pub struct ParsedMemory {
     pub aliases: Vec<String>,
     pub title: String,
     pub created: Option<String>,
+    #[allow(dead_code)]
     pub updated: Option<String>,
     pub unknown_frontmatter: HashMap<String, String>,
     pub body: String,
+}
+
+/// Everything the note walkers need from one markdown file, parsed once and shared.
+/// Cached per absolute path keyed on the file's mtime, so a full-vault walk parses
+/// each file at most once between edits (including external ones).
+struct CachedNote {
+    content: String,
+    parsed: ParsedMemory,
+    wikilinks: Vec<String>,
+}
+
+fn note_cache() -> MutexGuard<'static, HashMap<PathBuf, (SystemTime, Arc<CachedNote>)>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (SystemTime, Arc<CachedNote>)>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn cached_note(path: &Path) -> Option<Arc<CachedNote>> {
+    let mtime = file_mtime(path)?;
+    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    if let Some((cached_mtime, note)) = note_cache().get(&key) {
+        if *cached_mtime == mtime {
+            return Some(note.clone());
+        }
+    }
+
+    let content = fs::read_to_string(path).ok()?;
+    // The parser only uses the path's file stem (as the id fallback), so the bare
+    // file name is a faithful parse key for every caller regardless of walk root.
+    let parse_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let parsed = parse_memory_file(&content, &parse_name);
+    let wikilinks = extract_wikilinks(&parsed.body);
+    let note = Arc::new(CachedNote { content, parsed, wikilinks });
+    note_cache().insert(key, (mtime, note.clone()));
+    Some(note)
+}
+
+fn node_from_cached(parsed: &ParsedMemory, relative_path: &str) -> MemoryNode {
+    MemoryNode {
+        id: parsed.id.clone(),
+        title: parsed.title.clone(),
+        category: parsed.category.clone(),
+        tags: parsed.tags.clone(),
+        aliases: parsed.aliases.clone(),
+        file_path: relative_path.to_string(),
+    }
+}
+
+/// Drop one note's cached parse after an in-place write. Callers that rewrite many
+/// files (snapshot restore) should use [`clear_note_cache`] instead.
+fn invalidate_cached_note(path: &Path) {
+    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    note_cache().remove(&key);
+}
+
+fn clear_note_cache() {
+    note_cache().clear();
 }
 
 pub fn parse_memory_file(content: &str, relative_path: &str) -> ParsedMemory {
@@ -376,24 +444,6 @@ pub fn extract_wikilinks(body: &str) -> Vec<String> {
     wikilinks
 }
 
-pub fn parse_markdown_memory(content: &str, relative_path: &str) -> (MemoryNode, Vec<String>) {
-    let parsed = parse_memory_file(content, relative_path);
-
-    let wikilinks = extract_wikilinks(&parsed.body);
-
-    (
-        MemoryNode {
-            id: parsed.id,
-            title: parsed.title,
-            category: parsed.category,
-            tags: parsed.tags,
-            aliases: parsed.aliases,
-            file_path: relative_path.to_string(),
-        },
-        wikilinks
-    )
-}
-
 #[tauri::command]
 pub async fn get_memory_graph(
     project_path: String,
@@ -429,10 +479,10 @@ fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
                 if path.is_dir() {
                     walk_dir(&path, base_dir, nodes, pending_links, id_lookup)?;
                 } else if path.extension().is_some_and(|ext| ext == "md") {
-                    if let Ok(content) = fs::read_to_string(&path) {
+                    if let Some(cached) = cached_note(&path) {
                         let relative_path = path.strip_prefix(base_dir).unwrap_or(&path).to_string_lossy().to_string();
-                        let (node, links) = parse_markdown_memory(&content, &relative_path);
-                        
+                        let node = node_from_cached(&cached.parsed, &relative_path);
+
                         // Register in lookups
                         id_lookup.insert(node.id.clone(), node.id.clone());
                         let file_stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
@@ -442,7 +492,7 @@ fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
                             id_lookup.entry(alias.clone()).or_insert_with(|| node.id.clone());
                         }
 
-                        pending_links.push((node.id.clone(), links));
+                        pending_links.push((node.id.clone(), cached.wikilinks.clone()));
                         nodes.push(node);
                     }
                 }
@@ -646,6 +696,8 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         }
     }
 
+    clear_note_cache();
+
     Ok(())
 }
 
@@ -705,6 +757,7 @@ pub(crate) fn delete_memory_file_inner(project_path: String, file_path: String) 
             if !canonical_target.starts_with(&canonical_base) {
                 return Err("Access denied: path is outside the memory directory".to_string());
             }
+            invalidate_cached_note(&full_path);
             fs::remove_file(full_path).map_err(|e| e.to_string())?;
         }
     }
@@ -866,6 +919,7 @@ pub(crate) fn save_memory_node_inner(
             }
         }
         crate::fs_lock::atomic_write(&full_path, full_content.as_bytes())?;
+        invalidate_cached_note(&full_path);
     }
 
     if let Some(old_rel) = old_relative_path {
@@ -879,6 +933,7 @@ pub(crate) fn save_memory_node_inner(
             for dir in &write_dirs {
                 let old_path = dir.join(&old_rel);
                 if old_path.exists() {
+                    invalidate_cached_note(&old_path);
                     let _ = fs::remove_file(old_path);
                 }
             }
@@ -906,11 +961,10 @@ fn find_note_file_inner(memory_dir: &Path, id: &str) -> Option<(PathBuf, MemoryN
                             return Some(res);
                         }
                     } else if path.extension().is_some_and(|ext| ext == "md") {
-                        if let Ok(content) = fs::read_to_string(&path) {
+                        if let Some(cached) = cached_note(&path) {
                             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                            let (node, _) = parse_markdown_memory(&content, &filename);
-                            if node.id == id {
-                                return Some((path, node, content));
+                            if cached.parsed.id == id {
+                                return Some((path, node_from_cached(&cached.parsed, &filename), cached.content.clone()));
                             }
                         }
                     }
@@ -994,11 +1048,9 @@ fn collect_notes(dir: &Path, base: &Path, out: &mut Vec<(MemoryNode, String, Vec
             if path.is_dir() {
                 collect_notes(&path, base, out);
             } else if path.extension().is_some_and(|e| e == "md") {
-                if let Ok(content) = fs::read_to_string(&path) {
+                if let Some(cached) = cached_note(&path) {
                     let rel = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
-                    let (node, links) = parse_markdown_memory(&content, &rel);
-                    let parsed = parse_memory_file(&content, &rel);
-                    out.push((node, parsed.body, links));
+                    out.push((node_from_cached(&cached.parsed, &rel), cached.parsed.body.clone(), cached.wikilinks.clone()));
                 }
             }
         }
@@ -1537,8 +1589,7 @@ Inline `[[inline-code]]` should not count either.
     }
 
     #[test]
-    fn failed_snapshot_leaves_existing_snapshot_and_no_staging_dirs_behind() {
-        let (note_path, project, project_str) = setup_restore_project("failedsnap");
+    fn failed_snapshot_leaves_existing_snapshot_and_no_staging_dirs_behind() {        let (note_path, project, project_str) = setup_restore_project("failedsnap");
 
         fs::write(&note_path, "good v1").unwrap();
         create_memory_snapshot_inner(project_str.clone(), "target".to_string(), false).unwrap();
@@ -1592,5 +1643,91 @@ Inline `[[inline-code]]` should not count either.
         assert!(strays.is_empty(), "staging dirs must be cleaned up: {:?}", strays);
 
         let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn note_cache_hits_until_mtime_changes() {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-mem-cache-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let note = dir.join("note.md");
+        fs::write(&note, "---\nid: cache-test\n---\n# Disk Version\nbody from disk\n").unwrap();
+
+        // Cold: parsed from disk.
+        let first = cached_note(&note).unwrap();
+        assert_eq!(first.parsed.id, "cache-test");
+        assert!(first.parsed.body.contains("body from disk"));
+
+        // Hit: an entry planted with the live mtime is served without re-reading the
+        // file, even though its content differs from what is on disk.
+        let key = note.canonicalize().unwrap();
+        let plant_sentinel = |mtime| {
+            note_cache().insert(
+                key.clone(),
+                (
+                    mtime,
+                    Arc::new(CachedNote {
+                        content: String::new(),
+                        parsed: parse_memory_file("---\nid: sentinel\n---\n# Sentinel\n", "note.md"),
+                        wikilinks: vec![],
+                    }),
+                ),
+            );
+        };
+        plant_sentinel(file_mtime(&note).unwrap());
+        assert_eq!(cached_note(&note).unwrap().parsed.id, "sentinel");
+
+        // Miss: rewriting the file bumps its mtime and repopulates from disk.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(&note, "---\nid: cache-test\n---\n# Rewritten\nfresh body\n").unwrap();
+        let refreshed = cached_note(&note).unwrap();
+        assert!(refreshed.parsed.body.contains("fresh body"), "stale mtime entry must not be served");
+
+        // Explicit invalidation drops even a fresh-looking planted entry.
+        plant_sentinel(file_mtime(&note).unwrap());
+        invalidate_cached_note(&note);
+        assert!(cached_note(&note).unwrap().parsed.body.contains("fresh body"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_refreshes_the_parse_cache_for_walkers() {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-mem-cache-save-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(dir.join(".saple")).unwrap();
+        let project = dir.canonicalize().unwrap();
+        let project_str = project.to_string_lossy().to_string();
+
+        let save = |body: &str| {
+            save_memory_node_inner(
+                project_str.clone(),
+                "cached-note".to_string(),
+                "Cached Note".to_string(),
+                "general".to_string(),
+                vec![],
+                vec![],
+                format!("# Cached Note\n{}", body),
+            )
+            .unwrap()
+        };
+
+        save("version one");
+        let mut notes = Vec::new();
+        collect_notes(&project.join(".saple/memory"), &project.join(".saple/memory"), &mut notes);
+        assert!(notes[0].1.contains("version one"));
+
+        save("version two");
+        let mut notes = Vec::new();
+        collect_notes(&project.join(".saple/memory"), &project.join(".saple/memory"), &mut notes);
+        assert!(notes[0].1.contains("version two"), "walker must see fresh body after save");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
