@@ -1009,31 +1009,32 @@ mod tests {
         assert_eq!(stop, ShellStop::TimedOut);
         let _ = output;
 
-        // Give the OS a moment, then confirm the descendant is dead by polling its pid file.
+        // Confirm the descendant is dead by polling its pid file. Budget is generous
+        // because each liveness probe spawns a fresh PowerShell on Windows and CI runners
+        // run this alongside every other test in the binary.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut saw_pid = false;
         let mut alive = true;
-        for _ in 0..20 {
-            if !pid_file.exists() {
-                std::thread::sleep(Duration::from_millis(200));
-                continue;
-            }
-            let pid_text = fs::read_to_string(&pid_file).unwrap_or_default();
-            let pid: u32 = match pid_text.trim().parse() {
-                Ok(p) => p,
-                Err(_) => {
-                    std::thread::sleep(Duration::from_millis(200));
-                    continue;
+        loop {
+            let recorded = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            saw_pid = saw_pid || recorded.is_some();
+            if let Some(pid) = recorded {
+                if !process_alive(pid) {
+                    alive = false;
+                    break;
                 }
-            };
-            if process_alive(pid) {
-                std::thread::sleep(Duration::from_millis(250));
-            } else {
-                alive = false;
+            }
+            if std::time::Instant::now() >= deadline {
                 break;
             }
+            std::thread::sleep(Duration::from_millis(250));
         }
         assert!(
             !alive,
-            "the descendant spawned by the timed-out shell must have been killed"
+            "the descendant spawned by the timed-out shell must have been killed (saw_pid={})",
+            saw_pid
         );
         let _ = fs::remove_dir_all(&dir);
     }
