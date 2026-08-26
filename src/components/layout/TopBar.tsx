@@ -11,6 +11,7 @@ const roomMeta: Record<ViewType, { title: string; context: string }> = {
   memory: { title: 'Memory', context: 'Local markdown graph and MCP-ready project knowledge.' },
   swarm: { title: 'Swarm Room', context: 'Coordinate multi-agent missions and handoffs.' },
   review: { title: 'Review Room', context: 'Human gate for diffs, test output, notes, and decisions.' },
+  activity: { title: 'Agent Activity', context: 'Per-agent session history, durations, and outcomes.' },
   editor: { title: 'Files', context: 'Inspect, read, edit workspace files, or open them in external editors.' },
   settings: { title: 'Settings', context: 'Workspace, providers, memory, and diagnostics.' },
 };
