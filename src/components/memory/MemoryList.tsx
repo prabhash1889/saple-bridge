@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, RefreshCw, Camera } from 'lucide-react';
 import { useMemoryStore, MemoryNode } from '../../stores/memoryStore';
+import { orderNodesByRank } from '../../stores/memoryStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useConfirmStore } from '../../stores/confirmStore';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -29,7 +30,7 @@ export const MemoryList: React.FC = () => {
   const loadSnapshots = useMemoryStore((state) => state.loadSnapshots);
   const takeSnapshot = useMemoryStore((state) => state.takeSnapshot);
   const restoreSnapshot = useMemoryStore((state) => state.restoreSnapshot);
-  const contentMatchIds = useMemoryStore((state) => state.contentMatchIds);
+  const contentHits = useMemoryStore((state) => state.contentHits);
   const searchContent = useMemoryStore((state) => state.searchContent);
 
   const [snapshotName, setSnapshotName] = useState('');
@@ -41,8 +42,8 @@ export const MemoryList: React.FC = () => {
     }
   }, [currentProjectPath, loadSnapshots]);
 
-  // Full-text pass (Rust, note bodies) behind a debounce; results widen the instant
-  // title/tag filter below via contentMatchIds.
+  // Full-text pass (Rust, ranked) behind a debounce; results widen the instant
+  // title/tag filter below via contentHits.
   useEffect(() => {
     if (!currentProjectPath) return;
     const timer = window.setTimeout(() => {
@@ -93,21 +94,22 @@ export const MemoryList: React.FC = () => {
   };
 
   // Filter nodes by search query and category. Title/id/category/tag matching is instant;
-  // contentMatchIds adds notes whose *body* matches (async full-text pass).
-  const filteredNodes = nodes.filter(node => {
+  // contentHits adds notes whose *body* matches (async ranked full-text pass).
+  const hitById = new Map(contentHits.map(hit => [hit.id, hit]));
+  const filteredNodes = orderNodesByRank(nodes.filter(node => {
     const matchesSearch =
       node.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       node.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       node.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
       node.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      contentMatchIds.includes(node.id);
-      
-    const matchesCategory = 
-      selectedCategory === 'all' || 
+      hitById.has(node.id);
+
+    const matchesCategory =
+      selectedCategory === 'all' ||
       node.category === selectedCategory;
 
     return matchesSearch && matchesCategory;
-  });
+  }), searchQuery.trim().length >= 2 ? contentHits : []);
 
   return (
     <div style={listContainerStyle}>
@@ -152,6 +154,9 @@ export const MemoryList: React.FC = () => {
                 <span style={itemTitleStyle}>{node.title}</span>
                 <span style={itemCategoryStyle(node.category)}>{node.category}</span>
               </span>
+              {hitById.has(node.id) && (
+                <span style={matchReasonStyle}>{hitById.get(node.id)!.matchReason}</span>
+              )}
               {node.tags.length > 0 && (
                 <span style={tagsContainerStyle}>
                   {node.tags.map(t => (
@@ -342,6 +347,13 @@ const tagsContainerStyle: React.CSSProperties = {
   display: 'flex',
   gap: '6px',
   flexWrap: 'wrap',
+};
+
+const matchReasonStyle: React.CSSProperties = {
+  fontSize: '9px',
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  color: 'var(--text-muted)',
 };
 
 const tagStyle: React.CSSProperties = {
