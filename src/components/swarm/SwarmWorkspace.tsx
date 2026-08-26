@@ -32,8 +32,15 @@ const TAIL_CHARS = 4000;
 const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => {
   const [tail, setTail] = useState('');
   const scrollRef = useRef<HTMLPreElement>(null);
+  // The room stays mounted while other rooms are shown; drop the per-frame output
+  // subscription while hidden and re-subscribe (with a fresh buffer snapshot) on return.
+  const roomActive = useProjectStore((state) => state.activeView) === 'swarm';
 
   useEffect(() => {
+    if (!roomActive) {
+      setTail('');
+      return;
+    }
     const { getBufferedOutput, subscribeOutput } = useTerminalStore.getState();
     let text = stripAnsi(getBufferedOutput(terminalId)).slice(-TAIL_CHARS);
     setTail(text);
@@ -41,7 +48,7 @@ const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => 
       text = (text + stripAnsi(event.data)).slice(-TAIL_CHARS);
       setTail(text);
     });
-  }, [terminalId]);
+  }, [terminalId, roomActive]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -57,6 +64,10 @@ const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => 
 
 export const SwarmWorkspace: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  // The room stays mounted in every view (App.tsx HEAVY_VIEWS); gate the room's subscriptions
+  // and polling on actually being visible so hidden rooms do no work. Re-entering re-runs each
+  // gated effect below, which re-subscribes and fires its immediate refresh.
+  const roomActive = useProjectStore((state) => state.activeView) === 'swarm';
   const swarmId = useSwarmStore((state) => state.swarmId);
   const mission = useSwarmStore((state) => state.mission);
   const status = useSwarmStore((state) => state.status);
@@ -101,10 +112,11 @@ export const SwarmWorkspace: React.FC = () => {
   const [pendingRequests, setPendingRequests] = useState<WorkerRequest[]>([]);
 
   useEffect(() => {
-    if (currentProjectPath) {
-      loadSwarmState(currentProjectPath);
-    }
-  }, [currentProjectPath, loadSwarmState]);
+    if (!roomActive || !currentProjectPath) return;
+    // Re-sync persisted swarm state on every room entry, not just first mount: agents may have
+    // advanced while the room was hidden.
+    loadSwarmState(currentProjectPath);
+  }, [roomActive, currentProjectPath, loadSwarmState]);
 
   // Set default selected agent once swarm starts
   useEffect(() => {
@@ -127,7 +139,7 @@ export const SwarmWorkspace: React.FC = () => {
   // the room is open, re-ingest whenever the Rust watcher reports the file changed (belt and
   // braces). Verdict intake is lenient here — only the reviewer-completion path may park a task.
   useEffect(() => {
-    if (!currentProjectPath || !swarmActive) return;
+    if (!roomActive || !currentProjectPath || !swarmActive) return;
     const unsubscribe = subscribeSwarmEvents((event) => {
       if (event.projectPath !== currentProjectPath) return; // drop away-project events
       if (event.category === 'plan') void ingestPlan(currentProjectPath);
@@ -136,8 +148,10 @@ export const SwarmWorkspace: React.FC = () => {
         if (match) void ingestVerdict(currentProjectPath, match[1]);
       }
     });
+    // Catch up on plan changes the watcher reported while the room was hidden.
+    void ingestPlan(currentProjectPath);
     return () => unsubscribe();
-  }, [currentProjectPath, swarmActive, ingestPlan, ingestVerdict]);
+  }, [roomActive, currentProjectPath, swarmActive, ingestPlan, ingestVerdict]);
 
   // Drop any in-progress mailbox draft when the inspected agent changes so a message
   // typed for one agent isn't accidentally sent to another.
@@ -187,7 +201,7 @@ export const SwarmWorkspace: React.FC = () => {
   // entry, then re-read only when the Rust swarm watcher reports that exact file changed - no poll.
   // Bridge reads it; agents never launch anything themselves.
   useEffect(() => {
-    if (!currentProjectPath || !swarmActive) {
+    if (!roomActive || !currentProjectPath || !swarmActive) {
       setPendingRequests([]);
       return;
     }
@@ -205,7 +219,7 @@ export const SwarmWorkspace: React.FC = () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [currentProjectPath, swarmActive, loadWorkerRequests]);
+  }, [roomActive, currentProjectPath, swarmActive, loadWorkerRequests]);
 
   // Estimated pane picture the operator sees before approving: each approved request adds one pane.
   const runningPaneCount = useMemo(
@@ -383,6 +397,7 @@ export const SwarmWorkspace: React.FC = () => {
   }, [fetchVisibleMailboxes]);
 
   useEffect(() => {
+    if (!roomActive) return;
     void fetchVisibleMailboxesRef.current();
     if (!currentProjectPath || polledAgentKey.length === 0) return;
 
@@ -397,8 +412,9 @@ export const SwarmWorkspace: React.FC = () => {
     return () => unsubscribe();
     // Only re-run when the actual set of polled agents (polledAgentKey), the set of polled
     // handoff pairs (polledHandoffKey), or the project changes — not on every render that
-    // leaves the polled sets identical.
-  }, [currentProjectPath, polledAgentKey, polledHandoffKey]);
+    // leaves the polled sets identical. roomActive re-runs it on room entry for an immediate
+    // refresh after the hidden gap.
+  }, [roomActive, currentProjectPath, polledAgentKey, polledHandoffKey]);
 
   // Resolved (content-present) handoffs grouped per agent, split by direction.
   const handoffsByAgent = useMemo(() => {
