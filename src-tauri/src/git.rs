@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::{Command, Output, Stdio};
 use std::fs;
 use std::sync::Arc;
@@ -11,6 +12,10 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_STATUS_FILES: usize = 500;
 const MAX_DIFF_BYTES: usize = 600_000;
 const MAX_UNTRACKED_BYTES: u64 = 1_000_000;
+// Untracked enrichment reads every candidate file to count lines. Cap both the number of
+// files enriched and the total bytes read so a huge untracked tree cannot stall status.
+const MAX_UNTRACKED_ENRICHED_FILES: usize = 50;
+const MAX_UNTRACKED_ENRICHED_TOTAL_BYTES: u64 = 4_000_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,44 +133,83 @@ pub fn git_status_inner(project_path: String) -> Result<Vec<GitFileStatus>, Stri
     if let Ok(out) = numstat_output {
         if out.status.success() {
             let numstat_str = String::from_utf8_lossy(&out.stdout);
+            // Path index over the status list: numstat lookup becomes O(1) per line
+            // instead of a linear scan of the whole file list.
+            let mut path_index: HashMap<String, usize> = HashMap::with_capacity(files.len());
+            for (i, f) in files.iter().enumerate() {
+                path_index.entry(f.path.clone()).or_insert(i);
+            }
             for line in numstat_str.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 3 {
                     let ins_str = parts[0];
                     let del_str = parts[1];
                     let path = parts[2..].join(" ");
-                    
+
                     let insertions = ins_str.parse::<usize>().ok();
                     let deletions = del_str.parse::<usize>().ok();
 
-                    if let Some(file) = files.iter_mut().find(|f| f.path == path) {
-                        file.insertions = insertions;
-                        file.deletions = deletions;
+                    if let Some(&i) = path_index.get(path.as_str()) {
+                        files[i].insertions = insertions;
+                        files[i].deletions = deletions;
                     }
                 }
             }
         }
     }
 
-    // Enrich untracked files line count as insertions
-    for file in &mut files {
-        if file.status == "untracked" {
-            if let Ok(full_path) = get_project_file_path(&project_path, &file.path) {
-                if full_path.metadata().map(|meta| meta.len() > MAX_UNTRACKED_BYTES).unwrap_or(true) {
-                    file.insertions = Some(0);
-                    file.deletions = Some(0);
-                    continue;
+    enrich_untracked_files(
+        &mut files,
+        &project_path,
+        MAX_UNTRACKED_ENRICHED_FILES,
+        MAX_UNTRACKED_ENRICHED_TOTAL_BYTES,
+    );
+
+    Ok(files)
+}
+
+/// Fill in line counts for untracked files, bounded by `max_files` entries and
+/// `max_total_bytes` read. Files beyond either cap keep their un-enriched values;
+/// individual oversized files are reported with zero lines without being read.
+fn enrich_untracked_files(
+    files: &mut [GitFileStatus],
+    project_path: &str,
+    max_files: usize,
+    max_total_bytes: u64,
+) {
+    let mut enriched = 0usize;
+    let mut total_bytes = 0u64;
+    for file in files.iter_mut() {
+        if file.status != "untracked" {
+            continue;
+        }
+        if enriched >= max_files || total_bytes >= max_total_bytes {
+            break;
+        }
+        if let Ok(full_path) = get_project_file_path(project_path, &file.path) {
+            match full_path.metadata() {
+                Ok(meta) => {
+                    if meta.len() > MAX_UNTRACKED_BYTES {
+                        // Individually oversized: report zero lines without a read.
+                        file.insertions = Some(0);
+                        file.deletions = Some(0);
+                    } else if total_bytes + meta.len() > max_total_bytes {
+                        // Aggregate budget exhausted: leave the rest un-enriched.
+                        break;
+                    } else if let Ok(content) = fs::read_to_string(&full_path) {
+                        file.insertions = Some(content.lines().count());
+                        file.deletions = Some(0);
+                        enriched += 1;
+                        total_bytes += meta.len();
+                    }
                 }
-                if let Ok(content) = fs::read_to_string(&full_path) {
-                    let lines_count = content.lines().count();
-                    file.insertions = Some(lines_count);
+                Err(_) => {
+                    file.insertions = Some(0);
                     file.deletions = Some(0);
                 }
             }
         }
     }
-
-    Ok(files)
 }
 
 pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<String, String> {
@@ -591,6 +635,61 @@ mod tests {
         assert_eq!(branches[2].name, "release-1.0");
     }
 
+    fn untracked(path: &str) -> GitFileStatus {
+        GitFileStatus {
+            path: path.to_string(),
+            status: "untracked".to_string(),
+            insertions: None,
+            deletions: None,
+            staged: false,
+        }
+    }
+
+    #[test]
+    fn untracked_enrichment_caps_by_file_count() {
+        let dir = std::env::temp_dir().join(format!("saple-git-untracked-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut files: Vec<GitFileStatus> = (0..4)
+            .map(|i| untracked(&format!("f{}.txt", i)))
+            .collect();
+        for i in 0..4 {
+            fs::write(dir.join(format!("f{}.txt", i)), "a\nb\nc\n").unwrap();
+        }
+
+        enrich_untracked_files(&mut files, &dir.to_string_lossy(), 2, u64::MAX);
+
+        let enriched: Vec<Option<usize>> = files.iter().map(|f| f.insertions).collect();
+        assert_eq!(enriched, vec![Some(3), Some(3), None, None], "only the first max_files entries are enriched");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn untracked_enrichment_caps_by_aggregate_bytes_and_marks_oversize_zero() {
+        let dir = std::env::temp_dir().join(format!("saple-git-untracked-bytes-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // big.txt exceeds the per-file limit (MAX_UNTRACKED_BYTES) -> reported zero
+        // without being read.
+        fs::write(dir.join("big.txt"), "x".repeat((MAX_UNTRACKED_BYTES + 1) as usize)).unwrap();
+        fs::write(dir.join("small.txt"), "line\n").unwrap();
+        fs::write(dir.join("tiny.txt"), "l\n").unwrap();
+
+        let mut files = vec![untracked("big.txt"), untracked("small.txt"), untracked("tiny.txt")];
+        // Budget of 6 bytes: big.txt is individually oversized (zeroed), small.txt (5 bytes)
+        // fits, tiny.txt (2 bytes) would exceed the aggregate budget and stays un-enriched.
+        enrich_untracked_files(&mut files, &dir.to_string_lossy(), 10, 6);
+
+        assert_eq!(files[0].insertions, Some(0), "oversized file is zeroed without a read");
+        assert_eq!(files[1].insertions, Some(1));
+        assert_eq!(files[2].insertions, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn rejects_option_like_branch_names() {
         let err = git_checkout_branch_inner(".".to_string(), "--force".to_string()).unwrap_err();
@@ -690,6 +789,44 @@ mod tests {
             !ensure_saple_git_excluded_inner(path).unwrap(),
             "second run must be a no-op (no duplicate lines)"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn numstat_enrichment_lands_on_the_right_paths() {
+        let dir = std::env::temp_dir().join(format!("saple-git-numstat-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+
+        // Two committed files, then diverging edits: modified, deleted, and one new file.
+        fs::write(dir.join("keep.txt"), "one\ntwo\nthree\n").unwrap();
+        fs::write(dir.join("gone.txt"), "one\ntwo\n").unwrap();
+        fs::write(dir.join("new.txt"), "fresh\nlines\nhere\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+
+        fs::write(dir.join("keep.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+        fs::remove_file(dir.join("gone.txt")).unwrap();
+
+        let status = git_status_inner(path.clone()).unwrap();
+
+        let keep = status.iter().find(|f| f.path == "keep.txt").expect("keep.txt in status");
+        assert_eq!(keep.insertions, Some(1));
+        assert_eq!(keep.deletions, Some(0));
+
+        let gone = status.iter().find(|f| f.path == "gone.txt").expect("gone.txt in status");
+        assert_eq!(gone.insertions, Some(0));
+        assert_eq!(gone.deletions, Some(2));
 
         let _ = fs::remove_dir_all(&dir);
     }
