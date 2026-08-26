@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { BookMarked, X } from 'lucide-react';
 import { Task, AgentConfig, useKanbanStore } from '../../stores/kanbanStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
@@ -7,6 +7,7 @@ import type { AgentProvider } from '../../types/provider';
 import { ModelCombobox } from '../common/ModelCombobox';
 import type { TaskPriority } from '../../types/task';
 import { useFocusTrap } from '../../lib/useFocusTrap';
+import { PromptPicker } from '../common/PromptPicker';
 
 interface TaskDialogProps {
   isOpen: boolean;
@@ -83,6 +84,7 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
   const [agentProvider, setAgentProvider] = useState<AgentProvider>('codex');
   const [agentModel, setAgentModel] = useState('default');
   const [agentPrompt, setAgentPrompt] = useState(ROLE_PROMPTS.custom.prompt);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, isOpen, onClose);
 
@@ -394,11 +396,22 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
 
             {/* System Prompt */}
             <div className="task-dialog-field">
-              <label>Agent Instructions (System Prompt)</label>
-              <textarea 
+              <div style={promptLabelRowStyle}>
+                <label>Agent Instructions (System Prompt)</label>
+                <button
+                  type="button"
+                  onClick={() => setPromptLibraryOpen(true)}
+                  style={promptLibraryBtnStyle}
+                  title="Insert prompt from library"
+                  aria-label="Insert prompt from library"
+                >
+                  <BookMarked size={12} /> Prompt Library
+                </button>
+              </div>
+              <textarea
                 rows={3}
-                value={agentPrompt} 
-                onChange={e => setAgentPrompt(e.target.value)} 
+                value={agentPrompt}
+                onChange={e => setAgentPrompt(e.target.value)}
                 placeholder="Enter system prompts for agent..."
               />
             </div>
@@ -414,7 +427,36 @@ export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToE
             </button>
           </div>
         </form>
+
+        {promptLibraryOpen && (
+          <PromptPicker
+            title="Insert Prompt"
+            onSelect={setAgentPrompt}
+            onClose={() => setPromptLibraryOpen(false)}
+          />
+        )}
       </div>
     </div>
   );
+};
+
+const promptLabelRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+};
+
+const promptLibraryBtnStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '4px',
+  height: '22px',
+  padding: '0 8px',
+  fontSize: '11px',
+  background: 'transparent',
+  border: '1px solid var(--border)',
+  color: 'var(--text-secondary)',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
 };

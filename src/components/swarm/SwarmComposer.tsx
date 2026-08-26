@@ -1,10 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { Rocket, X, AlertCircle } from 'lucide-react';
+import { BookMarked, Rocket, X, AlertCircle } from 'lucide-react';
 import type { AgentProvider } from '../../types/provider';
 import type { AutonomyMode } from '../../types/swarmPlan';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { PROVIDER_LABELS, PROVIDER_ORDER } from './wizard/providerMeta';
 import { useFocusTrap } from '../../lib/useFocusTrap';
+import { PromptPicker } from '../common/PromptPicker';
 
 interface SwarmComposerProps {
   projectPath: string | null;
@@ -29,6 +30,7 @@ export const SwarmComposer: React.FC<SwarmComposerProps> = ({ projectPath, onClo
   const [maxWaves, setMaxWaves] = useState(3);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, true, onClose);
 
@@ -72,17 +74,29 @@ export const SwarmComposer: React.FC<SwarmComposerProps> = ({ projectPath, onClo
             <div style={errorBannerStyle}><AlertCircle size={14} /><span>{error}</span></div>
           )}
 
-          <label style={fieldStyle}>
-            <span style={labelStyle}>Mission</span>
+          <div style={fieldStyle}>
+            <span style={{ ...labelStyle, ...missionLabelRowStyle }}>
+              Mission
+              <button
+                type="button"
+                onClick={() => setPromptLibraryOpen(true)}
+                style={promptLibraryBtnStyle}
+                title="Insert prompt from library"
+                aria-label="Insert prompt from library"
+              >
+                <BookMarked size={12} /> Prompt Library
+              </button>
+            </span>
             <textarea
               value={mission}
               onChange={(e) => setMission(e.target.value)}
               placeholder="Describe what the swarm should accomplish. The coordinator plans the tasks."
               rows={5}
               style={textareaStyle}
+              aria-label="Mission"
               autoFocus
             />
-          </label>
+          </div>
 
           <label style={fieldStyle}>
             <span style={labelStyle}>Coordinator CLI</span>
@@ -147,11 +161,43 @@ export const SwarmComposer: React.FC<SwarmComposerProps> = ({ projectPath, onClo
           </button>
         </div>
       </div>
+
+      {promptLibraryOpen && (
+        <PromptPicker
+          title="Insert Prompt"
+          onSelect={setMission}
+          onClose={() => setPromptLibraryOpen(false)}
+        />
+      )}
     </div>
   );
 };
 
 /* --- styles --- */
+
+const missionLabelRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+};
+
+const promptLibraryBtnStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '4px',
+  height: '22px',
+  padding: '0 8px',
+  fontSize: '11px',
+  fontWeight: 500,
+  textTransform: 'none',
+  letterSpacing: 'normal',
+  background: 'transparent',
+  border: '1px solid var(--border)',
+  color: 'var(--text-secondary)',
+  borderRadius: 'var(--radius-sm)',
+  cursor: 'pointer',
+};
 
 const containerStyle: React.CSSProperties = {
   display: 'flex',
