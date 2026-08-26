@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // projectStore pulls in Tauri IPC at import time via its actions; none of the reducers under
 // test (moveWorkspace / renameWorkspace) call it, so a no-op mock is enough to load the module.
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// The path-validation tests below rewire this mock per test.
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
 import { useProjectStore, type WorkspaceInstance } from './projectStore';
 
@@ -45,5 +47,93 @@ describe('projectStore workspace ordering + rename', () => {
     expect(useProjectStore.getState().currentProjectName).toBe('Active');
     useProjectStore.getState().renameWorkspace('b', 'Other');
     expect(useProjectStore.getState().currentProjectName).toBe('Active');
+  });
+});
+
+describe('projectStore.removeRecentProject', () => {
+  it('drops the path from recents and history but keeps open instances', () => {
+    useProjectStore.setState({
+      recentProjects: ['/p/a', '/p/b'],
+      workspaceHistory: [
+        { path: '/p/a', name: 'a', openedAt: 1 },
+        { path: '/p/b', name: 'b', openedAt: 2 },
+      ],
+      openWorkspaces: [ws('a')],
+      currentProjectPath: '/p/a',
+    });
+
+    useProjectStore.getState().removeRecentProject('/p/b');
+
+    const state = useProjectStore.getState();
+    expect(state.recentProjects).toEqual(['/p/a']);
+    expect(state.workspaceHistory.map((e) => e.path)).toEqual(['/p/a']);
+    // Open instances and the active workspace are untouched by a recents removal.
+    expect(state.openWorkspaces.map((w) => w.id)).toEqual(['a']);
+    expect(state.currentProjectPath).toBe('/p/a');
+  });
+
+  it('removing the last occurrence leaves the lists empty without touching workspaces', () => {
+    useProjectStore.setState({
+      recentProjects: ['/p/solo'],
+      workspaceHistory: [{ path: '/p/solo', name: 'solo', openedAt: 1 }],
+      openWorkspaces: [],
+      currentProjectPath: null,
+    });
+
+    useProjectStore.getState().removeRecentProject('/p/solo');
+
+    const state = useProjectStore.getState();
+    expect(state.recentProjects).toEqual([]);
+    expect(state.workspaceHistory).toEqual([]);
+  });
+});
+
+describe('projectStore stale path validation + relocation', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useProjectStore.setState({
+      currentProjectPath: null,
+      currentWorkspaceId: null,
+      openWorkspaces: [],
+      recentProjects: [],
+      workspaceHistory: [],
+      stalePaths: [],
+    });
+  });
+
+  it('flags persisted paths that no longer exist', async () => {
+    useProjectStore.setState({
+      recentProjects: ['/gone'],
+      workspaceHistory: [{ path: '/here', name: 'here', openedAt: 1 }],
+    });
+    // checkPathExists resolves through get_workspace_summary.
+    invokeMock.mockImplementation((_cmd: string, args: { projectPath: string }) =>
+      args.projectPath === '/gone' ? Promise.reject(new Error('missing')) : Promise.resolve({ writable: true }),
+    );
+
+    await useProjectStore.getState().validateStoredPaths();
+
+    expect(useProjectStore.getState().stalePaths).toEqual(['/gone']);
+  });
+
+  it('relocates every persisted record and reloads the active workspace', async () => {
+    useProjectStore.setState({
+      currentProjectPath: '/old',
+      currentWorkspaceId: 'a',
+      currentProjectName: 'old',
+      openWorkspaces: [{ id: 'a', path: '/old', name: 'old' }],
+      recentProjects: ['/old', '/other'],
+      workspaceHistory: [{ path: '/old', name: 'old', openedAt: 1 }],
+      stalePaths: ['/old'],
+    });
+
+    await useProjectStore.getState().relocateWorkspace('/old', '/new');
+
+    const state = useProjectStore.getState();
+    expect(state.openWorkspaces[0].path).toBe('/new');
+    expect(state.currentProjectPath).toBe('/new');
+    expect(state.recentProjects).toEqual(['/new', '/other']);
+    expect(state.workspaceHistory[0].path).toBe('/new');
+    expect(state.stalePaths).toEqual([]);
   });
 });

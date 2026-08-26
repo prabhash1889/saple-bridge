@@ -39,7 +39,7 @@ impl WatcherState {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FileChangedPayload {
-    /// Which store to reload: "tasks" | "swarm" | "sessions".
+    /// Which store to reload: "tasks" | "swarm" | "sessions" | "memory".
     file: String,
     project_path: String,
 }
@@ -55,6 +55,14 @@ const TRACKED: [(&str, &str); 3] = [
 
 fn tracked_kind(path: &Path) -> Option<&'static str> {
     let norm = path.to_string_lossy().replace('\\', "/");
+    // Memory is a directory of markdown notes rather than one state file: any external edit
+    // under it should refresh the loaded graph. Our own atomic_write temp files
+    // (`.<name>.tmp-<pid>-<n>`) never count as changes; the rename onto the real note is
+    // filtered by fingerprint like every other store.
+    let file_name = norm.rsplit('/').next().unwrap_or("");
+    if norm.contains("/.saple/memory/") && !file_name.contains(".tmp-") {
+        return Some("memory");
+    }
     TRACKED
         .iter()
         .find(|(_, suffix)| norm.ends_with(suffix))
@@ -261,8 +269,17 @@ mod tests {
         );
         // The temp file atomic_write renames from must not look like a real change.
         assert_eq!(tracked_kind(Path::new("/home/u/proj/.saple/.tasks.json.tmp-123-4")), None);
-        // Unrelated `.saple` files (prompts, memory, mailbox) are ignored.
-        assert_eq!(tracked_kind(Path::new("/home/u/proj/.saple/memory/note.md")), None);
+        // Memory notes (any file under the memory dir) refresh the graph.
+        assert_eq!(tracked_kind(Path::new("/home/u/proj/.saple/memory/note.md")), Some("memory"));
+        assert_eq!(
+            tracked_kind(Path::new(r"C:\proj\.saple\memory\general\x.md")),
+            Some("memory")
+        );
+        // ...but our own write temp files inside it do not.
+        assert_eq!(
+            tracked_kind(Path::new("/home/u/proj/.saple/memory/.note.md.tmp-123-4")),
+            None
+        );
         assert_eq!(tracked_kind(Path::new("/home/u/proj/tasks.json")), None);
     }
 

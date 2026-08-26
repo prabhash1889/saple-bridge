@@ -23,10 +23,13 @@ export const WorkspaceTab: React.FC = () => {
   const [verificationPresets, setVerificationPresets] = useState('');
   const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
-  // Terminal scrollback is an app-wide preference (persisted to localStorage), so it saves
-  // immediately on change rather than through the workspace-config Save button.
+  // Terminal scrollback and screen-reader mode are app-wide preferences (persisted to
+  // localStorage), so they save immediately on change rather than through the
+  // workspace-config Save button.
   const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
   const setScrollbackRows = useTerminalFontStore((state) => state.setScrollbackRows);
+  const screenReaderMode = useTerminalFontStore((state) => state.screenReaderMode);
+  const setScreenReaderMode = useTerminalFontStore((state) => state.setScreenReaderMode);
 
   // Agent browser control is app-global and Windows-only (WebView2 remote-debugging port).
   // navigator.userAgent reliably reports "Windows NT" in WebView2 vs "Macintosh" in WKWebView.
@@ -182,6 +185,22 @@ export const WorkspaceTab: React.FC = () => {
               className="settings-input settings-input-narrow"
             />
             <span className="input-hint">Applied live to all panes. App-wide preference.</span>
+          </div>
+          <div className="settings-checkbox-row input-group checkbox-group">
+            <input
+              type="checkbox"
+              id="screenReaderMode"
+              checked={screenReaderMode}
+              onChange={e => setScreenReaderMode(e.target.checked)}
+              className="settings-checkbox"
+            />
+            <label htmlFor="screenReaderMode" className="settings-checkbox-label">
+              Terminal screen-reader mode (applied live to all panes)
+            </label>
+            <span className="input-hint">
+              Keeps a text mirror of terminal output in each pane so screen readers can read it.
+              Costs render performance; leave off unless you use assistive technology.
+            </span>
           </div>
           <div className="input-group">
             <label className="input-label">Review Verification Presets (one command per line)</label>

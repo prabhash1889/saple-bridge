@@ -73,12 +73,12 @@
 
 .swarm-template-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-primary);
 }
 
 .swarm-template-desc {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   margin-top: 4px;
   line-height: 1.4;
@@ -91,7 +91,7 @@
   justify-content: center;
   gap: 6px;
   height: 30px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-secondary);
@@ -116,7 +116,7 @@
   gap: 6px;
   height: 30px;
   padding: 0 13px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -218,7 +218,7 @@
 
 /* Elapsed "running for" badge on active nodes/cards. */
 .swarm-elapsed {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
@@ -238,7 +238,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 
@@ -272,7 +272,7 @@
 /* --- Relaunch button on failed nodes --- */
 .swarm-node-relaunch {
   padding: 2px 6px;
-  font-size: 9px;
+  font-size: var(--text-xs);
   height: 18px;
   display: flex;
   align-items: center;
@@ -329,19 +329,19 @@
 
 .swarm-card-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--text-md);
   color: var(--text-primary);
   margin: 0;
 }
 
 .swarm-status-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   font-weight: 600;
 }
 
 .swarm-meta-text {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -350,25 +350,25 @@
 }
 
 .swarm-graph-caption {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
 .swarm-graph-badge {
   text-transform: uppercase;
-  font-size: 9px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
 .swarm-panel-title {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
 }
 
 .swarm-panel-subtitle {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   margin-top: 4px;
 }
@@ -379,7 +379,7 @@
 }
 
 .swarm-col-label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -387,7 +387,7 @@
 }
 
 .swarm-empty-hint {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -406,20 +406,20 @@
 }
 
 .swarm-heading {
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
 }
 
 .swarm-subheading {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   margin-top: 4px;
 }
 
 .swarm-note {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   margin-top: 8px;
 }
@@ -429,7 +429,7 @@
 }
 
 .swarm-empty-title {
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -437,14 +437,14 @@
 .swarm-empty-desc {
   max-width: 520px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
   margin-top: 8px;
   line-height: 1.6;
   text-align: center;
 }
 
 .swarm-empty-hint-lg {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   margin-top: 12px;
 }
@@ -454,13 +454,13 @@
 }
 
 .swarm-item-title {
-  font-size: 14px;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .swarm-item-desc {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -469,7 +469,7 @@
   align-items: flex-start;
   gap: 8px;
   margin-top: 12px;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--color-warning);
 }
 
@@ -497,12 +497,12 @@
 
 .swarm-list-item-label {
   flex: 1;
-  font-size: 12.5px;
+  font-size: var(--text-base);
   color: var(--text-primary);
 }
 
 .swarm-list-item-meta {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -515,7 +515,7 @@
 }
 
 .swarm-item-right {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   text-align: right;
 }
@@ -539,7 +539,7 @@
   display: flex;
   gap: 12px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   flex-wrap: wrap;
 }
@@ -556,7 +556,7 @@
   gap: 6px;
   height: 34px;
   padding: 0 14px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -567,7 +567,7 @@
 }
 
 .swarm-detail-text {
-  font-size: 12.5px;
+  font-size: var(--text-base);
   color: var(--text-secondary);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -583,7 +583,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-surface-light);
@@ -598,7 +598,7 @@
 
 .swarm-detail-badge-warn {
   color: var(--color-warning);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -609,7 +609,7 @@
 }
 
 .swarm-chip {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 3px 9px;
   border-radius: var(--radius-full);
   background: var(--accent-light);
@@ -627,7 +627,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 
@@ -640,7 +640,7 @@
   position: absolute;
   bottom: 10px;
   right: 12px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -648,7 +648,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   margin-bottom: 24px;
 }
@@ -665,14 +665,14 @@
 
 .swarm-card-name {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .swarm-card-detail {
   display: block;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   line-height: 1.35;
   margin-top: 2px;
@@ -690,7 +690,7 @@
 }
 
 .swarm-stat-label {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -707,7 +707,7 @@
 
 .swarm-toolbar-count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -730,7 +730,7 @@
   border: 1px dashed var(--border);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
 }
@@ -748,7 +748,7 @@
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
   padding: 0;
@@ -762,13 +762,13 @@
 }
 
 .swarm-card-title-sm {
-  font-size: 12.5px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .swarm-card-desc {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   margin-top: 4px;
   line-height: 1.4;
@@ -789,7 +789,7 @@
 }
 
 .swarm-panel-index {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   width: 18px;
 }
@@ -800,7 +800,7 @@
 }
 
 .swarm-panel-name {
-  font-size: 12.5px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -809,7 +809,7 @@
 }
 
 .swarm-panel-meta {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -834,7 +834,7 @@
 }
 
 .swarm-strong {
-  font-size: 14px;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -849,7 +849,7 @@
 }
 
 .swarm-eyebrow {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--text-muted);

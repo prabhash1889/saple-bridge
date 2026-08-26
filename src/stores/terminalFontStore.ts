@@ -85,22 +85,28 @@ interface TerminalFontState {
   fontSize: number;
   // App-wide scrollback rows, configurable in Settings > Workspace.
   scrollbackRows: number;
+  // Accessibility: keeps xterm's screen-reader DOM mirror enabled in every pane so
+  // assistive tech can read terminal output (Settings > Workspace).
+  screenReaderMode: boolean;
   setFontId: (fontId: string) => void;
   setFontSize: (fontSize: number) => void;
   increaseFontSize: () => void;
   decreaseFontSize: () => void;
   resetFontSize: () => void;
   setScrollbackRows: (rows: number) => void;
+  setScreenReaderMode: (enabled: boolean) => void;
 }
 
-// The terminal font, size, and scrollback are single app-wide preferences (every pane
-// renders the same), persisted to localStorage like the theme so they survive reloads.
+// The terminal font, size, scrollback, and screen-reader mode are single app-wide
+// preferences (every pane renders the same), persisted to localStorage like the theme
+// so they survive reloads.
 export const useTerminalFontStore = create<TerminalFontState>()(
   persist(
     (set) => ({
       fontId: DEFAULT_TERMINAL_FONT_ID,
       fontSize: DEFAULT_TERMINAL_FONT_SIZE,
       scrollbackRows: TERMINAL_SCROLLBACK_ROWS,
+      screenReaderMode: false,
       setFontId: (fontId) => set({ fontId }),
       setFontSize: (fontSize) =>
         set({ fontSize: clamp(Math.round(fontSize), MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE) }),
@@ -111,6 +117,7 @@ export const useTerminalFontStore = create<TerminalFontState>()(
       resetFontSize: () => set({ fontSize: DEFAULT_TERMINAL_FONT_SIZE }),
       setScrollbackRows: (rows) =>
         set({ scrollbackRows: clamp(Math.round(rows), MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS) }),
+      setScreenReaderMode: (enabled) => set({ screenReaderMode: enabled }),
     }),
     {
       name: 'saple-bridge-terminal-font-store',

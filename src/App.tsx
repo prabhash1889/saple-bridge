@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState, useEffect, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { StatusBar } from './components/layout/StatusBar';
@@ -9,14 +10,17 @@ import { ToastHost } from './components/common/ToastHost';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { ShortcutsHelpDialog } from './components/common/ShortcutsHelpDialog';
 import { RoomSkeleton } from './components/common/RoomSkeleton';
-import { useProjectStore, ViewType } from './stores/projectStore';
+import { useProjectStore, ROOM_ORDER, type ViewType } from './stores/projectStore';
 import { useKanbanStore } from './stores/kanbanStore';
+import { useMemoryStore } from './stores/memoryStore';
 import { useSwarmStore } from './stores/swarmStore';
 import { useAgentSessionStore } from './stores/agentSessionStore';
 import { useTerminalStore } from './stores/terminalStore';
 import { useBrowserStore } from './stores/browserStore';
 import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
+import { useConfirmStore } from './stores/confirmStore';
+import { getLiveAgents, describeLiveAgents } from './lib/liveAgents';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
 import { startJuneDispatcher } from './lib/juneDispatcher';
 import { startTerminalSwarmBridge } from './lib/terminalSwarmBridge';
@@ -87,6 +91,38 @@ function App() {
   // its events have a consumer.
   useEffect(() => startTerminalSwarmBridge(), []);
 
+  // Cold-start validation: every persisted workspace path (active, open, recents) is checked
+  // once so moved/deleted folders surface with relocate/remove actions instead of failing
+  // silently when opened.
+  useEffect(() => {
+    void useProjectStore.getState().validateStoredPaths();
+  }, []);
+
+  // Confirm before quitting while agents are still working. The native close request is
+  // cancelled and replaced by the shared confirm dialog; confirming destroys the window
+  // (bypassing this handler) after the user has explicitly accepted losing the agents.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onCloseRequested((event) => {
+      const live = getLiveAgents();
+      const total = live.swarm.length + live.terminals.length;
+      if (total === 0) return;
+      event.preventDefault();
+      useConfirmStore.getState().confirm({
+        title: 'Agents are still running',
+        message:
+          `${describeLiveAgents(live)} still running. Closing now terminates ${total === 1 ? 'it' : 'them'}. ` +
+          `Quit anyway?`,
+        confirmLabel: 'Quit anyway',
+        onConfirm: () => {
+          void getCurrentWindow().destroy();
+        },
+      });
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
   useEffect(() => {
     if (HEAVY_VIEWS.includes(activeView)) {
       setMountedHeavyViews((prev) => (prev.has(activeView) ? prev : new Set(prev).add(activeView)));
@@ -115,6 +151,9 @@ function App() {
       // would otherwise short-circuit and keep stale localStorage swarm state).
       void loadSwarmState(currentProjectPath, true);
       void loadAgentSessions(currentProjectPath);
+      // Load the memory graph with the rest of the workspace state so the home page's
+      // memory counts are real numbers from disk, not a premature zero.
+      void useMemoryStore.getState().loadGraph(currentProjectPath);
       void refreshWorkspace();
       // Follow the active project with a Rust file watcher so external .saple edits (MCP
       // sidecar, agents) force-reload these stores before the next save clobbers them.
@@ -154,6 +193,7 @@ function App() {
       if (file === 'tasks') void useKanbanStore.getState().loadTasks(projectPath, true);
       else if (file === 'swarm') void useSwarmStore.getState().loadSwarmState(projectPath, true);
       else if (file === 'sessions') void useAgentSessionStore.getState().loadSessions(projectPath, true);
+      else if (file === 'memory') void useMemoryStore.getState().loadGraph(projectPath);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -208,11 +248,11 @@ function App() {
         setPreviewOpen((prev) => !prev);
       }
 
-      // 3. Switch rooms: Alt + 1-9
+      // 3. Switch rooms: Alt + 1-9 (positions come from the shared ROOM_ORDER so hints
+      // and bindings can't drift apart).
       if (e.altKey && e.key >= '1' && e.key <= '9') {
         const index = parseInt(e.key, 10) - 1;
-        const rooms: ViewType[] = ['dashboard', 'terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'settings'];
-        const view = rooms[index];
+        const view = ROOM_ORDER[index];
         if (view) {
           const requiresProject = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor'].includes(view);
           if (!requiresProject || currentProjectPath) {

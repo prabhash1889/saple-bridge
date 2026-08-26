@@ -178,6 +178,7 @@ Updated at phase boundaries; completed implementation detail lives in git histor
 | 3 - Review, swarm, and process correctness | **Complete (code)** | all work items and automated checks landed; two environment-dependent QA/CI runs deferred into Phase 4 - see Phase 3 status |
 | 4 - Observability, testing, and release hardening | **Complete (code)** | durable app log + privileged-action audit log, diagnostics report, failure escalation/dedupe, IPC contract registry tests, coverage baseline, sidecar pinning, SHA-pinned Actions, Dependabot/audit job, release gate; signing/notarization and maintainer-side pins deferred - see Phase 4 status |
 | 5 - Architecture deepening | Complete | single-owner path policy with coded errors, terminal transport/bridge inversion, coordinator-link and crash-recovery extraction from swarmStore, provider facts table (Rust + renderer), memory layout owner, sidecar module split, coded IPC error surfaces - see Phase 5 notes |
+| 6 - Frontend, UX, and accessibility | Complete | error banners with retry, cold-start path validation with relocate/remove, memory-first dashboard counts plus external-edit watching, per-recent-project removal, reopenable onboarding with provider readiness, quit confirmation for live agents, theme aliases + tokenized overlays + restored text selection + type scale + narrow-window responsive pass, keyboard/screen-reader accessibility incl. xterm SR mode and AA muted contrast - see Phase 6 notes |
 
 ---
 ## Phase 4 - Observability, testing, and release hardening
@@ -404,6 +405,18 @@ Deferred deliberately: converting every remaining `Result<_, String>` command su
 - Terminal output has an accessible mode.
 - Light and dark themes retain visible text, hover, active, and focus states.
 - Empty, loading, error, and recovery states are distinct for every primary store.
+
+### Status (updated at the end of the Phase 6 session)
+
+All three work areas landed on `traycer/saple-bridge-cosmic-eagle`:
+
+1. `feat(project)` / `feat(ux)` / `fix(dashboard)` - recovery banners with retry/diagnostics actions for workspace, memory, and Kanban load errors; cold-start validation of persisted paths (active/open/recents/history) offering relocate/remove; memory graph loads with workspace state, dashboard counts gated on it, external edits reload via the extended `.saple/memory` watcher rule; shortcut hints corrected to the actual Alt+N bindings and pinned by test; per-recent-project removal on both recents surfaces; provider readiness step plus reopenable Getting Started walkthrough via the command palette; quit confirmation when live swarm agents or agent-linked terminals exist.
+2. `feat(styles)` / `refactor(styles)` - `--bg-card`, `--bg-surface-hover`, and `--color-primary` aliases defined for every theme; hard-coded dark overlays/surfaces replaced with tokens (convention-tested); text selection restored on code, diffs, markdown, paths, errors, logs, and dialogs; font sizes consolidated onto the type scale (guarded by test); shared narrow-window responsive pass at 1100/860/680 for dashboard, Kanban, memory, settings, and review.
+3. `feat(a11y)` - native tab buttons with roving-tablist arrow navigation; file tree Arrow/Home/End/Enter keyboard pattern with `aria-expanded`; task cards and memory rows keyboard-operable; `aria-current` on sidebar rooms, workspaces, search rows, and active notes; xterm screen-reader mode behind a persisted Settings toggle; muted-text contrast raised to WCAG AA across themes (Solarized/Latte fixed as effectively-unreadable outliers); solid `:focus-visible` restored on form controls; actionable toasts persistent with hover/focus pause that resumes remaining time, polite `role="status"` announcements for non-errors.
+
+Automated checks added: workspace-entry hint consistency, token alias presence for both themes, CSS conventions guards (no overlay literals, on-scale font sizes), toast timing policy + dismiss scheduler, terminal font/screen-reader store round-trip, plus component tests for new keyboard handlers.
+
+Deferred deliberately: close-to-tray (plan says "later if users need background operation"); Solarized hierarchy trade-off documented in commit `a4e700e` (AA readability beats muted-vs-secondary dimming there). Packaged-app visual/keyboard QA belongs to the release checklist carried from Phase 3/4.
 
 ---
 

@@ -1,12 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, CheckCircle, AlertTriangle, AlertCircle, Info } from 'lucide-react';
 import { useNotificationStore, AppNotification } from '../../stores/notificationStore';
+import { autoDismissDelay, createDismissScheduler } from './toastTiming';
 
 export const ToastHost: React.FC = () => {
   const { notifications, removeNotification } = useNotificationStore();
 
   return (
-    <div className="toast-container" aria-live="assertive">
+    <div className="toast-container">
       {notifications.map((notif: AppNotification) => (
         <ToastItem key={notif.id} notification={notif} onClose={removeNotification} />
       ))}
@@ -22,15 +23,34 @@ interface ToastItemProps {
 const ToastItem: React.FC<ToastItemProps> = ({ notification, onClose }) => {
   const { id, type, message, description, persistent, duration, action } = notification;
 
-  useEffect(() => {
-    if (persistent) return;
-    const time = duration || 4000;
-    const timer = setTimeout(() => {
-      onClose(id);
-    }, time);
+  // Hovering or keyboard-focusing a toast freezes its auto-dismiss countdown.
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const delay = autoDismissDelay({ persistent, duration, action });
+  const schedulerRef = useRef(createDismissScheduler(() => onClose(id)));
 
-    return () => clearTimeout(timer);
-  }, [id, persistent, duration, onClose]);
+  useEffect(() => {
+    const scheduler = schedulerRef.current;
+    if (delay === null) {
+      scheduler.cancel();
+      return;
+    }
+    scheduler.start(delay);
+    if (hovered || focused) scheduler.pause();
+    return () => scheduler.cancel();
+    // Hover state is intentionally excluded here; the effect below handles pause/resume
+    // so hovering does not restart the countdown from full.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, delay]);
+
+  useEffect(() => {
+    const scheduler = schedulerRef.current;
+    if (hovered || focused) {
+      scheduler.pause();
+    } else if (scheduler.status === 'paused') {
+      scheduler.resume();
+    }
+  }, [hovered, focused]);
 
   const getIcon = () => {
     switch (type) {
@@ -46,8 +66,18 @@ const ToastItem: React.FC<ToastItemProps> = ({ notification, onClose }) => {
     }
   };
 
+  // Errors announce assertively (role=alert); everything else stays polite.
+  const announcementRole = type === 'error' ? 'alert' : 'status';
+
   return (
-    <div className={`toast-item toast-${type}`}>
+    <div
+      className={`toast-item toast-${type}`}
+      role={announcementRole}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={() => setFocused(false)}
+    >
       <div className="toast-body">
         {getIcon()}
         <div className="toast-content">

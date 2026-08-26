@@ -153,7 +153,6 @@
 }
 
 .browser-url-input:focus {
-  outline: none;
   border-color: var(--border-focus);
 }
 

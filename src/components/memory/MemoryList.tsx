@@ -20,6 +20,7 @@ export const MemoryList: React.FC = () => {
   const { currentProjectPath } = useProjectStore();
   const {
     nodes,
+    activeNote,
     loadNote,
     searchQuery,
     setSearchQuery,
@@ -128,7 +129,9 @@ export const MemoryList: React.FC = () => {
         {CATEGORY_CHIPS.map(chip => (
           <button
             key={chip.value}
+            type="button"
             onClick={() => setSelectedCategory(chip.value)}
+            aria-pressed={selectedCategory === chip.value}
             style={chipStyle(selectedCategory === chip.value, chip.color)}
           >
             {chip.label}
@@ -140,23 +143,25 @@ export const MemoryList: React.FC = () => {
       <div style={listStyle}>
         {filteredNodes.length > 0 ? (
           filteredNodes.map(node => (
-            <div
+            <button
               key={node.id}
+              type="button"
               onClick={() => handleNodeClick(node)}
+              aria-current={activeNote?.id === node.id ? 'true' : undefined}
               style={itemStyle(node.category)}
             >
-              <div style={itemHeaderStyle}>
+              <span style={itemHeaderStyle}>
                 <span style={itemTitleStyle}>{node.title}</span>
                 <span style={itemCategoryStyle(node.category)}>{node.category}</span>
-              </div>
+              </span>
               {node.tags.length > 0 && (
-                <div style={tagsContainerStyle}>
+                <span style={tagsContainerStyle}>
                   {node.tags.map(t => (
                     <span key={t} style={tagStyle}>#{t}</span>
                   ))}
-                </div>
+                </span>
               )}
-            </div>
+            </button>
           ))
         ) : (
           <div style={emptyTextStyle}>No matching memory notes.</div>
@@ -294,6 +299,8 @@ const itemStyle = (category: string): React.CSSProperties => {
     display: 'flex',
     flexDirection: 'column',
     gap: '6px',
+    textAlign: 'left',
+    width: '100%',
     transition: 'border-color 0.15s, background-color 0.15s',
   };
 };
@@ -303,6 +310,7 @@ const itemHeaderStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '8px',
+  width: '100%',
 };
 
 const itemTitleStyle: React.CSSProperties = {

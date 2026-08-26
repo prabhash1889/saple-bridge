@@ -37,7 +37,7 @@
 }
 
 .task-dialog-header h3 {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -67,7 +67,7 @@
 }
 
 .task-dialog-field label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -107,7 +107,7 @@
 
 .task-dialog-footer button {
   padding: 6px 16px;
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .kanban-empty-icon {
@@ -116,7 +116,7 @@
 }
 
 .kanban-empty-text {
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-muted);
   margin-top: 4px;
   margin-bottom: 20px;
@@ -147,7 +147,7 @@
 }
 
 .task-drawer-criteria-text {
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-primary);
 }
 
@@ -195,4 +195,95 @@
 .kanban-card-move-control select:hover,
 .kanban-card-move-control select:focus-visible {
   color: var(--text-primary);
+}
+
+/* Board chrome lives in CSS (not inline styles) so the shared narrow-window
+   pass can adapt it. Breakpoints follow the app convention: 1100 / 860 / 680. */
+.kanban-board {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6);
+  background-color: var(--bg-app);
+  overflow: hidden;
+}
+
+.kanban-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+  flex-shrink: 0;
+}
+
+.kanban-board-title {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.kanban-board-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.kanban-board-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.kanban-columns {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  align-items: flex-start;
+  padding-bottom: var(--space-2);
+}
+
+@media (max-width: 1100px) {
+  /* Let the four columns compress before horizontal scrolling appears. */
+  .kanban-column {
+    min-width: 190px !important;
+    max-width: none !important;
+    flex: 1 1 190px !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .kanban-board {
+    padding: var(--space-4);
+  }
+
+  .kanban-board-header,
+  .kanban-board-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .kanban-columns {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    align-items: stretch;
+  }
+
+  /* Inline styles set width/height for the wide layout; stack instead. */
+  .kanban-column {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    flex: 1 1 auto !important;
+  }
 }

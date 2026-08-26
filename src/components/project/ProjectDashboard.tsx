@@ -14,55 +14,63 @@ import {
   Layers3,
   Network,
   PanelTop,
+  RotateCw,
+  ShieldCheck,
   Terminal,
   Trash2,
   Users,
+  X,
   XCircle,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { useBrowserStore } from '../../stores/browserStore';
+import { useConfirmStore } from '../../stores/confirmStore';
 import { useKanbanStore } from '../../stores/kanbanStore';
 import { useMemoryStore } from '../../stores/memoryStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { useProjectStore, ViewType } from '../../stores/projectStore';
 import { useProviderStore } from '../../stores/providerStore';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useThemeStore, ThemeMode, THEME_OPTIONS } from '../../stores/themeStore';
 import bridgeMark from '../../assets/logo/saple-bridge-mark.png';
-
-const workspaceEntries: Array<{
-  id: ViewType;
-  title: string;
-  description: string;
-  hint: string;
-  icon: React.ElementType;
-  alpha?: boolean;
-}> = [
-  {
-    id: 'terminals',
-    title: 'Saple Bridge',
-    description: 'Open the command room and arrange local terminal agents.',
-    hint: '1',
-    icon: Terminal,
-  },
-  {
-    id: 'swarm',
-    title: 'Saple Swarm',
-    description: 'Coordinate multi-agent missions for the current workspace.',
-    hint: '2',
-    icon: Users,
-  },
-  {
-    id: 'editor',
-    title: 'Saple Canvas',
-    description: 'Inspect files and shape workspace context.',
-    hint: '3',
-    icon: Grid2X2,
-  },
-];
+import { workspaceEntries } from './workspaceEntries';
 
 const getWorkspaceName = (path: string) => {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
+};
+
+// Icons for the shared workspaceEntries list (kept here so the entries module stays
+// dependency-free and its shortcut hints stay unit-testable).
+const ENTRY_ICONS: Record<string, React.ElementType> = {
+  terminals: Terminal,
+  swarm: Users,
+  editor: Grid2X2,
+};
+
+// Compact provider readiness status, shared by the empty-home card and the onboarding step.
+const ProviderChecklist: React.FC = () => {
+  const providers = useProviderStore((state) => state.providers);
+  return (
+    <div className="provider-checklist">
+      {providers.filter((p) => p.provider !== 'custom').map((p) => {
+        const signed = p.signedIn === true;
+        const ready = p.authenticated === true || signed;
+        const pending = p.authenticated === null && !signed;
+        return (
+          <span key={p.provider}>
+            <span className={`status-dot ${ready ? 'ready' : pending ? 'pending' : 'missing'}`} />
+            {p.label}
+            {p.authenticated === true && ' - key saved'}
+            {p.authenticated !== true && signed && ' - signed in'}
+            {!ready && !pending && ' - auth needed'}
+            {pending && ' - checking...'}
+          </span>
+        );
+      })}
+    </div>
+  );
 };
 
 // Compact relative timestamp ("just now", "5m ago", "3h ago", "2d ago") for the
@@ -98,16 +106,31 @@ export const ProjectDashboard: React.FC = () => {
     workspaceLoading,
     checkPathExists,
     openWorkspaces,
+    removeRecentProject,
+    stalePaths,
+    dismissStalePath,
+    relocateWorkspace,
+    workspaceError,
+    currentWorkspaceId,
+    openWorkspaceInstance,
+    clearWorkspaceError,
+    onboardingOpen,
+    onboardingDismissed,
+    dismissOnboarding,
   } = useProjectStore();
   const openWorkspacePaths = openWorkspaces.map((w) => w.path);
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const { panes, sessions, setFocusedPane } = useTerminalStore();
   const tasks = useKanbanStore((state) => state.tasks);
   const memories = useMemoryStore((state) => state.nodes);
+  // The home page must not show a premature zero for memory counts: gate them on the
+  // graph actually having been loaded (and kept fresh) for this project.
+  const memoryLoaded = useMemoryStore((state) => !!currentProjectPath && state.loadedProjectPath === currentProjectPath);
+  const memoryLoading = useMemoryStore((state) => state.loading);
   const activeAgents = useSwarmStore((state) => state.activeAgents);
-  const providers = useProviderStore((state) => state.providers);
   const themeMode = useThemeStore((state) => state.mode);
   const setThemeMode = useThemeStore((state) => state.setMode);
+  const confirm = useConfirmStore((state) => state.confirm);
   const [recentHealth, setRecentHealth] = React.useState<Record<string, boolean | 'checking'>>(() => ({ ...recentHealthCache }));
 
   React.useEffect(() => {
@@ -148,10 +171,142 @@ export const ProjectDashboard: React.FC = () => {
     setActiveView('terminals');
   };
 
+  // Per-entry recents removal: drop the path from the persisted recent lists and clear
+  // its cached health result so a re-added path is checked fresh.
+  const handleRemoveRecent = (path: string) => {
+    delete recentHealthCache[path];
+    setRecentHealth((prev) => {
+      if (prev[path] === undefined) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+    removeRecentProject(path);
+  };
+
+  // Recovery for a stale persisted path (validated at cold start): point the workspace at
+  // its new location, or drop it from workspaces + recents entirely.
+  const handleRelocateStale = async (fromPath: string) => {
+    try {
+      const newPath = await invoke<string | null>('select_directory');
+      if (!newPath) return;
+      await relocateWorkspace(fromPath, newPath);
+      useNotificationStore.getState().success(
+        'Workspace relocated',
+        `${getWorkspaceName(fromPath)} now points at ${newPath}.`,
+      );
+    } catch (error) {
+      console.error('Failed to relocate workspace:', error);
+      useNotificationStore.getState().error(`Failed to relocate workspace: ${String(error)}`);
+    }
+  };
+
+  const handleForgetStale = (path: string) => {
+    confirm({
+      title: 'Remove missing workspace?',
+      message: `"${getWorkspaceName(path)}" could not be found on disk. This removes it from your open workspaces and recents. Your files are not touched.`,
+      confirmLabel: 'Remove',
+      onConfirm: () => {
+        const store = useProjectStore.getState();
+        // Close every open instance of that path first so its PTYs and browser session
+        // don't outlive it (same teardown the sidebar close uses).
+        for (const instance of store.openWorkspaces.filter((w) => w.path === path)) {
+          void useTerminalStore.getState().closeWorkspaceTerminals(instance.id);
+          void useBrowserStore.getState().closeWorkspaceBrowser(instance.id);
+          store.closeWorkspace(instance.id);
+          void invoke('release_project_root', { path }).catch(() => {});
+        }
+        handleRemoveRecent(path);
+        dismissStalePath(path);
+      },
+    });
+  };
+
   const reviewTasks = tasks.filter((task) => task.column === 'review');
   const activeTasks = tasks.filter((task) => task.column === 'backlog' || task.column === 'progress');
   const runningAgents = activeAgents.filter((agent) => ['running', 'waiting', 'review'].includes(agent.status));
-  const showFirstRunWalkthrough = !currentProjectPath && workspaceHistory.length === 0;
+  // First run: no workspace has ever been opened and the user hasn't dismissed the
+  // walkthrough. It can also be re-opened on demand (Help / command palette).
+  const walkthroughVisible = (!currentProjectPath && !onboardingDismissed && workspaceHistory.length === 0) || onboardingOpen;
+
+  React.useEffect(() => {
+    if (walkthroughVisible) void useProviderStore.getState().refreshReadiness();
+  }, [walkthroughVisible]);
+
+  // Recovery for a failed workspace load (config/summary registration failed): retry the
+  // same open flow, or jump to diagnostics to find out why.
+  const handleWorkspaceRetry = () => {
+    clearWorkspaceError();
+    if (currentWorkspaceId) {
+      void openWorkspaceInstance(currentWorkspaceId);
+    } else if (currentProjectPath) {
+      void useProjectStore.getState().refreshWorkspace();
+    }
+  };
+
+  const handleRunDiagnostics = () => {
+    useProjectStore.getState().setPendingSettingsTab('diagnostics');
+    setActiveView('settings');
+  };
+
+  const handleOpenProviderSetup = () => {
+    useProjectStore.getState().setPendingSettingsTab('providers');
+    setActiveView('settings');
+  };
+
+  // Getting-started walkthrough: automatic on true first run, and re-openable any time
+  // (command palette / Help). Includes live provider readiness so new users see whether
+  // an agent can actually run before they commit to a workspace.
+  const walkthroughPanel = walkthroughVisible ? (
+    <section className="surface onboarding-panel" aria-label="Getting started walkthrough">
+      <div className="panel-heading">
+        <Layers3 size={16} />
+        <span>Start Here</span>
+        <button
+          type="button"
+          className="text-btn"
+          onClick={dismissOnboarding}
+          title="Hide the walkthrough"
+          aria-label="Hide the walkthrough"
+          style={{ marginLeft: 'auto', padding: 2, display: 'flex', lineHeight: 0 }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <div className="onboarding-steps">
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><FolderOpen size={16} /></span>
+          <strong>Open a repo folder</strong>
+          <p>Bridge creates the local `.saple` workspace files inside your project.</p>
+        </article>
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><Terminal size={16} /></span>
+          <strong>Launch a terminal</strong>
+          <p>Use the Command Room for shells, coding agents, and live logs.</p>
+        </article>
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><ClipboardList size={16} /></span>
+          <strong>Create a task</strong>
+          <p>Move tasks through backlog, progress, review, and done.</p>
+        </article>
+        <article className="onboarding-step">
+          <span className="onboarding-step-icon"><ShieldCheck size={16} /></span>
+          <strong>Connect a provider</strong>
+          <p>Agents need at least one provider with a saved key or CLI sign-in.</p>
+          <ProviderChecklist />
+          <button type="button" className="text-btn" onClick={handleOpenProviderSetup}>
+            Set up providers in Settings
+          </button>
+        </article>
+      </div>
+      {!currentProjectPath && (
+        <button onClick={() => handleOpenWorkspace('terminals')} className="primary onboarding-primary-action">
+          <FolderOpen size={16} />
+          Open first workspace
+        </button>
+      )}
+    </section>
+  ) : null;
 
   const legacyHomePanel = currentProjectPath ? (
     <section className="dashboard-shell home-legacy-panel">
@@ -184,6 +339,30 @@ export const ProjectDashboard: React.FC = () => {
 
       {workspaceLoading && <div className="loading-bar">Loading workspace...</div>}
 
+      {workspaceError && (
+        <div role="alert" className="state-recovery-banner">
+          <div className="state-recovery-header">
+            <AlertTriangle className="h-5 w-5" aria-hidden style={{ color: 'var(--color-danger)' }} />
+            <div>
+              <p className="font-semibold">Workspace failed to load</p>
+              <p className="state-recovery-error">{workspaceError}</p>
+              <p className="state-recovery-hint">Retry the load, or run diagnostics to check what is wrong.</p>
+            </div>
+          </div>
+          <div className="state-recovery-actions">
+            <button type="button" disabled={workspaceLoading} onClick={handleWorkspaceRetry}>
+              <RotateCw aria-hidden /> Retry
+            </button>
+            <button type="button" onClick={handleRunDiagnostics}>
+              Run diagnostics
+            </button>
+            <button type="button" onClick={clearWorkspaceError}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="metric-grid home-metric-grid">
         <button className="metric-card accent-command" onClick={() => setActiveView('terminals')}>
           <PanelTop size={18} />
@@ -208,7 +387,7 @@ export const ProjectDashboard: React.FC = () => {
         <button className="metric-card accent-memory" onClick={() => setActiveView('memory')}>
           <Database size={18} />
           <span>Memory Notes</span>
-          <strong>{memories.length}</strong>
+          <strong>{!memoryLoaded ? (memoryLoading ? '...' : '-') : memories.length}</strong>
         </button>
       </div>
 
@@ -278,8 +457,10 @@ export const ProjectDashboard: React.FC = () => {
             <Network size={16} />
             <span>Recent Memories</span>
           </div>
-          {memories.length === 0 ? (
+          {memoryLoaded && memories.length === 0 ? (
             <div className="compact-empty">No memory notes found.</div>
+          ) : !memoryLoaded ? (
+            <div className="compact-empty">{memoryLoading ? 'Loading memory...' : 'Memory has not been loaded for this workspace yet.'}</div>
           ) : (
             memories.slice(0, 5).map((memory) => (
               <article key={memory.id} className="dashboard-list-item">
@@ -290,6 +471,10 @@ export const ProjectDashboard: React.FC = () => {
           )}
         </section>
       </div>
+
+      {walkthroughPanel && (
+        <div style={{ marginTop: 12 }}>{walkthroughPanel}</div>
+      )}
     </section>
   ) : (
     <section className="dashboard-shell no-workspace home-legacy-panel">
@@ -305,34 +490,8 @@ export const ProjectDashboard: React.FC = () => {
         </button>
       </div>
 
-      {showFirstRunWalkthrough && (
-        <section className="surface onboarding-panel" aria-label="First run walkthrough">
-          <div className="panel-heading">
-            <Layers3 size={16} />
-            <span>Start Here</span>
-          </div>
-          <div className="onboarding-steps">
-            <article className="onboarding-step">
-              <span className="onboarding-step-icon"><FolderOpen size={16} /></span>
-              <strong>Open a repo folder</strong>
-              <p>Bridge creates the local `.saple` workspace files inside your project.</p>
-            </article>
-            <article className="onboarding-step">
-              <span className="onboarding-step-icon"><Terminal size={16} /></span>
-              <strong>Launch a terminal</strong>
-              <p>Use the Command Room for shells, coding agents, and live logs.</p>
-            </article>
-            <article className="onboarding-step">
-              <span className="onboarding-step-icon"><ClipboardList size={16} /></span>
-              <strong>Create a task</strong>
-              <p>Move tasks through backlog, progress, review, and done.</p>
-            </article>
-          </div>
-          <button onClick={() => handleOpenWorkspace('terminals')} className="primary onboarding-primary-action">
-            <FolderOpen size={16} />
-            Open first workspace
-          </button>
-        </section>
+      {walkthroughPanel && (
+        <div style={{ marginBottom: 12 }}>{walkthroughPanel}</div>
       )}
 
       <div className="empty-dashboard-grid home-empty-grid">
@@ -352,22 +511,35 @@ export const ProjectDashboard: React.FC = () => {
                 const name = getWorkspaceName(path);
                 const health = recentHealth[path];
                 return (
-                  <button
-                    key={path}
-                    className="recent-project-item"
-                    onClick={() => handleRecentClick(path)}
-                    title={path}
-                  >
-                    {health === false ? (
-                      <XCircle size={14} className="icon-missing" />
-                    ) : health === 'checking' ? (
-                      <span className="status-dot pending" />
-                    ) : (
-                      <FolderOpen size={14} />
-                    )}
-                    <span className={health === false ? 'text-muted' : ''}>{name}</span>
-                    {health === false && <span className="badge warning-badge">missing</span>}
-                  </button>
+                  <div key={path} className="recent-project-item">
+                    <button
+                      type="button"
+                      className="text-btn recent-project-open"
+                      onClick={() => handleRecentClick(path)}
+                      title={path}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, padding: 0, textAlign: 'left' }}
+                    >
+                      {health === false ? (
+                        <XCircle size={14} className="icon-missing" />
+                      ) : health === 'checking' ? (
+                        <span className="status-dot pending" />
+                      ) : (
+                        <FolderOpen size={14} />
+                      )}
+                      <span className={health === false ? 'text-muted' : ''}>{name}</span>
+                      {health === false && <span className="badge warning-badge">missing</span>}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-btn"
+                      onClick={() => handleRemoveRecent(path)}
+                      title={`Remove ${name} from recents`}
+                      aria-label={`Remove ${name} from recents`}
+                      style={{ flexShrink: 0, padding: 3, display: 'flex', lineHeight: 0 }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -379,23 +551,7 @@ export const ProjectDashboard: React.FC = () => {
             <Terminal size={16} />
             <span>Provider Readiness</span>
           </div>
-          <div className="provider-checklist">
-            {providers.filter((p) => p.provider !== 'custom').map((p) => {
-              const signed = p.signedIn === true;
-              const ready = p.authenticated === true || signed;
-              const pending = p.authenticated === null && !signed;
-              return (
-                <span key={p.provider}>
-                  <span className={`status-dot ${ready ? 'ready' : pending ? 'pending' : 'missing'}`} />
-                  {p.label}
-                  {p.authenticated === true && ' - key saved'}
-                  {p.authenticated !== true && signed && ' - signed in'}
-                  {!ready && !pending && ' - auth needed'}
-                  {pending && ' - checking...'}
-                </span>
-              );
-            })}
-          </div>
+          <ProviderChecklist />
         </section>
 
         <section className="surface">
@@ -418,6 +574,38 @@ export const ProjectDashboard: React.FC = () => {
   return (
     <section className="home-split" aria-label="Saple Bridge home">
       <div className="home-split-left">
+        {stalePaths.length > 0 && (
+          <div role="alert" className="state-recovery-banner" style={{ marginBottom: 12 }}>
+            <div className="state-recovery-header">
+              <AlertTriangle className="h-5 w-5" aria-hidden style={{ color: 'var(--color-warning)' }} />
+              <div>
+                <p className="font-semibold">Workspace folder not found</p>
+                {stalePaths.map((path) => (
+                  <p key={path} className="state-recovery-path"><code>{path}</code></p>
+                ))}
+                <p className="state-recovery-hint">
+                  These folders were moved or deleted. Relocate a workspace to its new
+                  location, or remove it from the list.
+                </p>
+              </div>
+            </div>
+            <div className="state-recovery-actions">
+              {stalePaths.map((path) => (
+                <React.Fragment key={path}>
+                  <button type="button" disabled={workspaceLoading} onClick={() => void handleRelocateStale(path)}>
+                    <FolderOpen aria-hidden /> Relocate {getWorkspaceName(path)}
+                  </button>
+                  <button type="button" onClick={() => handleForgetStale(path)}>
+                    <X aria-hidden /> Remove
+                  </button>
+                  <button type="button" onClick={() => dismissStalePath(path)}>
+                    Dismiss
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        )}
         {legacyHomePanel}
       </div>
 
@@ -435,7 +623,7 @@ export const ProjectDashboard: React.FC = () => {
 
         <div className="saple-start-actions" role="list">
           {workspaceEntries.map((entry) => {
-            const Icon = entry.icon;
+            const Icon = ENTRY_ICONS[entry.id] ?? FolderOpen;
             return (
               <button
                 key={entry.id}
@@ -449,7 +637,6 @@ export const ProjectDashboard: React.FC = () => {
                 <span className="saple-start-entry-copy">
                   <span>
                     {entry.title}
-                    {entry.alpha && <em>ALPHA</em>}
                   </span>
                   <small>{entry.description}</small>
                 </span>
@@ -510,11 +697,29 @@ export const ProjectDashboard: React.FC = () => {
                 .slice(0, 4)
                 .map((path) => {
                 const health = recentHealth[path];
+                const name = getWorkspaceName(path);
                 return (
-                  <button key={path} onClick={() => handleRecentClick(path)} title={path} disabled={workspaceLoading}>
-                    <span className={`workspace-status ${health === false ? 'missing' : health === 'checking' ? 'pending' : 'idle'}`} />
-                    <span>{getWorkspaceName(path)}</span>
-                  </button>
+                  <div key={path} style={{ position: 'relative', minWidth: 0 }}>
+                    <button
+                      onClick={() => handleRecentClick(path)}
+                      title={path}
+                      disabled={workspaceLoading}
+                      style={{ width: '100%', paddingRight: 20 }}
+                    >
+                      <span className={`workspace-status ${health === false ? 'missing' : health === 'checking' ? 'pending' : 'idle'}`} />
+                      <span>{name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="text-btn"
+                      onClick={() => handleRemoveRecent(path)}
+                      title={`Remove ${name} from recents`}
+                      aria-label={`Remove ${name} from recents`}
+                      style={{ position: 'absolute', right: 2, top: '50%', transform: 'translateY(-50%)', padding: 3, display: 'flex', lineHeight: 0 }}
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
                 );
               })}
             </div>

@@ -17,6 +17,34 @@ body {
   user-select: none;
 }
 
+/* App chrome disables selection globally (above), but content surfaces the user
+   reads and copies from get selection back. Keep this list to read/copy
+   surfaces; interactive chrome (trees, tabs, toolbars) stays unselectable. */
+.md-preview,
+.md-preview pre,
+.md-preview code,
+.code-viewer-body,
+.code-content,
+.code-line,
+.diff-viewer,
+.diff-text,
+.diff-code-viewer-body,
+.split-diff-viewer,
+.split-diff-text,
+.error-banner-inline,
+.state-recovery-error,
+.state-recovery-path,
+.settings-log-body,
+.modal-container,
+.palette-dialog,
+.task-dialog-modal,
+.file-path-text,
+.file-search-group-path,
+.review-verify-file-path,
+.topbar-path-line {
+  user-select: text;
+}
+
 /* Scrollbars styling */
 ::-webkit-scrollbar {
   width: 6px;
@@ -49,7 +77,7 @@ input, select, textarea {
   border: 1px solid var(--border);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--text-md);
   border-radius: var(--radius-sm);
   padding: 6px 12px;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -61,8 +89,19 @@ input:hover, select:hover, textarea:hover {
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 2px rgba(93, 95, 239, 0.25);
-  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Keyboard focus on form controls keeps the solid shared outline. The softer
+   mouse-focus treatment above must not swallow it (input:focus outranks the
+   global *:focus-visible rule), so restate it at matching specificity. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--border-focus);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: var(--focus-ring);
 }
 
 button {
@@ -70,7 +109,7 @@ button {
   border: 1px solid var(--border);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--text-md);
   font-weight: 500;
   border-radius: var(--radius-sm);
   padding: 6px 12px;
@@ -168,7 +207,7 @@ button.text-btn:hover {
   border-radius: var(--radius-full);
   background: var(--bg-surface-light);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -188,7 +227,7 @@ button.text-btn:hover {
   height: 18px;
   padding: 0 5px;
   border-radius: var(--radius-full);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   line-height: 1;
   margin-left: auto;
@@ -243,7 +282,7 @@ button.text-btn:hover {
 
 .compact-empty {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
   padding: 10px 0;
 }
 
@@ -279,7 +318,7 @@ button.text-btn:hover {
 
 .metric-card span {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .metric-card strong {
@@ -340,7 +379,7 @@ button.text-btn:hover {
 
 .dashboard-list-item strong,
 .review-list-item strong {
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -350,7 +389,7 @@ button.text-btn:hover {
 .dashboard-list-item span,
 .review-list-item span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -374,7 +413,7 @@ button.text-btn:hover {
   align-items: center;
   gap: 8px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .status-dot {
@@ -476,7 +515,7 @@ button.text-btn:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-align: center;
 }
 
@@ -510,7 +549,7 @@ button.text-btn:hover {
   padding-right: 8px;
   cursor: pointer;
   user-select: none;
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-secondary);
   transition: background-color 0.15s ease, color 0.15s ease;
 }
@@ -607,11 +646,11 @@ button.text-btn:hover {
 .file-tree-node.flat-match .node-search-details .node-name {
   font-weight: 500;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .file-tree-node.flat-match .node-search-details .node-path {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -666,7 +705,7 @@ button.text-btn:hover {
 
 .code-viewer-header .file-path-text {
   font-family: monospace;
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -684,7 +723,7 @@ button.text-btn:hover {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .readonly-badge {
@@ -693,12 +732,12 @@ button.text-btn:hover {
   color: var(--text-muted);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .save-success-badge {
   color: var(--color-success);
-  font-size: 12px;
+  font-size: var(--text-sm);
   margin-right: 8px;
 }
 
@@ -707,7 +746,7 @@ button.text-btn:hover {
   align-items: center;
   gap: 4px;
   color: var(--color-danger);
-  font-size: 12px;
+  font-size: var(--text-sm);
   margin-right: 8px;
 }
 
@@ -733,7 +772,7 @@ button.text-btn:hover {
   min-width: 100%;
   padding: 8px 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.6;
 }
 
@@ -789,7 +828,7 @@ button.text-btn:hover {
 .lang-badge {
   flex: 0 0 auto;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-secondary);
   background: var(--bg-surface-active);
@@ -799,7 +838,7 @@ button.text-btn:hover {
 
 .lang-note {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -834,7 +873,7 @@ button.text-btn:hover {
 
 .seg-toggle button {
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: transparent;
   border: none;
   color: var(--text-secondary);
@@ -870,7 +909,7 @@ button.text-btn:hover {
 .find-bar input {
   width: 180px;
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: var(--bg-app);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -880,7 +919,7 @@ button.text-btn:hover {
 .find-count {
   min-width: 56px;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -894,7 +933,7 @@ button.text-btn:hover {
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .md-preview {
@@ -903,7 +942,7 @@ button.text-btn:hover {
   padding: 24px 32px;
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--text-md);
   line-height: 1.7;
 }
 
@@ -953,7 +992,7 @@ button.text-btn:hover {
   border-radius: var(--radius-md);
 }
 
-.md-preview pre code { padding: 0; background: none; font-size: 12px; line-height: 1.6; }
+.md-preview pre code { padding: 0; background: none; font-size: var(--text-sm); line-height: 1.6; }
 
 .md-preview table {
   display: block;
@@ -1069,13 +1108,13 @@ button.text-btn:hover {
 }
 
 .toast-message {
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .toast-description {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   margin: 0;
   line-height: 1.4;
@@ -1087,7 +1126,7 @@ button.text-btn:hover {
   color: var(--text-primary);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   align-self: flex-start;
   margin-top: 4px;
   cursor: pointer;
@@ -1175,7 +1214,7 @@ button.text-btn:hover {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--bg-overlay);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -1229,7 +1268,7 @@ button.text-btn:hover {
 
 .confirm-header h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1255,7 +1294,7 @@ button.text-btn:hover {
 
 .confirm-body p {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--text-md);
   color: var(--text-secondary);
   line-height: 1.5;
   /* Structured confirm messages (e.g. the swarm acceptance approval) use \n line breaks. */
@@ -1273,19 +1312,19 @@ button.text-btn:hover {
 
 .confirm-cancel-btn {
   padding: 6px 16px;
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .confirm-ok-btn {
   padding: 6px 16px;
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 /* Command Palette Styling */
 .palette-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--bg-overlay);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: flex-start;
@@ -1296,7 +1335,7 @@ button.text-btn:hover {
 }
 
 .palette-dialog {
-  background: rgba(24, 24, 27, 0.85);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
@@ -1320,7 +1359,7 @@ button.text-btn:hover {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   gap: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-surface-light);
 }
 
 .palette-search-icon, .palette-back-btn {
@@ -1347,8 +1386,7 @@ button.text-btn:hover {
 .palette-input {
   background: transparent;
   border: none;
-  outline: none;
-  font-size: 14px;
+  font-size: var(--text-md);
   color: var(--text-primary);
   flex: 1;
   padding: 0;
@@ -1359,7 +1397,7 @@ button.text-btn:hover {
   border: 1px solid var(--border);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
@@ -1419,13 +1457,13 @@ button.text-btn:hover {
 }
 
 .palette-item-name {
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--text-primary);
 }
 
 .palette-item-desc {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1444,7 +1482,7 @@ button.text-btn:hover {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--text-xs);
   padding: 1px 4px;
   border-radius: var(--radius-sm);
 }
@@ -1452,7 +1490,7 @@ button.text-btn:hover {
 /* Keyboard Shortcuts help dialog (opened from the command palette). Reuses .palette-overlay
    and .palette-kbd; adds its own compact grouped layout. */
 .shortcuts-dialog {
-  background: rgba(24, 24, 27, 0.9);
+  background: var(--bg-overlay);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
@@ -1480,7 +1518,7 @@ button.text-btn:hover {
   gap: 8px;
   color: var(--text-primary);
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 .shortcuts-body {
@@ -1494,7 +1532,7 @@ button.text-btn:hover {
 
 .shortcuts-group-title {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1511,7 +1549,7 @@ button.text-btn:hover {
 
 .shortcuts-label {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .shortcuts-keys {
@@ -1524,11 +1562,11 @@ button.text-btn:hover {
   display: block;
   margin-top: 4px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .palette-category {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -1575,13 +1613,13 @@ button.text-btn:hover {
 
 .palette-compose-target-label {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .palette-compose-target-chip {
   color: var(--text-primary);
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .palette-empty-icon {
@@ -1592,12 +1630,12 @@ button.text-btn:hover {
   display: flex;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-surface-light);
   gap: 16px;
 }
 
 .palette-help-pill {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -1619,7 +1657,7 @@ button.text-btn:hover {
 .file-tree-empty-error {
   color: var(--color-danger);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .pane-splitter {
@@ -1667,7 +1705,7 @@ button.text-btn:hover {
   justify-content: center;
   gap: 6px;
   height: 28px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   background: transparent;
   border: 1px solid transparent;
@@ -1722,7 +1760,7 @@ button.text-btn:hover {
 }
 .cm-editor-host .cm-scroller {
   font-family: var(--font-mono, monospace);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 /* Editor tabs */
@@ -1738,17 +1776,30 @@ button.text-btn:hover {
 .editor-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
   max-width: 200px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   background: transparent;
   border-right: 1px solid var(--border);
   border-bottom: 2px solid transparent;
-  cursor: pointer;
   white-space: nowrap;
   user-select: none;
+}
+.editor-tab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px 0 10px;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.editor-tab-label:focus-visible {
+  outline-offset: -2px;
 }
 .editor-tab:hover {
   color: var(--text-primary);
@@ -1774,6 +1825,7 @@ button.text-btn:hover {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   padding: 2px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -1799,7 +1851,7 @@ button.text-btn:hover {
 
 /* Git status badge in the file tree */
 .git-badge {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
   font-family: var(--font-mono, monospace);
   margin-left: auto;
@@ -1823,7 +1875,7 @@ button.text-btn:hover {
   border: 1px solid var(--color-primary);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 /* Right-click context menu */
@@ -1845,7 +1897,7 @@ button.text-btn:hover {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-primary);
   background: transparent;
   border: none;
@@ -1873,7 +1925,7 @@ button.text-btn:hover {
 }
 .file-search-summary {
   padding: 4px 12px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 .file-search-group {
@@ -1881,7 +1933,7 @@ button.text-btn:hover {
 }
 .file-search-group-path {
   padding: 4px 12px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-secondary);
   overflow: hidden;
@@ -1894,7 +1946,7 @@ button.text-btn:hover {
   width: 100%;
   padding: 3px 12px 3px 20px;
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   background: transparent;
   border: none;
@@ -1935,21 +1987,21 @@ button.text-btn:hover {
 .state-recovery-path code,
 .state-recovery-path {
   word-break: break-all;
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-secondary);
 }
 .state-recovery-error {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: var(--text-base);
   color: var(--text-primary);
 }
 .state-recovery-hint {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 .state-reveal-btn {
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-decoration: underline;
   color: var(--text-secondary);
   padding: 0;
@@ -1968,6 +2020,6 @@ button.text-btn:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }

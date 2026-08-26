@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   Folder, FolderOpen, File, ChevronDown, ChevronRight, Search, RefreshCw,
   FileCode, Terminal, Settings, BookOpen, ExternalLink, FilePlus, FolderPlus,
@@ -135,6 +135,8 @@ interface FileTreeNodeProps {
   handleContextMenu: (node: TreeNode, e: React.MouseEvent) => void;
   gitStatus: Record<string, string>;
   activeFile: string | null;
+  /** Path of the treeitem that currently owns the roving tabIndex. */
+  focusedPath: string | null;
 }
 
 const FileTreeNodeItem: React.FC<FileTreeNodeProps> = ({
@@ -147,6 +149,7 @@ const FileTreeNodeItem: React.FC<FileTreeNodeProps> = ({
   handleContextMenu,
   gitStatus,
   activeFile,
+  focusedPath,
 }) => {
   const isFolderExpanded = expanded.has(node.path);
   const isActive = activeFile === node.path;
@@ -174,6 +177,10 @@ const FileTreeNodeItem: React.FC<FileTreeNodeProps> = ({
         onContextMenu={(e) => handleContextMenu(node, e)}
         role="treeitem"
         aria-selected={isActive}
+        aria-expanded={node.isDir ? isFolderExpanded : undefined}
+        data-path={node.path}
+        data-is-dir={node.isDir ? 'true' : 'false'}
+        tabIndex={focusedPath === node.path ? 0 : -1}
       >
         {/* Render vertical indentation guidelines */}
         {Array.from({ length: depth }).map((_, i) => (
@@ -231,6 +238,7 @@ const FileTreeNodeItem: React.FC<FileTreeNodeProps> = ({
               handleContextMenu={handleContextMenu}
               gitStatus={gitStatus}
               activeFile={activeFile}
+              focusedPath={focusedPath}
             />
           ))}
         </div>
@@ -263,6 +271,9 @@ export const FileTree: React.FC = () => {
   const [search, setSearch] = useState('');
   const [menu, setMenu] = useState<MenuState>(null);
   const [prompt, setPrompt] = useState<PromptState>(null);
+  // Roving tabIndex anchor for the W3C tree pattern; follows keyboard focus.
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
+  const treeRef = useRef<HTMLDivElement>(null);
 
   const notifyError = (msg: string) => useNotificationStore.getState().error(msg);
 
@@ -320,6 +331,76 @@ export const FileTree: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     setMenu({ x: e.clientX, y: e.clientY, node });
+  };
+
+  // W3C tree pattern keyboard support, delegated at the tree container. Rendered
+  // DOM order matches visual order, so the treeitem list doubles as the
+  // navigation sequence. Right expands (or enters) a folder, Left collapses (or
+  // returns to the parent), Up/Down/Home/End walk visible nodes.
+  const visibleTreeItems = () =>
+    Array.from(treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []);
+
+  const handleTreeKeyDown = (e: React.KeyboardEvent) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]');
+    if (!item) return;
+    const items = visibleTreeItems();
+    const idx = items.indexOf(item);
+    if (idx === -1) return;
+    const path = item.dataset.path ?? '';
+    const isDir = item.dataset.isDir === 'true';
+    const stop = () => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    switch (e.key) {
+      case 'ArrowDown':
+        stop();
+        items[idx + 1]?.focus();
+        break;
+      case 'ArrowUp':
+        stop();
+        items[idx - 1]?.focus();
+        break;
+      case 'Home':
+        stop();
+        items[0]?.focus();
+        break;
+      case 'End':
+        stop();
+        items[items.length - 1]?.focus();
+        break;
+      case 'ArrowRight':
+        stop();
+        if (isDir && !expanded.has(path)) toggleExpanded(path);
+        else if (isDir) items[idx + 1]?.focus();
+        break;
+      case 'ArrowLeft': {
+        stop();
+        if (isDir && expanded.has(path)) {
+          toggleExpanded(path);
+          break;
+        }
+        // Walk up to the wrapper that contains this node's subtree, then to the
+        // ancestor folder's wrapper, and focus its own treeitem.
+        const ownWrapper = item.closest('.file-tree-node-wrapper');
+        const parentWrapper = ownWrapper?.parentElement?.closest('.file-tree-node-wrapper');
+        parentWrapper?.querySelector<HTMLElement>(':scope > [role="treeitem"]')?.focus();
+        break;
+      }
+      case 'Enter':
+      case ' ':
+        stop();
+        item.click();
+        break;
+    }
+  };
+
+  const handleTreeFocus = (e: React.FocusEvent) => {
+    const path = (e.target as HTMLElement)
+      .closest('[role="treeitem"]')
+      ?.getAttribute('data-path');
+    if (path && path !== focusedPath) setFocusedPath(path);
   };
 
   // Base directory for a new file/folder given the clicked node (folder itself, or a file's parent).
@@ -442,7 +523,10 @@ export const FileTree: React.FC = () => {
         </div>
       )}
 
-      <div className="file-tree-list" role="tree">
+      <div className="file-tree-list" role="tree" aria-label="Workspace files" ref={treeRef}
+        onKeyDown={handleTreeKeyDown}
+        onFocusCapture={handleTreeFocus}
+      >
         {error ? (
           <div className="file-tree-empty-error compact-empty">
             {error}
@@ -465,6 +549,16 @@ export const FileTree: React.FC = () => {
                   key={file.path}
                   className={`file-tree-node flat-match ${isActive ? 'active' : ''}`}
                   onClick={() => file.isDir ? toggleExpanded(file.path) : handleFileClick(file.path)}
+                  role="button"
+                  tabIndex={0}
+                  aria-current={isActive ? 'true' : undefined}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      if (file.isDir) toggleExpanded(file.path);
+                      else handleFileClick(file.path);
+                    }
+                  }}
                 >
                   <span className="node-icon" style={{ color: iconColor }}>
                     <FileIcon size={14} />
@@ -503,6 +597,7 @@ export const FileTree: React.FC = () => {
                 handleContextMenu={handleContextMenu}
                 gitStatus={gitStatus}
                 activeFile={activeFile}
+                focusedPath={focusedPath ?? activeFile ?? fileTree[0]?.path ?? null}
               />
             ))
           )

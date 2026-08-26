@@ -67,6 +67,7 @@ const KanbanColumnComponent: React.FC<KanbanColumnProps> = ({ id, title, tasks, 
 
   return (
     <div
+      className="kanban-column"
       onDragOver={handleColumnDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}

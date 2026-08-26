@@ -173,6 +173,14 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
   const fontId = useTerminalFontStore((state) => state.fontId);
   const fontSize = useTerminalFontStore((state) => state.fontSize);
   const scrollbackRows = useTerminalFontStore((state) => state.scrollbackRows);
+  const screenReaderMode = useTerminalFontStore((state) => state.screenReaderMode);
+
+  // Live screen-reader toggle (Settings > Workspace). xterm maintains/removes its
+  // accessibility-buffer DOM mirror on this flag; no re-fit or PTY resize needed.
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (term) term.options.screenReaderMode = screenReaderMode || navigator.webdriver;
+  }, [screenReaderMode]);
 
   // Live scrollback resize (Settings > Workspace). Only the retained-history depth changes,
   // so no re-fit or PTY resize is needed — xterm reflows its own buffer.
@@ -351,7 +359,8 @@ export function useXtermSession({ sessionId, active, isFocused, onSearchOpen }: 
       // WebGL renderer draws to a canvas with no DOM text, which leaves specs nothing to
       // assert on. navigator.webdriver is only true when driven by tauri-driver, so real
       // sessions never pay the accessibility-tree render cost.
-      ...(navigator.webdriver ? { screenReaderMode: true } : {}),
+      screenReaderMode:
+        useTerminalFontStore.getState().screenReaderMode || navigator.webdriver,
     });
 
     const fitAddon = new FitAddon();
