@@ -278,7 +278,11 @@ fn validate_relative_path(file_path: &str) -> Result<(), CodedError> {
 /// parent cannot trick later directory creation into escaping.
 pub(crate) fn contained_target(canonical_base: &Path, file_path: &str) -> Result<PathBuf, CodedError> {
     validate_relative_path(file_path)?;
-    let target = canonical_base.join(Path::new(file_path));
+    // Normalize redundant separators ("a/b/" becomes [a, b]) before joining: on Unix a
+    // trailing slash requires the target to be a directory, so stat() on an existing
+    // regular file would fail and make deletes/writes of "child.txt/" spuriously fail.
+    let normalized: std::path::PathBuf = Path::new(file_path).components().collect();
+    let target = canonical_base.join(normalized);
 
     // If the target already exists, canonicalize the *full* path (resolving symlinks) and confirm
     // containment before handing it back.

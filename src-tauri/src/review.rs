@@ -936,7 +936,11 @@ mod tests {
     fn verbose_output_exceeding_pipe_buffer_does_not_false_timeout() {
         let dir = std::env::temp_dir().to_string_lossy().to_string();
         // ~2 MiB of stdout plus ~1 MiB of stderr: several multiples of any pipe buffer.
-        let cmd = "$n=0; while ($n -lt 30000) { 'x' * 80; $n++ }; [Console]::Error.WriteLine(('e' * 80) * 12000); exit 0";
+        let cmd = if cfg!(target_os = "windows") {
+            "$n=0; while ($n -lt 30000) { 'x' * 80; $n++ }; [Console]::Error.WriteLine(('e' * 80) * 12000); exit 0"
+        } else {
+            "i=0; while [ $i -lt 30000 ]; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; i=0; while [ $i -lt 12000 ]; do echo eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee >&2; i=$((i+1)); done"
+        };
         let started = Instant::now();
         let (output, stop) =
             run_shell_with_timeout("test", &dir, cmd, Duration::from_secs(60), None).unwrap();
@@ -958,10 +962,11 @@ mod tests {
         let runner_flag = flag.clone();
         let dir_for_runner = dir.clone();
         let handle = std::thread::spawn(move || {
+            let sleep_cmd = if cfg!(target_os = "windows") { "Start-Sleep -Seconds 30" } else { "sleep 30" };
             run_shell_with_timeout(
                 "test",
                 &dir_for_runner,
-                "Start-Sleep -Seconds 30",
+                sleep_cmd,
                 Duration::from_secs(60),
                 Some(runner_flag),
             )
