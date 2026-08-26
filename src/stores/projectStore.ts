@@ -103,9 +103,6 @@ interface ProjectState {
   workspaceSummary: WorkspaceSummary | null;
   workspaceLoading: boolean;
   workspaceError: string | null;
-  // Persisted workspace paths (active + open + recents/history) that failed an existence
-  // check at cold start. Not persisted itself: re-validated every launch.
-  stalePaths: string[];
   // One-shot request for which Settings tab to open on next render (e.g. the command palette's
   // "Run diagnostics"). ProjectSettings consumes and clears it on mount/change.
   pendingSettingsTab: string | null;
@@ -115,9 +112,6 @@ interface ProjectState {
   onboardingOpen: boolean;
   onboardingDismissed: boolean;
 
-  validateStoredPaths: () => Promise<void>;
-  dismissStalePath: (path: string) => void;
-  relocateWorkspace: (fromPath: string, toPath: string) => Promise<void>;
   clearWorkspaceError: () => void;
   openOnboarding: () => void;
   dismissOnboarding: () => void;
@@ -189,7 +183,6 @@ export const useProjectStore = create<ProjectState>()(
         workspaceSummary: null,
         workspaceLoading: false,
         workspaceError: null,
-        stalePaths: [],
         pendingSettingsTab: null,
         onboardingOpen: false,
         onboardingDismissed: false,
@@ -200,60 +193,7 @@ export const useProjectStore = create<ProjectState>()(
 
         dismissOnboarding: () => set({ onboardingOpen: false, onboardingDismissed: true }),
 
-        // Cold-start validation of every persisted workspace path. Uses the same Rust
-        // summary command the dashboard health dots use; a missing folder is surfaced so
-        // the UI can offer relocate/remove instead of a silent load failure later.
-        validateStoredPaths: async () => {
-          const { currentProjectPath, openWorkspaces, recentProjects, workspaceHistory, checkPathExists } = get();
-          const candidates: Array<string | null | undefined> = [
-            currentProjectPath,
-            ...openWorkspaces.map((w) => w.path),
-            ...recentProjects,
-            ...workspaceHistory.map((e) => e.path),
-          ];
-          const paths = Array.from(new Set(candidates.filter((p): p is string => Boolean(p))));
-          if (paths.length === 0) return;
-          const checks = await Promise.all(paths.map(async (p) => ({ path: p, exists: await checkPathExists(p) })));
-          set({ stalePaths: checks.filter((c) => !c.exists).map((c) => c.path) });
-        },
-
-        dismissStalePath: (path) => set((state) => ({ stalePaths: state.stalePaths.filter((p) => p !== path) })),
-
         clearWorkspaceError: () => set({ workspaceError: null }),
-
-        // Point an existing workspace at its new on-disk location: updates every persisted
-        // record that references the old path (instances, recents, history). When the
-        // relocated workspace was active, reloads it through the normal open flow so
-        // config/summary/rooms follow the new path.
-        relocateWorkspace: async (fromPath, toPath) => {
-          const name = basename(toPath);
-          set((state) => {
-            const openWorkspaces = state.openWorkspaces.map((w) =>
-              w.path === fromPath ? { ...w, path: toPath, name } : w,
-            );
-            const wasCurrent = state.currentProjectPath === fromPath;
-            return {
-              openWorkspaces,
-              recentProjects: state.recentProjects.map((p) => (p === fromPath ? toPath : p)),
-              workspaceHistory: state.workspaceHistory.map((e) => (e.path === fromPath ? { ...e, path: toPath, name } : e)),
-              stalePaths: state.stalePaths.filter((p) => p !== fromPath),
-              ...(wasCurrent
-                ? {
-                    currentProjectPath: toPath,
-                    currentProjectName: openWorkspaces.find((w) => w.path === toPath)?.name ?? name,
-                  }
-                : {}),
-            };
-          });
-          if (get().currentProjectPath === toPath) {
-            const instance = get().openWorkspaces.find((w) => w.path === toPath);
-            if (instance) {
-              await get().openWorkspaceInstance(instance.id);
-            } else {
-              await get().addWorkspace(toPath);
-            }
-          }
-        },
 
         setProjectPath: (path) => {
           // P13: switching away from a project with a running swarm is safe — its PTYs keep
