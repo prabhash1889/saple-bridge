@@ -310,6 +310,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
               disabled={disabled}
               title={disabled ? `Open a workspace to access ${item.label}` : item.label}
               aria-label={item.label}
+              aria-current={active ? 'page' : undefined}
             >
               <Icon size={18} />
               <span>{item.label}</span>
@@ -388,6 +389,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
                         onDoubleClick={() => setRenamingId(workspace.id)}
                         title={workspace.path}
                         disabled={workspaceLoading}
+                        aria-current={active ? 'true' : undefined}
                       >
                       <span className="workspace-status" style={circleStyle} />
                       <span>{workspace.name}</span>
@@ -653,6 +655,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
               disabled={disabled}
               title={disabled ? `Open a workspace to access ${item.label}` : item.label}
               aria-label={item.label}
+              aria-current={active ? 'page' : undefined}
             >
               <Icon size={18} />
               <span>{item.label}</span>
