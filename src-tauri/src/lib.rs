@@ -19,6 +19,7 @@ mod process_ext;
 mod proc_tree;
 mod fs_lock;
 mod project_roots;
+mod project_summary;
 mod sidecar;
 mod state_load;
 mod watcher;
@@ -173,6 +174,14 @@ pub fn run() {
             git::git_list_branches,
             git::git_checkout_branch,
             git::ensure_saple_git_excluded,
+            git::git_branch_sync_state,
+            git::git_fetch,
+            git::git_pull,
+            git::git_push,
+            git::git_create_checkpoint,
+            git::git_list_checkpoints,
+            git::git_checkpoint_diff,
+            git::git_restore_checkpoint,
             review::create_review_record,
             review::read_review_record,
             review::submit_review_decision,
@@ -182,6 +191,7 @@ pub fn run() {
             control_plane::canonical_record_write,
             state_load::load_state_file,
             state_load::resolve_state_corruption,
+            project_summary::get_recent_project_summaries,
             june_control::june_control_get_enabled,
             june_control::june_control_set_enabled,
             june_control::june_command_result,
@@ -282,6 +292,14 @@ mod tests {
         "git_list_branches",
         "git_checkout_branch",
         "ensure_saple_git_excluded",
+        "git_branch_sync_state",
+        "git_fetch",
+        "git_pull",
+        "git_push",
+        "git_create_checkpoint",
+        "git_list_checkpoints",
+        "git_checkpoint_diff",
+        "git_restore_checkpoint",
         "create_review_record",
         "read_review_record",
         "submit_review_decision",
@@ -291,6 +309,7 @@ mod tests {
         "canonical_record_write",
         "load_state_file",
         "resolve_state_corruption",
+        "get_recent_project_summaries",
         "june_control_get_enabled",
         "june_control_set_enabled",
         "june_command_result",

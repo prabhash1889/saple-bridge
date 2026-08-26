@@ -59,6 +59,14 @@ export const IPC_COMMANDS = [
   'git_list_branches',
   'git_checkout_branch',
   'ensure_saple_git_excluded',
+  'git_branch_sync_state',
+  'git_fetch',
+  'git_pull',
+  'git_push',
+  'git_create_checkpoint',
+  'git_list_checkpoints',
+  'git_checkpoint_diff',
+  'git_restore_checkpoint',
   // review
   'create_review_record',
   'read_review_record',
@@ -70,6 +78,7 @@ export const IPC_COMMANDS = [
   'canonical_record_write',
   'load_state_file',
   'resolve_state_corruption',
+  'get_recent_project_summaries',
   // June control plane
   'june_control_get_enabled',
   'june_control_set_enabled',

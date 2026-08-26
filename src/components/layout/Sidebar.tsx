@@ -15,6 +15,7 @@ import {
   Minimize2,
   Maximize2,
   Command,
+  Activity,
   Terminal as TerminalIcon,
   FolderOpen,
   ArrowUp,
@@ -77,10 +78,11 @@ const primaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementT
 
 const secondaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
   { id: 'editor', label: 'Files', icon: FileCode, accent: 'editor' },
+  { id: 'activity', label: 'Activity', icon: Activity, accent: 'activity' },
   { id: 'settings', label: 'Settings', icon: Settings, accent: 'settings' },
 ];
 
-const workspaceRooms: ViewType[] = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor'];
+const workspaceRooms: ViewType[] = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'activity'];
 
 export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
   const activeView = useProjectStore((state) => state.activeView);

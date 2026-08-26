@@ -46,6 +46,9 @@ export interface AgentSession {
   /// authoritative and `sessions.json` is Bridge's runtime/PTY state that points at them.
   agentId?: string;
   runId?: string;
+  /// Hidden git ref id (refs/saple/checkpoints/<runId>) captured before the run
+  /// started (Phase 8.2). Absent on non-git workspaces or failed captures.
+  checkpointId?: string;
   provider: AgentProvider;
   accountProfile?: string;
   model: string;

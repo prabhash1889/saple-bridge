@@ -35,6 +35,7 @@ const ReviewWorkspace = lazy(() => import('./components/review/ReviewWorkspace')
 const EditorPanel = lazy(() => import('./components/editor/EditorPanel').then((module) => ({ default: module.EditorPanel })));
 const CommandPalette = lazy(() => import('./components/common/CommandPalette').then((module) => ({ default: module.CommandPalette })));
 const PreviewPanel = lazy(() => import('./components/preview/PreviewPanel').then((module) => ({ default: module.PreviewPanel })));
+const ActivityDashboard = lazy(() => import('./components/activity/ActivityDashboard').then((module) => ({ default: module.ActivityDashboard })));
 
 // Heavy, stateful views are kept mounted once first visited and toggled with CSS
 // visibility, so switching back is instant (no remount, no xterm dispose/replay).
@@ -313,6 +314,8 @@ function App() {
         return <EditorPanel />;
       case 'settings':
         return <ProjectSettings />;
+      case 'activity':
+        return <ActivityDashboard />;
       case 'dashboard':
       default:
         return <ProjectDashboard />;

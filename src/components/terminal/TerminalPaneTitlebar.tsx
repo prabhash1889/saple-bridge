@@ -1,5 +1,5 @@
 import React from 'react';
-import { GitBranch, Maximize2, Minimize2, X } from 'lucide-react';
+import { BookMarked, GitBranch, Maximize2, Minimize2, X } from 'lucide-react';
 
 interface TerminalPaneTitlebarProps {
   title: string;
@@ -16,6 +16,7 @@ interface TerminalPaneTitlebarProps {
   onAddPane: () => void;
   onToggleMaximize: () => void;
   onRemovePane: () => void;
+  onOpenPromptLibrary?: () => void;
 }
 
 export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
@@ -29,6 +30,7 @@ export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
   onAddPane,
   onToggleMaximize,
   onRemovePane,
+  onOpenPromptLibrary,
 }) => (
   <div className="terminal-pane-titlebar">
     <div className="terminal-pane-title" title={title}>
@@ -51,6 +53,16 @@ export const TerminalPaneTitlebar: React.FC<TerminalPaneTitlebarProps> = ({
           </span>
           {contextLeft}%
         </span>
+      )}
+      {onOpenPromptLibrary && (
+        <button
+          className="terminal-pane-title-button"
+          onClick={(e) => onTitleAction(e, onOpenPromptLibrary)}
+          title="Insert prompt from library"
+          aria-label="Insert prompt from library"
+        >
+          <BookMarked size={14} />
+        </button>
       )}
       <button
         className="terminal-pane-title-button"

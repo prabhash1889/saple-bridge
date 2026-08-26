@@ -6,7 +6,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { useMemoryStore, type MemoryNode } from './memoryStore';
+import { useMemoryStore, orderNodesByRank, type MemoryNode, type RankedMemoryHit } from './memoryStore';
 
 const node = (id: string): MemoryNode => ({
   id,
@@ -68,5 +68,24 @@ describe('memoryStore.setActiveNote', () => {
     useMemoryStore.setState({ activeNoteContent: 'previous note body' });
     useMemoryStore.getState().setActiveNote({ ...node(''), id: '', filePath: '' });
     expect(useMemoryStore.getState().activeNoteContent).toBe('');
+  });
+});
+
+describe('orderNodesByRank', () => {
+  const hits: RankedMemoryHit[] = [
+    { id: 'exact', score: 4000, matchReason: 'title' },
+    { id: 'body', score: 2003, matchReason: 'body' },
+    { id: 'links', score: 1002, matchReason: 'backlinks' },
+  ];
+
+  it('orders ranked hits by score and pushes unranked nodes after, preserving their order', () => {
+    const nodes = [node('unranked-a'), node('body'), node('unranked-b'), node('links'), node('exact')];
+    const ordered = orderNodesByRank(nodes, hits);
+    expect(ordered.map((n) => n.id)).toEqual(['exact', 'body', 'links', 'unranked-a', 'unranked-b']);
+  });
+
+  it('returns the original array untouched when there are no hits', () => {
+    const nodes = [node('b'), node('a')];
+    expect(orderNodesByRank(nodes, [])).toEqual(nodes);
   });
 });

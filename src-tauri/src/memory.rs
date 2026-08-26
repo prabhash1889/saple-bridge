@@ -1074,23 +1074,125 @@ fn collect_notes(dir: &Path, base: &Path, out: &mut Vec<(MemoryNode, String, Vec
     }
 }
 
-/// Case-insensitive full-text search over note titles and bodies. Returns matching note ids;
-/// the Memory list uses them to widen its instant title/tag filter to note content.
+#[derive(Serialize, Clone)]
+pub struct RankedMemoryHit {
+    pub id: String,
+    pub score: u64,
+    #[serde(rename = "matchReason")]
+    pub match_reason: String,
+}
+
+const RANK_TITLE_EXACT: u64 = 4000;
+const RANK_TITLE_PARTIAL: u64 = 3500;
+const RANK_HEADING: u64 = 3000;
+const RANK_BODY_BASE: u64 = 2000;
+const RANK_BACKLINKS_BASE: u64 = 1000;
+
+struct RankableNote<'a> {
+    id: &'a str,
+    title: &'a str,
+    body: &'a str,
+    backlinks: usize,
+}
+
+/// Count case-insensitive whole-word occurrences of `needle` in `haystack`
+/// (both pre-lowercased char slices).
+fn count_whole_word(haystack: &[char], needle: &[char]) -> usize {
+    let n = needle.len();
+    if n == 0 || n > haystack.len() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut i = 0;
+    while i + n <= haystack.len() {
+        if haystack[i..i + n] == needle[..] {
+            let before_ok = i == 0 || !is_word_char(haystack[i - 1]);
+            let after_ok = i + n == haystack.len() || !is_word_char(haystack[i + n]);
+            if before_ok && after_ok {
+                count += 1;
+                i += n;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    count
+}
+
+fn has_heading_match(body_lower: &str, q: &str) -> bool {
+    body_lower.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with('#') && trimmed[1..].trim_start().contains(q)
+    })
+}
+
+/// Single owner of local search ranking. Tiers, highest first: exact title match,
+/// title containment / heading match, body term frequency, backlink count.
+/// Ties break deterministically by note id ascending. Purely local: no embeddings.
+fn rank_notes(notes: &[RankableNote], query: &str) -> Vec<RankedMemoryHit> {
+    let q = query.trim().to_lowercase();
+    if q.len() < 2 {
+        return vec![];
+    }
+    let q_chars: Vec<char> = q.chars().collect();
+
+    let mut scored: Vec<RankedMemoryHit> = Vec::new();
+    for note in notes {
+        let title_lower = note.title.to_lowercase();
+        let body_chars: Vec<char> = note.body.to_lowercase().chars().collect();
+        let body_lower: String = body_chars.iter().collect();
+        let title_exact = title_lower == q;
+        let title_partial = !title_exact && title_lower.contains(&q);
+        let heading = has_heading_match(&body_lower, &q);
+        let body_contains = body_lower.contains(&q);
+        let freq = count_whole_word(&body_chars, &q_chars);
+
+        if !title_exact && !title_partial && !heading && !body_contains && note.backlinks == 0 {
+            continue;
+        }
+
+        let (score, reason) = if title_exact {
+            (RANK_TITLE_EXACT, "title")
+        } else if title_partial {
+            (RANK_TITLE_PARTIAL, "title")
+        } else if heading {
+            (RANK_HEADING, "heading")
+        } else if body_contains {
+            let boost = (freq.max(1) as u64).min(999);
+            (RANK_BODY_BASE + boost, "body")
+        } else {
+            let boost = (note.backlinks as u64).min(999);
+            (RANK_BACKLINKS_BASE + boost, "backlinks")
+        };
+
+        scored.push(RankedMemoryHit {
+            id: note.id.to_string(),
+            score,
+            match_reason: reason.to_string(),
+        });
+    }
+
+    scored.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
+    scored
+}
+
+/// Case-insensitive full-text search over note titles, headings, and bodies, ranked by
+/// exact title match, heading match, body term frequency, and backlink count. The Memory
+/// list uses these hits to widen its instant title/tag filter to note content, in rank order.
 #[tauri::command]
 pub async fn search_memory_content(
     project_path: String,
     query: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<RankedMemoryHit>, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || search_memory_content_inner(project_path, query))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn search_memory_content_inner(project_path: String, query: String) -> Result<Vec<String>, String> {
-    let q = query.trim().to_lowercase();
-    if q.len() < 2 {
+fn search_memory_content_inner(project_path: String, query: String) -> Result<Vec<RankedMemoryHit>, String> {
+    if query.trim().to_lowercase().len() < 2 {
         return Ok(vec![]);
     }
     let memory_dir = memory_layout::get_memory_dir(&project_path);
@@ -1098,19 +1200,52 @@ fn search_memory_content_inner(project_path: String, query: String) -> Result<Ve
         return Ok(vec![]);
     }
 
-    let mut notes = Vec::new();
-    collect_notes(&memory_dir, &memory_dir, &mut notes);
+    let mut collected = Vec::new();
+    collect_notes(&memory_dir, &memory_dir, &mut collected);
 
-    let mut ids: Vec<String> = notes
-        .into_iter()
-        .filter(|(node, body, _)| {
-            node.title.to_lowercase().contains(&q) || body.to_lowercase().contains(&q)
+    let id_lookup = build_id_lookup(&collected);
+
+    let mut backlinks: HashMap<&str, usize> = HashMap::new();
+    for (node, _, links) in &collected {
+        let mut seen_targets: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for link in links {
+            if let Some(target) = id_lookup.get(link.as_str()) {
+                if target != &node.id && seen_targets.insert(target.as_str()) {
+                    *backlinks.entry(target.as_str()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let rankable: Vec<RankableNote> = collected
+        .iter()
+        .map(|(node, body, _)| RankableNote {
+            id: &node.id,
+            title: &node.title,
+            body,
+            backlinks: backlinks.get(node.id.as_str()).copied().unwrap_or(0),
         })
-        .map(|(node, _, _)| node.id)
         .collect();
-    ids.sort();
-    ids.dedup();
-    Ok(ids)
+
+    Ok(rank_notes(&rankable, &query))
+}
+
+fn build_id_lookup(collected: &[(MemoryNode, String, Vec<String>)]) -> HashMap<String, String> {
+    let mut lookup = HashMap::new();
+    for (node, _, _) in collected {
+        lookup.insert(node.id.clone(), node.id.clone());
+        let stem = Path::new(&node.file_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !stem.is_empty() {
+            lookup.entry(stem).or_insert_with(|| node.id.clone());
+        }
+        for alias in &node.aliases {
+            lookup.entry(alias.clone()).or_insert_with(|| node.id.clone());
+        }
+    }
+    lookup
 }
 
 /// Notes whose body mentions this note's title/alias as plain text without a
@@ -1778,6 +1913,63 @@ Inline `[[inline-code]]` should not count either.
         assert_eq!(walked.1.id, "legacy");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn rank_note<'a>(id: &'a str, title: &'a str, body: &'a str, backlinks: usize) -> RankableNote<'a> {
+        RankableNote { id, title, body, backlinks }
+    }
+
+    #[test]
+    fn rank_orders_title_exact_above_heading_above_body_above_backlinks() {
+        let notes = vec![
+            rank_note("linked", "Unrelated", "nothing here", 3),
+            rank_note("freq", "Unrelated", "jwt appears once: jwt", 0),
+            rank_note("heading", "Unrelated", "# About jwt\nplain body", 0),
+            rank_note("exact", "JWT", "no mention inside", 0),
+        ];
+        let hits = rank_notes(&notes, "jwt");
+        let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, vec!["exact", "heading", "freq", "linked"]);
+        assert_eq!(hits[0].match_reason, "title");
+        assert_eq!(hits[1].match_reason, "heading");
+        assert_eq!(hits[2].match_reason, "body");
+        assert_eq!(hits[3].match_reason, "backlinks");
+        assert!(hits[0].score > hits[1].score);
+        assert!(hits[1].score > hits[2].score);
+        assert!(hits[2].score > hits[3].score);
+    }
+
+    #[test]
+    fn rank_breaks_ties_deterministically_by_id_and_prefers_higher_frequency() {
+        let notes = vec![
+            rank_note("b-two", "Plain", "term term here", 0),
+            rank_note("z-one", "Plain", "term once", 0),
+            rank_note("a-one", "Plain", "term once", 0),
+            rank_note("c-zero", "Plain", "substring-term embedded only", 0),
+        ];
+        let hits = rank_notes(&notes, "term");
+        let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+        // Higher body frequency first; equal scores break deterministically by id ascending
+        // ("c-zero" matches only as a substring inside "substring-term", scoring like one hit).
+        assert_eq!(ids, vec!["b-two", "a-one", "c-zero", "z-one"]);
+    }
+
+    #[test]
+    fn rank_excludes_notes_with_no_signal_and_short_queries_yield_nothing() {
+        let notes = vec![rank_note("hit", "Hit", "has the query", 0), rank_note("miss", "Miss", "nothing relevant", 0)];
+        let hits = rank_notes(&notes, "query");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "hit");
+
+        let notes = vec![rank_note("any", "Any", "anything", 2)];
+        assert!(rank_notes(&notes, "q").is_empty());
+    }
+
+    #[test]
+    fn rank_counts_whole_words_only() {
+        let hay: Vec<char> = "the jwt token and jwtly jwt".chars().collect();
+        let needle: Vec<char> = "jwt".chars().collect();
+        assert_eq!(count_whole_word(&hay, &needle), 2);
     }
 
     #[test]

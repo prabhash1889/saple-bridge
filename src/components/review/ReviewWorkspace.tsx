@@ -12,6 +12,7 @@ import { VirtualizedTextViewer } from './VirtualizedTextViewer';
 import { SplitDiffViewer } from './SplitDiffViewer';
 import { ReviewFileList } from './ReviewFileList';
 import { ReviewActionsPanel } from './ReviewActionsPanel';
+import { GitSyncBar } from '../git/GitSyncBar';
 import { runRejectionFlow } from './reviewRejection';
 import { PANE_WIDTH_LIMITS, useWorkspacePaneLayoutStore } from '../../stores/workspacePaneLayoutStore';
 
@@ -595,6 +596,8 @@ ${activeRecord.testOutput ? `## Verification Execution Output\n\`\`\`\n${activeR
           </button>
         </div>
       </div>
+
+      <GitSyncBar projectPath={currentProjectPath} />
 
       <div
         className="review-layout resizable-review-layout"

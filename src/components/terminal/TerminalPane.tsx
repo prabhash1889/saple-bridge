@@ -14,6 +14,7 @@ import { copyTerminalSelection } from './terminalClipboard';
 import { TerminalPaneTitlebar } from './TerminalPaneTitlebar';
 import { TerminalSearchBar } from './TerminalSearchBar';
 import { TerminalContextMenu } from './TerminalContextMenu';
+import { PromptPicker } from '../common/PromptPicker';
 
 interface TerminalPaneProps {
   sessionId: string;
@@ -33,6 +34,7 @@ const CONTEXT_POLL_MS = 4000;
 
 const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximized, active = true, style }) => {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const [hasActivity, setHasActivity] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [contextLeft, setContextLeft] = useState<number | null>(null);
@@ -159,6 +161,12 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
     terminalRef.current?.clear();
   };
 
+  // Insert a saved prompt at the pane's input the same way clipboard paste works: xterm routes
+  // it through onData into write_pty, so bracketed paste and shell handling stay intact.
+  const handlePromptInsert = (text: string) => {
+    terminalRef.current?.paste(text);
+  };
+
   const handleTitleAction = (event: React.MouseEvent<HTMLButtonElement>, action: () => void | Promise<void>) => {
     event.stopPropagation();
     setFocusedPane(sessionId);
@@ -256,6 +264,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
         onAddPane={handleAddPane}
         onToggleMaximize={() => toggleMaximizePane(sessionId)}
         onRemovePane={handleRemovePane}
+        onOpenPromptLibrary={() => setPromptLibraryOpen(true)}
       />
 
       <div
@@ -265,6 +274,14 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
 
       {searchOpen && (
         <TerminalSearchBar searchAddonRef={searchAddonRef} onClose={closeSearch} />
+      )}
+
+      {promptLibraryOpen && (
+        <PromptPicker
+          title="Insert Prompt"
+          onSelect={handlePromptInsert}
+          onClose={() => setPromptLibraryOpen(false)}
+        />
       )}
 
       {contextMenu && (

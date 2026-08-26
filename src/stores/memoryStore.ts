@@ -28,6 +28,14 @@ export interface UnlinkedMention {
   snippet: string;
 }
 
+export type MemoryMatchReason = 'title' | 'heading' | 'body' | 'backlinks';
+
+export interface RankedMemoryHit {
+  id: string;
+  score: number;
+  matchReason: MemoryMatchReason;
+}
+
 interface MemoryState {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
@@ -37,9 +45,10 @@ interface MemoryState {
   activeNoteContent: string;
   unlinkedMentions: UnlinkedMention[];
   searchQuery: string;
-  // Note ids whose *content* matches the search query (Rust full-text pass); the list view
-  // unions these with its instant title/tag filter.
-  contentMatchIds: string[];
+  // Ranked content hits from the Rust full-text pass (title > heading > body frequency >
+  // backlinks); the list view unions these with its instant title/tag filter and shows
+  // them in rank order.
+  contentHits: RankedMemoryHit[];
   selectedCategory: string;
   loading: boolean;
   error: string | null;
@@ -78,7 +87,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   activeNoteContent: '',
   unlinkedMentions: [],
   searchQuery: '',
-  contentMatchIds: [],
+  contentHits: [],
   selectedCategory: 'all',
   loading: false,
   error: null,
@@ -279,17 +288,17 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   searchContent: async (projectPath, query) => {
     const q = query.trim();
     if (q.length < 2) {
-      set({ contentMatchIds: [] });
+      set({ contentHits: [] });
       return;
     }
     try {
-      const ids = await invoke<string[]>('search_memory_content', { projectPath, query: q });
+      const hits = await invoke<RankedMemoryHit[]>('search_memory_content', { projectPath, query: q });
       // Only commit if the user hasn't typed a different query since this request started.
       if (get().searchQuery.trim() === q) {
-        set({ contentMatchIds: ids });
+        set({ contentHits: hits });
       }
     } catch {
-      set({ contentMatchIds: [] });
+      set({ contentHits: [] });
     }
   },
 
@@ -304,3 +313,18 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   setSelectedCategory: (category) => set({ selectedCategory: category }),
 }));
+
+// Stable ordering for the list view: notes with a ranked content hit come first in hit
+// order (already score-desc, id-asc from Rust); everything else keeps its original order.
+export function orderNodesByRank(nodes: MemoryNode[], hits: RankedMemoryHit[]): MemoryNode[] {
+  if (hits.length === 0) return nodes;
+  const rank = new Map(hits.map((hit, index) => [hit.id, index]));
+  return [...nodes].sort((a, b) => {
+    const ra = rank.get(a.id);
+    const rb = rank.get(b.id);
+    if (ra === undefined && rb === undefined) return 0;
+    if (ra === undefined) return 1;
+    if (rb === undefined) return -1;
+    return ra - rb;
+  });
+}

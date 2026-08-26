@@ -34,6 +34,11 @@ import { useSwarmStore } from '../../stores/swarmStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useThemeStore, ThemeMode, THEME_OPTIONS } from '../../stores/themeStore';
 import bridgeMark from '../../assets/logo/saple-bridge-mark.png';
+import {
+  fetchRecentProjectSummaries,
+  summarizeRecentProject,
+  MAX_SUMMARY_PROJECTS,
+} from '../../lib/recentProjectSummaries';
 import { workspaceEntries } from './workspaceEntries';
 
 const getWorkspaceName = (path: string) => {
@@ -92,6 +97,10 @@ const formatRelativeTime = (ts: number): string => {
 // git subprocess per recent project) would re-run for every path on each visit.
 const recentHealthCache: Record<string, boolean> = {};
 
+// Same pattern as recentHealthCache: cross-project task summaries survive dashboard
+// remounts so each visit does not re-read every recent project's tasks.json.
+const recentSummariesCache: Record<string, string> = {};
+
 export const ProjectDashboard: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const currentProjectName = useProjectStore((state) => state.currentProjectName);
@@ -132,6 +141,26 @@ export const ProjectDashboard: React.FC = () => {
   const setThemeMode = useThemeStore((state) => state.setMode);
   const confirm = useConfirmStore((state) => state.confirm);
   const [recentHealth, setRecentHealth] = React.useState<Record<string, boolean | 'checking'>>(() => ({ ...recentHealthCache }));
+  const [recentSummaries, setRecentSummaries] = React.useState<Record<string, string>>(() => ({ ...recentSummariesCache }));
+
+  React.useEffect(() => {
+    const pending = Array.from(new Set(recentProjects))
+      .slice(0, MAX_SUMMARY_PROJECTS)
+      .filter((path) => recentSummariesCache[path] === undefined);
+    if (pending.length === 0) return;
+    let cancelled = false;
+    void fetchRecentProjectSummaries(pending)
+      .then((rows) => {
+        rows.forEach((row) => {
+          recentSummariesCache[row.path] = summarizeRecentProject(row);
+        });
+        if (!cancelled) setRecentSummaries({ ...recentSummariesCache });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [recentProjects]);
 
   React.useEffect(() => {
     const paths = Array.from(new Set([...recentProjects, ...workspaceHistory.map((e) => e.path)]));
@@ -175,6 +204,13 @@ export const ProjectDashboard: React.FC = () => {
   // its cached health result so a re-added path is checked fresh.
   const handleRemoveRecent = (path: string) => {
     delete recentHealthCache[path];
+    delete recentSummariesCache[path];
+    setRecentSummaries((prev) => {
+      if (prev[path] === undefined) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
     setRecentHealth((prev) => {
       if (prev[path] === undefined) return prev;
       const next = { ...prev };
@@ -527,6 +563,9 @@ export const ProjectDashboard: React.FC = () => {
                         <FolderOpen size={14} />
                       )}
                       <span className={health === false ? 'text-muted' : ''}>{name}</span>
+                      {health !== false && (
+                        <span className="recent-project-summary">{recentSummaries[path]}</span>
+                      )}
                       {health === false && <span className="badge warning-badge">missing</span>}
                     </button>
                     <button
@@ -707,7 +746,10 @@ export const ProjectDashboard: React.FC = () => {
                       style={{ width: '100%', paddingRight: 20 }}
                     >
                       <span className={`workspace-status ${health === false ? 'missing' : health === 'checking' ? 'pending' : 'idle'}`} />
-                      <span>{name}</span>
+                      <span className="saple-start-recent-copy">
+                        <span>{name}</span>
+                        <small className="recent-project-summary">{recentSummaries[path]}</small>
+                      </span>
                     </button>
                     <button
                       type="button"

@@ -9,6 +9,10 @@ use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(12);
+// Network round-trips (fetch/pull/push) legitimately take far longer than local
+// porcelain; a 12s cap would abort healthy pushes over slow links.
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(120);
+const CHECKPOINT_REF_PREFIX: &str = "refs/saple/checkpoints/";
 const MAX_STATUS_FILES: usize = 500;
 const MAX_DIFF_BYTES: usize = 600_000;
 const MAX_UNTRACKED_BYTES: u64 = 1_000_000;
@@ -482,6 +486,429 @@ pub struct GitBranch {
     pub current: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Git remote round-trip (Phase 8.1)
+// ---------------------------------------------------------------------------
+
+/// Ahead/behind of the current branch relative to its upstream. `upstream` is
+/// `None` when no upstream is configured (or the repo has no remotes); ahead
+/// and behind are then both zero.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchSyncState {
+    pub branch: String,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+/// Outcome of a fetch/pull/push attempt. Git-level failures come back as
+/// `ok: false` with git's own message rather than an IPC error, so the renderer
+/// can show them inline; `conflicts` marks a divergence or rejection that needs
+/// human resolution, which Bridge defers to the terminal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteResult {
+    pub ok: bool,
+    pub conflicts: bool,
+    pub message: String,
+}
+
+fn current_branch_name(project_path: &str) -> Result<String, String> {
+    let output = run_git_with_timeout(project_path, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Parse `rev-list --left-right --count A...B` ("left<TAB>right") where left
+/// counts commits only in A. With A = upstream that left value is "behind".
+fn parse_rev_list_count(stdout: &str) -> Option<(u32, u32)> {
+    let mut parts = stdout.trim().split('\t');
+    let behind: u32 = parts.next()?.trim().parse().ok()?;
+    let ahead: u32 = parts.next()?.trim().parse().ok()?;
+    Some((behind, ahead))
+}
+
+fn upstream_of(project_path: &str) -> Option<String> {
+    let output = run_git_with_timeout(
+        project_path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        GIT_TIMEOUT,
+    );
+    match output {
+        Ok(out) if out.status.success() => {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if name.is_empty() { None } else { Some(name) }
+        }
+        _ => None,
+    }
+}
+
+pub fn git_branch_sync_state_inner(project_path: String) -> Result<GitBranchSyncState, String> {
+    let branch = current_branch_name(&project_path)?;
+    if branch == "HEAD" {
+        return Err("Detached HEAD state: no branch to compare against an upstream".to_string());
+    }
+    let upstream = upstream_of(&project_path);
+    let (ahead, behind) = match &upstream {
+        Some(up) => {
+            let spec = format!("{}...HEAD", up);
+            let output = run_git_with_timeout(
+                &project_path,
+                &["rev-list", "--left-right", "--count", &spec],
+                GIT_TIMEOUT,
+            )?;
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+            }
+            let (behind, ahead) = parse_rev_list_count(&String::from_utf8_lossy(&output.stdout))
+                .ok_or_else(|| format!("Unexpected rev-list output: {}", String::from_utf8_lossy(&output.stdout)))?;
+            (ahead, behind)
+        }
+        None => (0, 0),
+    };
+    Ok(GitBranchSyncState { branch, upstream, ahead, behind })
+}
+
+/// Heuristic over git's stderr: does this failure represent divergence/conflict
+/// territory (rather than e.g. auth or network trouble)?
+fn classify_conflict(stderr_lower: &str) -> bool {
+    [
+        "conflict",
+        "divergent",
+        "diverged",
+        "not possible to fast-forward",
+        "non-fast-forward",
+        "rejected",
+        "fetch first",
+    ]
+    .iter()
+    .any(|needle| stderr_lower.contains(needle))
+}
+
+const CONFLICT_GUIDANCE: &str = "Bridge does not resolve conflicts automatically. Open a terminal in this workspace to resolve manually, then retry.";
+
+#[tauri::command]
+pub async fn git_branch_sync_state(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitBranchSyncState, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_branch_sync_state_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn remote_result_from_output(output: Output, success_message: &str) -> GitRemoteResult {
+    if output.status.success() {
+        GitRemoteResult { ok: true, conflicts: false, message: success_message.to_string() }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let raw = if stderr.is_empty() { stdout } else { stderr };
+        let conflicts = classify_conflict(&raw.to_lowercase());
+        let message = if conflicts && !raw.contains("terminal") {
+            format!("{}\n{}", raw, CONFLICT_GUIDANCE)
+        } else {
+            raw
+        };
+        GitRemoteResult { ok: false, conflicts, message }
+    }
+}
+
+fn git_fetch_inner(project_path: String) -> Result<GitRemoteResult, String> {
+    let output = run_git_with_timeout(&project_path, &["fetch", "--all", "--prune"], REMOTE_TIMEOUT)?;
+    Ok(remote_result_from_output(output, "Fetched from all remotes"))
+}
+
+fn git_pull_inner(project_path: String) -> Result<GitRemoteResult, String> {
+    // --ff-only never leaves a half-merged working tree: when branches diverge,
+    // pull fails cleanly instead of writing conflict markers, so conflict
+    // resolution stays in the terminal as designed.
+    let output = run_git_with_timeout(&project_path, &["pull", "--ff-only"], REMOTE_TIMEOUT)?;
+    Ok(remote_result_from_output(output, "Already up to date"))
+}
+
+fn git_push_inner(project_path: String) -> Result<GitRemoteResult, String> {
+    let branch = current_branch_name(&project_path)?;
+    if branch == "HEAD" {
+        return Err("Detached HEAD state: nothing to push".to_string());
+    }
+    // First push of an untracked local branch publishes it and sets upstream;
+    // afterwards a plain push keeps working.
+    let args: Vec<&str> = if upstream_of(&project_path).is_some() {
+        vec!["push"]
+    } else {
+        vec!["push", "-u", "origin", &branch]
+    };
+    let output = run_git_with_timeout(&project_path, &args, REMOTE_TIMEOUT)?;
+    Ok(remote_result_from_output(
+        output,
+        &format!("Pushed {}", branch),
+    ))
+}
+
+#[tauri::command]
+pub async fn git_fetch(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitRemoteResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_fetch_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_pull(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitRemoteResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_pull_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_push(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitRemoteResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_push_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent-run checkpoints (Phase 8.2)
+//
+// A checkpoint is a hidden ref (`refs/saple/checkpoints/<run-id>`) capturing
+// the repository state right before an agent run starts. Hidden refs never
+// appear in `git log`, are not pushed or cloned by default, and leave the
+// worktree alone - no worktree isolation.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCheckpoint {
+    pub id: String,
+    pub commit: String,
+}
+
+/// Reduce a renderer-supplied run id to a safe ref-name component: only ASCII
+/// alphanumerics plus `-_.` survive, everything else collapses to `_`.
+fn sanitize_checkpoint_id(run_id: &str) -> String {
+    let cleaned: String = run_id
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .collect();
+    let trimmed = cleaned.trim_matches('.').to_string();
+    if trimmed.is_empty() { "_".to_string() } else { trimmed }
+}
+
+fn head_commit_of(project_path: &str) -> Result<Option<String>, String> {
+    let output = run_git_with_timeout(project_path, &["rev-parse", "HEAD"], GIT_TIMEOUT);
+    match output {
+        Ok(out) if out.status.success() => {
+            Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
+        }
+        Ok(_) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn working_tree_is_clean(project_path: &str) -> Result<bool, String> {
+    let output = run_git_with_timeout(project_path, &["status", "--porcelain"], GIT_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+fn checkpoint_ref(id: &str) -> String {
+    format!("{}{}", CHECKPOINT_REF_PREFIX, id)
+}
+
+fn verify_checkpoint_exists(project_path: &str, id: &str) -> Result<(), String> {
+    let reference = checkpoint_ref(id);
+    let verify = run_git_with_timeout(
+        project_path,
+        &["rev-parse", "--verify", "--quiet", &reference],
+        GIT_TIMEOUT,
+    )?;
+    if !verify.status.success() {
+        return Err(format!("Checkpoint '{}' does not exist", id));
+    }
+    Ok(())
+}
+
+fn parse_checkpoints(stdout: &str) -> Vec<GitCheckpoint> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (refname, commit) = line.split_once('\t')?;
+            let id = refname.strip_prefix(CHECKPOINT_REF_PREFIX)?;
+            Some(GitCheckpoint { id: id.to_string(), commit: commit.trim().to_string() })
+        })
+        .collect()
+}
+
+pub fn git_create_checkpoint_inner(project_path: String, run_id: String) -> Result<GitCheckpoint, String> {
+    let id = sanitize_checkpoint_id(&run_id);
+    if id.is_empty() {
+        return Err("A non-empty run id is required for a checkpoint".to_string());
+    }
+
+    // Capture committed state plus tracked uncommitted changes without touching
+    // the worktree or index: `git stash create` records index + worktree into
+    // dangling commits and only prints their hash. Untracked files stay outside
+    // the capture; restoring keeps files created after the checkpoint.
+    let no_commit = "Repository has no commits yet; nothing to checkpoint".to_string();
+    let capture = if working_tree_is_clean(&project_path)? {
+        head_commit_of(&project_path)?.ok_or(no_commit)?
+    } else {
+        let message = format!("saple checkpoint {}", id);
+        let output = run_git_with_timeout(&project_path, &["stash", "create", &message], GIT_TIMEOUT)?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if sha.is_empty() {
+            head_commit_of(&project_path)?.ok_or(no_commit)?
+        } else {
+            sha
+        }
+    };
+
+    let reference = checkpoint_ref(&id);
+    let output = run_git_with_timeout(&project_path, &["update-ref", &reference, &capture], GIT_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(GitCheckpoint { id, commit: capture })
+}
+
+pub fn git_list_checkpoints_inner(project_path: String) -> Result<Vec<GitCheckpoint>, String> {
+    let output = run_git_with_timeout(
+        &project_path,
+        &["for-each-ref", "--format=%(refname)\t%(objectname)", CHECKPOINT_REF_PREFIX],
+        GIT_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(parse_checkpoints(&String::from_utf8_lossy(&output.stdout)))
+}
+
+pub fn git_checkpoint_diff_inner(
+    project_path: String,
+    run_id: String,
+    file_path: Option<String>,
+) -> Result<String, String> {
+    let id = sanitize_checkpoint_id(&run_id);
+    verify_checkpoint_exists(&project_path, &id)?;
+
+    let reference = checkpoint_ref(&id);
+    let diff_args: Vec<&str> = match &file_path {
+        Some(fp) => {
+            get_project_file_path(&project_path, fp)?;
+            vec!["diff", &reference, "--", fp]
+        }
+        None => vec!["diff", &reference],
+    };
+    let output = run_git_with_timeout(&project_path, &diff_args, GIT_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let mut diff = String::from_utf8_lossy(&output.stdout).to_string();
+    if diff.trim().is_empty() {
+        return Ok("No tracked-file changes since this checkpoint.".to_string());
+    }
+    if diff.len() > MAX_DIFF_BYTES {
+        diff.truncate(MAX_DIFF_BYTES);
+        diff.push_str("\n@@ diff truncated by Saple Bridge @@\n");
+    }
+    Ok(diff)
+}
+
+pub fn git_restore_checkpoint_inner(project_path: String, run_id: String, confirmed: bool) -> Result<(), String> {
+    if !confirmed {
+        // Restore overwrites index and worktree content of every file the
+        // checkpoint tracks; the renderer must gate it behind an explicit
+        // confirm dialog and pass the flag through.
+        return Err("Restore refused without explicit confirmation".to_string());
+    }
+    let id = sanitize_checkpoint_id(&run_id);
+    verify_checkpoint_exists(&project_path, &id)?;
+
+    let reference = checkpoint_ref(&id);
+    let output = run_git_with_timeout(
+        &project_path,
+        &["restore", "--source", &reference, "--staged", "--worktree", "--", "."],
+        GIT_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_create_checkpoint(
+    project_path: String,
+    run_id: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitCheckpoint, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_create_checkpoint_inner(project_path, run_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_list_checkpoints(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<GitCheckpoint>, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_list_checkpoints_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_checkpoint_diff(
+    project_path: String,
+    run_id: String,
+    file_path: Option<String>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<String, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_checkpoint_diff_inner(project_path, run_id, file_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_restore_checkpoint(
+    project_path: String,
+    run_id: String,
+    confirmed: bool,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_restore_checkpoint_inner(project_path, run_id, confirmed))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+
 fn git_list_branches_inner(project_path: String) -> Result<Vec<GitBranch>, String> {
     // for-each-ref emits clean names (no "* " marker parsing, no detached-HEAD line).
     let output = run_git_with_timeout(
@@ -827,6 +1254,239 @@ mod tests {
         let gone = status.iter().find(|f| f.path == "gone.txt").expect("gone.txt in status");
         assert_eq!(gone.insertions, Some(0));
         assert_eq!(gone.deletions, Some(2));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 8.1: remote round-trip
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn rev_list_count_parses_left_right_pairs() {
+        assert_eq!(parse_rev_list_count("2\t3"), Some((2, 3)));
+        assert_eq!(parse_rev_list_count("  0\t1 \n"), Some((0, 1)));
+        assert_eq!(parse_rev_list_count(""), None);
+        assert_eq!(parse_rev_list_count("x\ty"), None);
+        assert_eq!(parse_rev_list_count("1"), None);
+    }
+
+    #[test]
+    fn conflict_classifier_flags_divergence_and_rejection() {
+        assert!(classify_conflict("your branch has diverged from the remote".into()));
+        assert!(classify_conflict("error: could not apply; conflict in a.txt".into()));
+        assert!(classify_conflict("! [rejected] main -> main (fetch first)".into()));
+        assert!(!classify_conflict("fatal: could not read Username for 'https://'".into()));
+        assert!(!classify_conflict("connection timed out".into()));
+    }
+
+    fn init_test_repo(name: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            out
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+        (dir, path)
+    }
+
+    #[test]
+    fn sync_state_computes_ahead_behind_against_a_fake_upstream() {
+        let (dir, path) = init_test_repo("saple-git-sync");
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            out
+        };
+        let commit = |msg: &str| {
+            git(&["add", "."]);
+            git(&["commit", "-m", msg]);
+        };
+        let rev_parse = |spec: &str| -> String {
+            let out = git(&["rev-parse", spec]);
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        commit("c1");
+        let c1 = rev_parse("HEAD");
+        fs::write(dir.join("a.txt"), "two\n").unwrap();
+        commit("c2");
+        let c2 = rev_parse("HEAD");
+
+        // No upstream configured yet.
+        let state = git_branch_sync_state_inner(path.clone()).unwrap();
+        assert_eq!(state.branch, "main");
+        assert_eq!(state.upstream, None);
+        assert_eq!((state.ahead, state.behind), (0, 0));
+
+        // Fake an origin upstream at c1: main is now ahead by one. A configured
+        // remote is required for @{upstream} to resolve even though we only
+        // point its tracking ref by hand.
+        git(&["remote", "add", "origin", "."]);
+        git(&["update-ref", "refs/remotes/origin/main", &c1]);
+        git(&["config", "branch.main.remote", "origin"]);
+        git(&["config", "branch.main.merge", "refs/heads/main"]);
+        let state = git_branch_sync_state_inner(path.clone()).unwrap();
+        assert_eq!(state.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((state.ahead, state.behind), (1, 0));
+
+        // Diverge: move the fake upstream to a sibling commit built from c1,
+        // so main is simultaneously ahead and behind.
+        git(&["checkout", "-q", "-b", "remote-side", &c1]);
+        fs::write(dir.join("a.txt"), "remote\n").unwrap();
+        commit("remote-c");
+        let remote_c = rev_parse("HEAD");
+        git(&["checkout", "-q", "main"]);
+        git(&["update-ref", "refs/remotes/origin/main", &remote_c]);
+
+        let state = git_branch_sync_state_inner(path.clone()).unwrap();
+        assert_eq!(state.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(state.ahead, 1, "main holds only c2 beyond the merge base");
+        assert_eq!(state.behind, 1, "upstream holds remote-c that main lacks");
+        let _ = c2;
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 8.2: checkpoints
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn checkpoint_ids_are_reduced_to_ref_safe_components() {
+        assert_eq!(sanitize_checkpoint_id("run-123"), "run-123");
+        assert_eq!(sanitize_checkpoint_id("../evil/ref:name"), "_evil_ref_name");
+        assert_eq!(sanitize_checkpoint_id("  "), "_");
+        assert_eq!(sanitize_checkpoint_id(""), "_");
+        // Leading dots are trimmed so the component can never read like a path.
+        assert_eq!(sanitize_checkpoint_id("..hidden"), "hidden");
+    }
+
+    #[test]
+    fn checkpoint_captures_dirty_tree_diff_shows_changes_restore_recovers() {
+        let (dir, path) = init_test_repo("saple-git-checkpoint");
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            out
+        };
+        fs::write(dir.join("a.txt"), "base\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+
+        // Agent-style uncommitted edits exist when the run starts.
+        fs::write(dir.join("a.txt"), "agent was here\n").unwrap();
+
+        let cp = git_create_checkpoint_inner(path.clone(), "run-abc".to_string()).unwrap();
+        assert_eq!(cp.id, "run-abc");
+
+        // The hidden ref exists and is listed.
+        let listed = git_list_checkpoints_inner(path.clone()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "run-abc");
+        assert_eq!(listed[0].commit, cp.commit);
+
+        // Nothing has changed since the capture itself.
+        let unchanged = git_checkpoint_diff_inner(path.clone(), "run-abc".to_string(), None).unwrap();
+        assert!(unchanged.contains("No tracked-file changes"));
+
+        // The run keeps editing after its checkpoint was taken...
+        fs::write(dir.join("a.txt"), "agent continued\n").unwrap();
+
+        // ...so the diff against the checkpoint shows those changes.
+        let diff = git_checkpoint_diff_inner(path.clone(), "run-abc".to_string(), None).unwrap();
+        assert!(diff.contains("-agent was here"), "expected removal of pre-checkpoint content:\n{}", diff);
+        assert!(diff.contains("+agent continued"));
+
+        // ...and per-file scoping works.
+        let scoped = git_checkpoint_diff_inner(
+            path.clone(),
+            "run-abc".to_string(),
+            Some("a.txt".to_string()),
+        )
+        .unwrap();
+        assert!(scoped.contains("+agent continued"));
+
+        // Restore rolls index + worktree back to the captured content.
+        git_restore_checkpoint_inner(path.clone(), "run-abc".to_string(), true).unwrap();
+        let normalized = fs::read_to_string(dir.join("a.txt"))
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert_eq!(
+            normalized,
+            "agent was here\n",
+            "restore must return the tracked file to its checkpointed content"
+        );
+        // After restore there is nothing left to diff against the checkpoint.
+        let clean = git_checkpoint_diff_inner(path.clone(), "run-abc".to_string(), None).unwrap();
+        assert!(clean.contains("No tracked-file changes"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clean_tree_checkpoints_head_and_restore_requires_confirmation() {
+        let (dir, path) = init_test_repo("saple-git-checkpoint-clean");
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            out
+        };
+        fs::write(dir.join("a.txt"), "v1\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+        let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_string();
+
+        // Clean tree: the checkpoint points at HEAD itself.
+        let cp = git_create_checkpoint_inner(path.clone(), "run-clean".to_string()).unwrap();
+        assert_eq!(cp.commit, head);
+
+        // New commits after the checkpoint are rolled back on restore.
+        fs::write(dir.join("a.txt"), "v2\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "later work"]);
+
+        // Without confirmation the restore is refused outright.
+        let err = git_restore_checkpoint_inner(path.clone(), "run-clean".to_string(), false)
+            .unwrap_err();
+        assert!(err.contains("confirmation"), "unexpected error: {}", err);
+
+        // A file staged after the checkpoint is rolled back out of index and
+        // worktree; a purely untracked file (never added) survives untouched.
+        fs::write(dir.join("staged-later.txt"), "rollback me\n").unwrap();
+        fs::write(dir.join("untracked-later.txt"), "keep me\n").unwrap();
+        git(&["add", "staged-later.txt"]);
+        git_restore_checkpoint_inner(path.clone(), "run-clean".to_string(), true).unwrap();
+        let normalized = fs::read_to_string(dir.join("a.txt"))
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert_eq!(normalized, "v1\n");
+        assert!(
+            !dir.join("staged-later.txt").exists(),
+            "files staged after the checkpoint must be rolled back"
+        );
+        assert!(
+            dir.join("untracked-later.txt").exists(),
+            "purely untracked files must survive"
+        );
+
+        // Unknown checkpoints fail with a clear message instead of git noise.
+        let err =
+            git_checkpoint_diff_inner(path.clone(), "missing-run".to_string(), None).unwrap_err();
+        assert!(err.contains("does not exist"), "unexpected error: {}", err);
 
         let _ = fs::remove_dir_all(&dir);
     }

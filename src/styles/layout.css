@@ -891,6 +891,27 @@ select optgroup {
   color: var(--color-danger);
 }
 
+/* Cross-project task summary glance line (Phase 8.7) */
+.recent-project-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.recent-project-item .recent-project-summary {
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.saple-start-recent-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
 .summary-flags {
   display: flex;
   flex-wrap: wrap;
