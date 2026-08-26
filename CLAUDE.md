@@ -18,6 +18,7 @@ npm run typecheck        # TypeScript check
 npm test                 # Vitest suite (single run)
 npm run test:watch       # Vitest in watch mode
 npm run build            # TypeScript + Vite production build
+npm run verify           # Full local verification sequence: typecheck, lint, test, build, cargo clippy/check/test
 npm run tauri:build      # Production bundle; stages the sidecar first
 npm run prepare-sidecar  # Manually build and stage ../saple-mcp
 ```
