@@ -5,10 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Weekly full run even when main is quiet: catches slow-burn breakage
+    # (dependency drift, advisory findings, E2E smoke rot) that PR-triggered
+    # CI never sees, and keeps the cargo caches warm.
+    - cron: '0 3 * * 1'
 
-# Cancel superseded runs on the same ref to save runner time.
+# Cancel superseded runs on the same ref to save runner time. Scheduled runs get a unique
+# group instead, so a quiet-week catch-up run is never killed by a simultaneous push.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('ci-{0}-schedule', github.run_id) || format('ci-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: true
 
 # Third-party actions are pinned to full commit SHAs (supply-chain hardening); the version
@@ -17,8 +24,9 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend (typecheck, lint, test, build)
+    name: Frontend (typecheck, lint, test, coverage, build)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -37,8 +45,17 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test
-        run: npm test
+      # Coverage run executes the full suite; the report is archived for every PR so a
+      # coverage regression is visible without gating on it yet.
+      - name: Test (coverage)
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
 
       - name: Build
         run: npm run build
@@ -53,6 +70,7 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -95,6 +113,7 @@ jobs:
   e2e:
     name: E2E smoke (windows)
     runs-on: windows-latest
+    timeout-minutes: 60
     # WebView2/msedgedriver setup is inherently flaky — keep this non-blocking until it has
     # proven stable, so a driver hiccup never red-Xes an otherwise good PR.
     continue-on-error: true
@@ -104,7 +123,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 20.19
           cache: npm
           # This job installs both the root frontend deps and the e2e/ suite.
           cache-dependency-path: |
@@ -140,8 +159,17 @@ jobs:
       - name: Build app binary
         run: cargo build --release --manifest-path src-tauri/Cargo.toml
 
+      # tauri-driver compiles from source in several minutes; cache the binary and only
+      # rebuild when the cache key is bumped (e.g. after a WebDriver-spec-breaking update).
+      - name: Cache tauri-driver
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/tauri-driver*
+          key: tauri-driver-windows-v1
+
       - name: Install tauri-driver
-        run: cargo install tauri-driver --locked
+        shell: bash
+        run: command -v tauri-driver >/dev/null 2>&1 || cargo install tauri-driver --locked
 
       - name: Install E2E deps
         working-directory: e2e
@@ -154,13 +182,14 @@ jobs:
   audit:
     name: Dependency audit (npm + cargo advisories)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 20.19
 
       # Production dependency tree only; dev-only advisories don't block CI.
       - name: npm audit (production deps)
@@ -171,10 +200,18 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked --quiet
+      # cargo-audit compiles from source in several minutes; cache the binary and only rebuild
+      # when the cache key is bumped. The advisory DB itself is refreshed on every run by
+      # cargo-audit, so a slightly stale binary is not a security gap.
+      - name: Cache cargo-audit
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-audit*
+          key: cargo-audit-linux-v1
 
       # Fails the job when the Rust Advisory Database reports a vulnerability (incl. high/critical)
       # or an unmaintained/yanked crate marked as a warning-worthy finding.
       - name: cargo audit
-        run: cargo audit --file src-tauri/Cargo.lock
+        run: |
+          command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit --locked --quiet
+          cargo audit --file src-tauri/Cargo.lock
