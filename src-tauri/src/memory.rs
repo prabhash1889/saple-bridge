@@ -855,19 +855,13 @@ pub(crate) fn save_memory_node_inner(
     let mut unknown_fields = HashMap::new();
     
     let mut old_relative_path = None;
-    if let Some((_, node, _)) = find_note_file_inner(&read_dir, &clean_id) {
+    if let Some((_, node, cached)) = find_note_file_inner(&read_dir, &clean_id) {
         let old_rel = format!("{}/{}.md", node.category, clean_id);
         old_relative_path = Some(old_rel.clone());
-        let old_full_path = read_dir.join(&old_rel);
-        if old_full_path.exists() {
-            if let Ok(content_str) = fs::read_to_string(&old_full_path) {
-                let parsed = parse_memory_file(&content_str, &old_rel);
-                if let Some(c) = parsed.created {
-                    created_time = c;
-                }
-                unknown_fields = parsed.unknown_frontmatter;
-            }
+        if let Some(c) = cached.parsed.created.clone() {
+            created_time = c;
         }
+        unknown_fields = cached.parsed.unknown_frontmatter.clone();
     }
     
     // All user-controlled scalars are double-quoted so a title/tag/alias containing `:`, `#`, a
@@ -950,8 +944,8 @@ pub(crate) fn save_memory_node_inner(
     })
 }
 
-fn find_note_file_inner(memory_dir: &Path, id: &str) -> Option<(PathBuf, MemoryNode, String)> {
-    fn walk(dir: &Path, id: &str) -> Option<(PathBuf, MemoryNode, String)> {
+fn find_note_file_inner(memory_dir: &Path, id: &str) -> Option<(PathBuf, MemoryNode, Arc<CachedNote>)> {
+    fn walk(dir: &Path, id: &str) -> Option<(PathBuf, MemoryNode, Arc<CachedNote>)> {
         if dir.is_dir() {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
@@ -964,7 +958,7 @@ fn find_note_file_inner(memory_dir: &Path, id: &str) -> Option<(PathBuf, MemoryN
                         if let Some(cached) = cached_note(&path) {
                             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                             if cached.parsed.id == id {
-                                return Some((path, node_from_cached(&cached.parsed, &filename), cached.content.clone()));
+                                return Some((path, node_from_cached(&cached.parsed, &filename), cached));
                             }
                         }
                     }
@@ -1210,17 +1204,16 @@ pub async fn add_memory_link(
 
 fn add_memory_link_inner(project_path: String, source: String, target: String) -> Result<(), String> {
     let memory_dir = memory_layout::get_memory_dir(&project_path);
-    let (_, node, content) = find_note_file_inner(&memory_dir, &source)
+    let (_, node, cached) = find_note_file_inner(&memory_dir, &source)
         .ok_or_else(|| format!("Source note '{}' not found", source))?;
 
     let link_tag = format!("[[{}]]", target);
-    if content.contains(&link_tag) {
+    if cached.content.contains(&link_tag) {
         return Ok(()); // already linked — no-op
     }
 
     // Body without frontmatter + leading H1 (save re-adds the H1 from the title).
-    let parsed = parse_memory_file(&content, &node.file_path);
-    let mut body = parsed.body;
+    let mut body = cached.parsed.body.clone();
     if body.trim_start().starts_with("# ") {
         let lines: Vec<&str> = body.trim_start().lines().collect();
         body = lines[1..].join("\n");
