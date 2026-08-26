@@ -1004,7 +1004,10 @@ mod tests {
             )
         };
 
-        let short = Duration::from_secs(2);
+        // Long enough that nested PowerShell startup on a cold CI runner cannot outrun
+        // the deadline before the grandchild records its pid; short enough that the
+        // 30s sleeper still hits the timeout rather than finishing first.
+        let short = Duration::from_secs(10);
         let (output, stop) = run_shell_with_timeout("test", &dir_str, &cmd, short, None).unwrap();
         assert_eq!(stop, ShellStop::TimedOut);
         let _ = output;
