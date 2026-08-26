@@ -9,6 +9,9 @@ use crate::process_ext::CommandNoWindow;
 use crate::project_roots::ProjectRootRegistry;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(12);
+// Network round-trips (fetch/pull/push) legitimately take far longer than local
+// porcelain; a 12s cap would abort healthy pushes over slow links.
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_STATUS_FILES: usize = 500;
 const MAX_DIFF_BYTES: usize = 600_000;
 const MAX_UNTRACKED_BYTES: u64 = 1_000_000;
@@ -482,6 +485,203 @@ pub struct GitBranch {
     pub current: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Git remote round-trip (Phase 8.1)
+// ---------------------------------------------------------------------------
+
+/// Ahead/behind of the current branch relative to its upstream. `upstream` is
+/// `None` when no upstream is configured (or the repo has no remotes); ahead
+/// and behind are then both zero.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchSyncState {
+    pub branch: String,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+/// Outcome of a fetch/pull/push attempt. Git-level failures come back as
+/// `ok: false` with git's own message rather than an IPC error, so the renderer
+/// can show them inline; `conflicts` marks a divergence or rejection that needs
+/// human resolution, which Bridge defers to the terminal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteResult {
+    pub ok: bool,
+    pub conflicts: bool,
+    pub message: String,
+}
+
+fn current_branch_name(project_path: &str) -> Result<String, String> {
+    let output = run_git_with_timeout(project_path, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Parse `rev-list --left-right --count A...B` ("left<TAB>right") where left
+/// counts commits only in A. With A = upstream that left value is "behind".
+fn parse_rev_list_count(stdout: &str) -> Option<(u32, u32)> {
+    let mut parts = stdout.trim().split('\t');
+    let behind: u32 = parts.next()?.trim().parse().ok()?;
+    let ahead: u32 = parts.next()?.trim().parse().ok()?;
+    Some((behind, ahead))
+}
+
+fn upstream_of(project_path: &str) -> Option<String> {
+    let output = run_git_with_timeout(
+        project_path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        GIT_TIMEOUT,
+    );
+    match output {
+        Ok(out) if out.status.success() => {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if name.is_empty() { None } else { Some(name) }
+        }
+        _ => None,
+    }
+}
+
+pub fn git_branch_sync_state_inner(project_path: String) -> Result<GitBranchSyncState, String> {
+    let branch = current_branch_name(&project_path)?;
+    if branch == "HEAD" {
+        return Err("Detached HEAD state: no branch to compare against an upstream".to_string());
+    }
+    let upstream = upstream_of(&project_path);
+    let (ahead, behind) = match &upstream {
+        Some(up) => {
+            let spec = format!("{}...HEAD", up);
+            let output = run_git_with_timeout(
+                &project_path,
+                &["rev-list", "--left-right", "--count", &spec],
+                GIT_TIMEOUT,
+            )?;
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+            }
+            let (behind, ahead) = parse_rev_list_count(&String::from_utf8_lossy(&output.stdout))
+                .ok_or_else(|| format!("Unexpected rev-list output: {}", String::from_utf8_lossy(&output.stdout)))?;
+            (ahead, behind)
+        }
+        None => (0, 0),
+    };
+    Ok(GitBranchSyncState { branch, upstream, ahead, behind })
+}
+
+/// Heuristic over git's stderr: does this failure represent divergence/conflict
+/// territory (rather than e.g. auth or network trouble)?
+fn classify_conflict(stderr_lower: &str) -> bool {
+    [
+        "conflict",
+        "divergent",
+        "diverged",
+        "not possible to fast-forward",
+        "non-fast-forward",
+        "rejected",
+        "fetch first",
+    ]
+    .iter()
+    .any(|needle| stderr_lower.contains(needle))
+}
+
+const CONFLICT_GUIDANCE: &str = "Bridge does not resolve conflicts automatically. Open a terminal in this workspace to resolve manually, then retry.";
+
+#[tauri::command]
+pub async fn git_branch_sync_state(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitBranchSyncState, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_branch_sync_state_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn remote_result_from_output(output: Output, success_message: &str) -> GitRemoteResult {
+    if output.status.success() {
+        GitRemoteResult { ok: true, conflicts: false, message: success_message.to_string() }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let raw = if stderr.is_empty() { stdout } else { stderr };
+        let conflicts = classify_conflict(&raw.to_lowercase());
+        let message = if conflicts && !raw.contains("terminal") {
+            format!("{}\n{}", raw, CONFLICT_GUIDANCE)
+        } else {
+            raw
+        };
+        GitRemoteResult { ok: false, conflicts, message }
+    }
+}
+
+fn git_fetch_inner(project_path: String) -> Result<GitRemoteResult, String> {
+    let output = run_git_with_timeout(&project_path, &["fetch", "--all", "--prune"], REMOTE_TIMEOUT)?;
+    Ok(remote_result_from_output(output, "Fetched from all remotes"))
+}
+
+fn git_pull_inner(project_path: String) -> Result<GitRemoteResult, String> {
+    // --ff-only never leaves a half-merged working tree: when branches diverge,
+    // pull fails cleanly instead of writing conflict markers, so conflict
+    // resolution stays in the terminal as designed.
+    let output = run_git_with_timeout(&project_path, &["pull", "--ff-only"], REMOTE_TIMEOUT)?;
+    Ok(remote_result_from_output(output, "Already up to date"))
+}
+
+fn git_push_inner(project_path: String) -> Result<GitRemoteResult, String> {
+    let branch = current_branch_name(&project_path)?;
+    if branch == "HEAD" {
+        return Err("Detached HEAD state: nothing to push".to_string());
+    }
+    // First push of an untracked local branch publishes it and sets upstream;
+    // afterwards a plain push keeps working.
+    let args: Vec<&str> = if upstream_of(&project_path).is_some() {
+        vec!["push"]
+    } else {
+        vec!["push", "-u", "origin", &branch]
+    };
+    let output = run_git_with_timeout(&project_path, &args, REMOTE_TIMEOUT)?;
+    Ok(remote_result_from_output(
+        output,
+        &format!("Pushed {}", branch),
+    ))
+}
+
+#[tauri::command]
+pub async fn git_fetch(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitRemoteResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_fetch_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_pull(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitRemoteResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_pull_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_push(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<GitRemoteResult, String> {
+    registry.ensure_inside_approved_root(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || git_push_inner(project_path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn git_list_branches_inner(project_path: String) -> Result<Vec<GitBranch>, String> {
     // for-each-ref emits clean names (no "* " marker parsing, no detached-HEAD line).
     let output = run_git_with_timeout(
@@ -827,6 +1027,105 @@ mod tests {
         let gone = status.iter().find(|f| f.path == "gone.txt").expect("gone.txt in status");
         assert_eq!(gone.insertions, Some(0));
         assert_eq!(gone.deletions, Some(2));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 8.1: remote round-trip
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn rev_list_count_parses_left_right_pairs() {
+        assert_eq!(parse_rev_list_count("2\t3"), Some((2, 3)));
+        assert_eq!(parse_rev_list_count("  0\t1 \n"), Some((0, 1)));
+        assert_eq!(parse_rev_list_count(""), None);
+        assert_eq!(parse_rev_list_count("x\ty"), None);
+        assert_eq!(parse_rev_list_count("1"), None);
+    }
+
+    #[test]
+    fn conflict_classifier_flags_divergence_and_rejection() {
+        assert!(classify_conflict("your branch has diverged from the remote".into()));
+        assert!(classify_conflict("error: could not apply; conflict in a.txt".into()));
+        assert!(classify_conflict("! [rejected] main -> main (fetch first)".into()));
+        assert!(!classify_conflict("fatal: could not read Username for 'https://'".into()));
+        assert!(!classify_conflict("connection timed out".into()));
+    }
+
+    fn init_test_repo(name: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            out
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+        (dir, path)
+    }
+
+    #[test]
+    fn sync_state_computes_ahead_behind_against_a_fake_upstream() {
+        let (dir, path) = init_test_repo("saple-git-sync");
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+            out
+        };
+        let commit = |msg: &str| {
+            git(&["add", "."]);
+            git(&["commit", "-m", msg]);
+        };
+        let rev_parse = |spec: &str| -> String {
+            let out = git(&["rev-parse", spec]);
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        fs::write(dir.join("a.txt"), "one\n").unwrap();
+        commit("c1");
+        let c1 = rev_parse("HEAD");
+        fs::write(dir.join("a.txt"), "two\n").unwrap();
+        commit("c2");
+        let c2 = rev_parse("HEAD");
+
+        // No upstream configured yet.
+        let state = git_branch_sync_state_inner(path.clone()).unwrap();
+        assert_eq!(state.branch, "main");
+        assert_eq!(state.upstream, None);
+        assert_eq!((state.ahead, state.behind), (0, 0));
+
+        // Fake an origin upstream at c1: main is now ahead by one. A configured
+        // remote is required for @{upstream} to resolve even though we only
+        // point its tracking ref by hand.
+        git(&["remote", "add", "origin", "."]);
+        git(&["update-ref", "refs/remotes/origin/main", &c1]);
+        git(&["config", "branch.main.remote", "origin"]);
+        git(&["config", "branch.main.merge", "refs/heads/main"]);
+        let state = git_branch_sync_state_inner(path.clone()).unwrap();
+        assert_eq!(state.upstream.as_deref(), Some("origin/main"));
+        assert_eq!((state.ahead, state.behind), (1, 0));
+
+        // Diverge: move the fake upstream to a sibling commit built from c1,
+        // so main is simultaneously ahead and behind.
+        git(&["checkout", "-q", "-b", "remote-side", &c1]);
+        fs::write(dir.join("a.txt"), "remote\n").unwrap();
+        commit("remote-c");
+        let remote_c = rev_parse("HEAD");
+        git(&["checkout", "-q", "main"]);
+        git(&["update-ref", "refs/remotes/origin/main", &remote_c]);
+
+        let state = git_branch_sync_state_inner(path.clone()).unwrap();
+        assert_eq!(state.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(state.ahead, 1, "main holds only c2 beyond the merge base");
+        assert_eq!(state.behind, 1, "upstream holds remote-c that main lacks");
+        let _ = c2;
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -673,3 +673,45 @@
   color: var(--text-primary);
   font-size: var(--text-sm);
 }
+
+/* Git remote sync strip (Phase 8.1) */
+.git-sync-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 16px 10px;
+}
+
+.git-sync-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.git-sync-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-sync-actions .secondary-action {
+  height: 28px;
+  padding: 0 10px;
+}
+
+.git-sync-conflict {
+  width: 100%;
+}
+
+.git-sync-message {
+  margin: 6px 0 0;
+  max-height: 140px;
+  overflow: auto;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}

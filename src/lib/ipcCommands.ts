@@ -59,6 +59,10 @@ export const IPC_COMMANDS = [
   'git_list_branches',
   'git_checkout_branch',
   'ensure_saple_git_excluded',
+  'git_branch_sync_state',
+  'git_fetch',
+  'git_pull',
+  'git_push',
   // review
   'create_review_record',
   'read_review_record',
