@@ -19,6 +19,7 @@ mod process_ext;
 mod proc_tree;
 mod fs_lock;
 mod project_roots;
+mod project_summary;
 mod sidecar;
 mod state_load;
 mod watcher;
@@ -190,6 +191,7 @@ pub fn run() {
             control_plane::canonical_record_write,
             state_load::load_state_file,
             state_load::resolve_state_corruption,
+            project_summary::get_recent_project_summaries,
             june_control::june_control_get_enabled,
             june_control::june_control_set_enabled,
             june_control::june_command_result,
@@ -307,6 +309,7 @@ mod tests {
         "canonical_record_write",
         "load_state_file",
         "resolve_state_corruption",
+        "get_recent_project_summaries",
         "june_control_get_enabled",
         "june_control_set_enabled",
         "june_command_result",

@@ -78,6 +78,7 @@ export const IPC_COMMANDS = [
   'canonical_record_write',
   'load_state_file',
   'resolve_state_corruption',
+  'get_recent_project_summaries',
   // June control plane
   'june_control_get_enabled',
   'june_control_set_enabled',
