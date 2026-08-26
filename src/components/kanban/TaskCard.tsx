@@ -120,6 +120,17 @@ const TaskCardComponent: React.FC<TaskCardProps> = ({ task, selected = false, on
       draggable
       onDragStart={handleDragStart}
       onClick={() => onClick(task)}
+      // The card hosts nested controls (select/buttons), so it can't be a native
+      // button; give it button semantics and keyboard activation instead.
+      role="button"
+      tabIndex={0}
+      aria-current={selected ? 'true' : undefined}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick(task);
+        }
+      }}
       ref={selected ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
       style={selected ? { ...cardStyle, borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' } : cardStyle}
     >
