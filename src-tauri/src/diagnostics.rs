@@ -2,9 +2,15 @@ use serde::{Serialize, Deserialize};
 use std::process::Command;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 use crate::keychain;
-use crate::process_ext::CommandNoWindow;
+use crate::process_ext::{run_with_timeout, CommandNoWindow};
 use crate::providers::{self, CliStatus};
+
+/// Every external probe in the diagnostics report is bounded so a hung CLI or shell
+/// cannot stall the whole report.
+const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +59,97 @@ pub async fn run_diagnostics(
         .map_err(|e| e.to_string())?
 }
 
+fn detect_shell() -> String {
+    if cfg!(target_os = "windows") {
+        let cmd_ok = run_with_timeout(
+            {
+                let mut c = Command::new("cmd");
+                c.args(["/C", "echo 1"]);
+                c.no_window();
+                c
+            },
+            SHELL_PROBE_TIMEOUT,
+        )
+        .is_some();
+        let ps_ok = run_with_timeout(
+            {
+                let mut c = Command::new("powershell");
+                c.args(["-Command", "echo 1"]);
+                c.no_window();
+                c
+            },
+            SHELL_PROBE_TIMEOUT,
+        )
+        .is_some();
+        if ps_ok {
+            "PowerShell (Active)".to_string()
+        } else if cmd_ok {
+            "CMD (Active)".to_string()
+        } else {
+            "None / Unavailable".to_string()
+        }
+    } else {
+        let bash_ok = run_with_timeout(
+            {
+                let mut c = Command::new("bash");
+                c.args(["-c", "echo 1"]);
+                c.no_window();
+                c
+            },
+            SHELL_PROBE_TIMEOUT,
+        )
+        .is_some();
+        let sh_ok = run_with_timeout(
+            {
+                let mut c = Command::new("sh");
+                c.args(["-c", "echo 1"]);
+                c.no_window();
+                c
+            },
+            SHELL_PROBE_TIMEOUT,
+        )
+        .is_some();
+        if bash_ok {
+            "Bash (Active)".to_string()
+        } else if sh_ok {
+            "Sh (Active)".to_string()
+        } else {
+            "None / Unavailable".to_string()
+        }
+    }
+}
+
+fn git_available(project_path: &str) -> bool {
+    if project_path.is_empty() {
+        return false;
+    }
+    let mut command = Command::new("git");
+    command.args(["status", "--porcelain"]).current_dir(project_path).no_window();
+    run_with_timeout(command, GIT_PROBE_TIMEOUT)
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Verify the OS keychain backend works using a THROWAWAY service. We never write into a
+/// real `saple_provider_*` slot: a failed cleanup there would overwrite the user's stored
+/// key. The backend is global, so one probe applies to every provider row.
+fn keychain_backend_status() -> String {
+    let probe_service = "saple_diagnostics_probe".to_string();
+    let probe_val = "saple-diagnostics-probe";
+    match keychain::set_api_key_inner(probe_service.clone(), probe_val.to_string()) {
+        Ok(_) => {
+            let retrieved = keychain::get_api_key_inner(probe_service.clone());
+            let _ = keychain::delete_api_key_inner(probe_service);
+            match retrieved {
+                Ok(val) if val == probe_val => "ok".to_string(),
+                Ok(_) => "mismatch".to_string(),
+                Err(e) => format!("retrieval failed: {}", e),
+            }
+        }
+        Err(e) => format!("set failed: {}", e),
+    }
+}
+
 fn run_diagnostics_inner(registry: &crate::project_roots::ProjectRootRegistry, project_path: String) -> Result<DiagnosticsResult, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     // 1. OS check
@@ -64,28 +161,33 @@ fn run_diagnostics_inner(registry: &crate::project_roots::ProjectRootRegistry, p
         "Linux Desktop".to_string()
     };
 
-    // 2. Shell check
-    let shell = if cfg!(target_os = "windows") {
-        let cmd_ok = Command::new("cmd").args(["/C", "echo 1"]).no_window().output().is_ok();
-        let ps_ok = Command::new("powershell").args(["-Command", "echo 1"]).no_window().output().is_ok();
-        if ps_ok {
-            "PowerShell (Active)".to_string()
-        } else if cmd_ok {
-            "CMD (Active)".to_string()
-        } else {
-            "None / Unavailable".to_string()
-        }
-    } else {
-        let bash_ok = Command::new("bash").args(["-c", "echo 1"]).no_window().output().is_ok();
-        let sh_ok = Command::new("sh").args(["-c", "echo 1"]).no_window().output().is_ok();
-        if bash_ok {
-            "Bash (Active)".to_string()
-        } else if sh_ok {
-            "Sh (Active)".to_string()
-        } else {
-            "None / Unavailable".to_string()
-        }
-    };
+    // The shell, git, keychain, and provider-CLI probes are mutually independent and each
+    // spawns external processes; run them concurrently so the report takes as long as its
+    // slowest probe, not their sum. Fast local checks stay on this thread.
+    let shell_handle = std::thread::spawn(detect_shell);
+    let git_path = project_path.clone();
+    let git_handle = std::thread::spawn(move || git_available(&git_path));
+    let keychain_handle = std::thread::spawn(keychain_backend_status);
+
+    // 6. Provider CLIs check — resolve each CLI on PATH (cross-platform via `which`) and probe
+    // `--version`, one thread per provider so a slow CLI cannot delay the others. The spec
+    // comes from the same provider table `check_provider_cli` uses, so the two never disagree.
+    let cli_specs: Vec<(String, String, Vec<String>)> = providers::all()
+        .iter()
+        .filter(|f| f.probes_version)
+        .filter_map(|f| {
+            providers::cli_probe_spec(f.id)
+                .map(|(bin, args)| (f.id.to_string(), bin.to_string(), args.iter().map(|s| s.to_string()).collect()))
+        })
+        .collect();
+    let cli_handles: Vec<_> = cli_specs
+        .into_iter()
+        .map(|(id, bin, args)| {
+            std::thread::spawn(move || {
+                let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                providers::probe_cli(&id, &bin, &arg_refs, providers::CLI_PROBE_TIMEOUT)
+            })        })
+        .collect();
 
     // 3. Workspace write access check
     let workspace_write = if !project_path.is_empty() {
@@ -100,59 +202,6 @@ fn run_diagnostics_inner(registry: &crate::project_roots::ProjectRootRegistry, p
     } else {
         false
     };
-
-    // 4. Git status availability check
-    let git_available = if !project_path.is_empty() {
-        let status_output = Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&project_path)
-            .no_window()
-            .output();
-        match status_output {
-            Ok(output) => output.status.success(),
-            Err(_) => false,
-        }
-    } else {
-        false
-    };
-
-    // 5. Keychain check — verify the OS keychain backend works using a THROWAWAY service.
-    // We never write into a real `saple_provider_*` slot: a failed cleanup there would overwrite
-    // the user's stored key (the same bug already fixed in `test_provider_connection`). The
-    // backend is global, so one probe applies to every provider row.
-    let probe_service = "saple_diagnostics_probe".to_string();
-    let probe_val = "saple-diagnostics-probe";
-    let backend_status = match keychain::set_api_key_inner(probe_service.clone(), probe_val.to_string()) {
-        Ok(_) => {
-            let retrieved = keychain::get_api_key_inner(probe_service.clone());
-            let _ = keychain::delete_api_key_inner(probe_service);
-            match retrieved {
-                Ok(val) if val == probe_val => "ok".to_string(),
-                Ok(_) => "mismatch".to_string(),
-                Err(e) => format!("retrieval failed: {}", e),
-            }
-        }
-        Err(e) => format!("set failed: {}", e),
-    };
-
-    let mut keychains = Vec::new();
-    for f in providers::all().iter().filter(|f| f.reports_keychain_status) {
-        keychains.push(KeychainStatus {
-            provider: f.id.to_string(),
-            status: backend_status.clone(),
-            error: None,
-        });
-    }
-
-    // 6. Provider CLIs check — resolve each CLI on PATH (cross-platform via `which`) and probe
-    // `--version`. The spec comes from the same provider table `check_provider_cli` uses, so the
-    // two never disagree. Providers without a version probe are omitted.
-    let mut provider_clis = Vec::new();
-    for f in providers::all().iter().filter(|f| f.probes_version) {
-        if let Some((bin, args)) = providers::cli_probe_spec(f.id) {
-            provider_clis.push(providers::probe_cli(f.id, bin, &args));
-        }
-    }
 
     // 7. MCP config status check
     let base = Path::new(&project_path);
@@ -181,6 +230,25 @@ fn run_diagnostics_inner(registry: &crate::project_roots::ProjectRootRegistry, p
                 }
             }
         }
+    }
+
+    let shell = shell_handle.join().unwrap_or_else(|_| "None / Unavailable".to_string());
+    let git_available = git_handle.join().unwrap_or(false);
+    let backend_status = keychain_handle.join().unwrap_or_else(|_| "probe failed".to_string());
+    let mut provider_clis: Vec<CliStatus> = Vec::with_capacity(cli_handles.len());
+    for handle in cli_handles {
+        if let Ok(status) = handle.join() {
+            provider_clis.push(status);
+        }
+    }
+
+    let mut keychains = Vec::new();
+    for f in providers::all().iter().filter(|f| f.reports_keychain_status) {
+        keychains.push(KeychainStatus {
+            provider: f.id.to_string(),
+            status: backend_status.clone(),
+            error: None,
+        });
     }
 
     Ok(DiagnosticsResult {
