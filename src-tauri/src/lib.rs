@@ -12,6 +12,7 @@ mod review;
 mod control_plane;
 mod june_control;
 mod swarm;
+mod missions;
 mod files;
 mod diagnostics;
 mod providers;
@@ -207,6 +208,12 @@ pub fn run() {
             swarm::write_handoff_file,
             swarm::validate_dependency_graph,
             swarm::run_acceptance_command,
+            missions::mission_create,
+            missions::mission_list,
+            missions::mission_read,
+            missions::mission_update_doc,
+            missions::mission_set_tasks,
+            missions::mission_command,
             files::list_project_files,
             files::read_text_file,
             files::write_text_file,
@@ -325,6 +332,12 @@ mod tests {
         "write_handoff_file",
         "validate_dependency_graph",
         "run_acceptance_command",
+        "mission_create",
+        "mission_list",
+        "mission_read",
+        "mission_update_doc",
+        "mission_set_tasks",
+        "mission_command",
         "list_project_files",
         "read_text_file",
         "write_text_file",
