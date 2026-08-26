@@ -20,7 +20,7 @@ It is a native desktop app built on Tauri 2 and Rust, with a React 19, TypeScrip
 
 | Dependency | Version | Needed for |
 | --- | --- | --- |
-| Node.js | 20+ | Frontend build and tooling |
+| Node.js | >= 20.19 | Frontend build and tooling |
 | npm | bundled with Node | Package management and scripts |
 | Rust | stable toolchain | Tauri backend, desktop app, sidecar |
 | `saple-mcp` checkout | at `../saple-mcp` | `tauri dev` and release bundles |
@@ -57,12 +57,20 @@ npm run tauri:build
 
 `npm run tauri:dev` and `npm run tauri:build` stage the `saple-mcp` sidecar automatically through `scripts/prepare-sidecar.mjs`.
 
+## Documentation
+
+- [First launch and provider readiness](docs/first-run.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Security, privacy, credentials, June and browser automation](docs/security-and-privacy.md)
+
 ## Useful Commands
 
 ```powershell
 npm run typecheck        # TypeScript check
+npm run lint             # ESLint
 npm test                 # Vitest suite
 npm run build            # TypeScript + Vite production build
+npm run verify           # Full local verification sequence (typecheck, lint, tests, build, cargo clippy/check/test)
 npm run tauri:dev        # Tauri desktop dev app
 npm run tauri:build      # Tauri production bundle (local QA; auto-bumps patch version)
 npm run prepare-sidecar  # Build and stage ../saple-mcp manually
@@ -96,25 +104,41 @@ Saple Bridge writes project-local state under `.saple/` in the opened workspace:
 
 ```text
 .saple/
-  config.json
-  tasks.json
-  providers.json
+  config.json             Workspace settings (memory mode, defaults, verification presets)
+  tasks.json              Kanban board
+  agents.json             Control plane: agent registry
+  runs.json               Control plane: agent runs
+  artifacts.json          Control plane: run artifacts (test evidence)
   agents/
-    sessions.json
-    presets.json
-    prompts/
-    logs/
-    transcripts/
+    sessions.json         Agent session records
+    prompts/              Saved launch prompt per session (<sessionId>.md)
+    logs/                 Captured agent output (<id>.ansi)
+    transcripts/          Created on project open for session transcripts
   swarm/
-    state.json
-    templates.json
-    mailbox/
-    handoffs/
-  memory/
-  review/
+    state.json            Swarm state, including the hung-agent alert threshold
+    plan.json             Coordinator task plan
+    escalation.json       Structured escalation report from a failed run
+    requests.json         Worker requests awaiting operator approval
+    mailbox/              Per-agent mailboxes (<agentId>.md)
+    handoffs/             Handoff records (<from>-to-<to>.json)
+    verdicts/             Review verdicts per review task
+    outcomes/             Per-agent completion outcomes
+    context/              Context files attached at launch
+  memory/                 Project memory notes (frontmatter markdown, category subfolders)
+  review/                 Review decisions per task (<taskId>.json)
   snapshots/
-    memory/
+    <name>/               Full byte-for-byte copy of .saple/memory at snapshot time,
+                          preserving category subfolders (e.g. general/note.md).
+                          No metadata file; snapshots are created and restored
+                          transactionally. Restoring first writes a safety
+                          snapshot named pre-restore-<timestamp>.
 ```
+
+Notes:
+
+- Agent-run checkpoints are not files under `.saple/`; they are hidden git refs (`refs/saple/checkpoints/<run-id>`) in the workspace repository.
+- The reusable prompt library is a user-level preference persisted in the browser localStorage of the app, not under `.saple/`.
+- Provider API keys are stored only in the OS keychain; no `providers.json` or similar file exists.
 
 Generated MCP client files such as `.mcp.json` and `mcp_config.json` may also be written into a workspace. They contain local absolute paths and should normally stay uncommitted.
 
@@ -173,15 +197,11 @@ Known limitation: installers are not Authenticode-signed, so Windows SmartScreen
 Before cutting a release:
 
 ```powershell
-npm run typecheck
-npm test
-npm run build
-cargo check --manifest-path src-tauri/Cargo.toml
-cd src-tauri
-cargo test
-cd ..
+npm run verify           # Typecheck, lint, tests, build, cargo clippy/check/test
 npm run release
 ```
+
+`npm run verify` mirrors what CI runs (frontend typecheck/lint/test/build, cargo clippy with `-D warnings`, cargo check, cargo test) plus E2E smoke and dependency audits that CI adds on top.
 
 Then watch the Release workflow in GitHub Actions, verify the draft release has the installer, its `.sig`, and `latest.json`, and publish it.
 

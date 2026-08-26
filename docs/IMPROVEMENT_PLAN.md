@@ -181,6 +181,7 @@ Updated at phase boundaries; completed implementation detail lives in git histor
 | 5 - Architecture deepening | Complete | single-owner path policy with coded errors, terminal transport/bridge inversion, coordinator-link and crash-recovery extraction from swarmStore, provider facts table (Rust + renderer), memory layout owner, sidecar module split, coded IPC error surfaces - see Phase 5 notes |
 | 6 - Frontend, UX, and accessibility | Complete | error banners with retry, cold-start path validation with relocate/remove, memory-first dashboard counts plus external-edit watching, per-recent-project removal, reopenable onboarding with provider readiness, quit confirmation for live agents, theme aliases + tokenized overlays + restored text selection + type scale + narrow-window responsive pass, keyboard/screen-reader accessibility incl. xterm SR mode and AA muted contrast - see Phase 6 notes |
 | 8 - Product expansion | Complete (code) | git fetch/pull/push with ahead/behind sync bar, hidden-ref per-run checkpoints with diff and confirm-gated restore, agent activity dashboard, typed MCP tools (`get_tasks`, `update_task_status`, `send_mailbox_message`) in the sibling saple-mcp repo, prompt library across terminal/Kanban/swarm, ranked local memory search, read-only cross-project task summaries on recents - each slice ships with its own automated check; saple-mcp commits are local and unpushed |
+| 9 - Documentation and maintenance | **Complete** | corrected README storage tree and snapshot layout, full Rust module map, first-run/troubleshooting/security-and-privacy docs, archived root-level planning docs, missing-sidecar setup error pointer, Node `>=20.19` engine pin, `npm run verify` sequence matching CI - see Phase 9 status |
 
 ---
 ## Phase 4 - Observability, testing, and release hardening
@@ -533,6 +534,20 @@ Backend: memory note parsing is cached by path + mtime with explicit invalidatio
 
 - README storage and behavior claims match implementation.
 - A new contributor can set up, verify, and diagnose the project without undocumented steps.
+
+### Status (updated at the end of the Phase 9 session)
+
+All work items landed on branch `traycer/saple-bridge-cosmic-eagle`:
+
+1. `chore(tooling)` - Node `>=20.19` engine pin plus CI node bump, `npm run verify` chaining typecheck/lint/test/build/clippy/check/test, and the missing-`../saple-mcp` setup error now points at the README's Sidecar MCP Server section.
+2. `docs(rust)` - Module map in `src-tauri/src/AGENTS.md` covers all 28 declared modules.
+3. `chore(docs)` - Fifteen unowned root-level planning/review documents moved to `docs/archive/` with an index README marking them unmaintained snapshots.
+4. `docs` - New guides: `docs/first-run.md`, `docs/troubleshooting.md`, `docs/security-and-privacy.md` (includes June control-plane and browser-automation CDP risk tables, credential-environment and privacy disclosures).
+5. `docs(readme)` - `.saple/` tree rewritten against actual writers (`agents.json`/`runs.json`/`artifacts.json` control plane, swarm `plan/escalation/requests/verdicts/outcomes/context`, annotated snapshot layout); removed phantom entries (`providers.json`, `presets.json`, `templates.json`); release checklist collapsed to `npm run verify`.
+
+One item deliberately deferred:
+
+- [ ] Enforce `cargo fmt --check` in CI and `npm run verify`: rustfmt currently reports violations across several `src-tauri` files (including internal errors in `pty.rs`). The mechanical reformat belongs to its own focused change so this documentation phase stays auditable.
 
 ---
 
