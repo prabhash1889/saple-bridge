@@ -265,16 +265,22 @@ Dependency order: M0 -> M1 -> M2 -> M3 -> M4 -> M6. M5 can start any time after 
 
 **Objective:** a green, decided, reversible starting point.
 
+> **Status: complete (2026-08-26).** Decisions logged in section 9; `missions` flag shipped default-off and gates nothing; prerequisite audit below; verify green at the recorded floor.
+
 **Steps**
 
 1. Record the architecture decisions in this doc as settled: engine-in-process (not daemon), JSON-per-mission (not SQLite), markdown artifacts (not Yjs), identity-bound settlement, warn-only staleness. Any later change requires a new decision entry.
 2. Add feature flag `missions` (default off) to `.saple/config.json` schema and the settings UI, gating the new room and all new Tauri commands behind a single `isMissionsEnabled()` helper in `src/lib/featureFlags.ts`.
-3. Verify prerequisites are actually landed (checklist against the foundation plans; if any is missing, Missions work on later phases blocks):
-   - [ ] provider adapters with headless launch + JSON result parsing (swarm v2 A)
-   - [ ] `saple-engine` crate with single-writer broker (engine plan 2)
-   - [ ] `submit/command/observe` workflow core (engine plan 3)
-   - [ ] `saple_step_report` tool surface (engine plan 4)
-4. Baseline: `npm run verify` green (typecheck, lint, tests, build, clippy/check/test). Record test counts as the floor.
+3. Verify prerequisites are actually landed (checklist against the foundation plans; if any is missing, Missions work on later phases blocks). **Audited 2026-08-26** - all four gaps confirmed open; each is owned by its foundation plan phase, not by Missions. M2+ work is blocked until these land; M1 (artifact model + CRUD) has no dependency on them and may start immediately.
+
+   | Prerequisite | Status | Evidence | Gap owner |
+   | --- | --- | --- | --- |
+   | Provider adapters: headless launch + JSON result parsing (swarm v2 A) | Missing | `providers.rs` holds CLI launch facts only; no headless argv templates, no stream-json/JSONL envelope parsing anywhere in `src/` or `src-tauri/src/` | swarm v2 Phase A (`docs/swarm-cross-provider-orchestration.md`, marked not started) |
+   | `saple-engine` crate with single-writer broker (engine plan 2) | Missing | No `crates/` workspace under `src-tauri/`; no `.saple/engine.json` discovery handshake; Bridge writes `.saple/*` directly from React via generic file commands | engine plan Phase 2 (`docs/agent-orchestration-plan.md`) |
+   | `submit/command/observe` workflow core (engine plan 3) | Missing | Scheduling still lives in TS (`swarmScheduler.ts`); no workflow document format or revision-CAS command surface in Rust | engine plan Phase 3 |
+   | `saple_step_report` tool surface (engine plan 4) | Missing | Tool exists only in plan docs; saple-mcp exposes no step-report tool; completion today is markers + PTY exit (`agentSignals.ts`) | engine plan Phase 4 |
+
+4. Baseline: `npm run verify` green (typecheck, lint, tests, build, clippy/check/test). Recorded floor at M0 close (2026-08-26): **Vitest 435 tests / 53 files; Rust 201 unit tests; clippy `-D warnings` clean.** The test-count floor never drops in later phase PRs.
 
 **Exit criteria:** flag exists and gates nothing yet (no dead code shipped); prerequisite checklist either fully green or gaps explicitly filed against the foundation plans; verify green.
 
