@@ -1776,17 +1776,30 @@ button.text-btn:hover {
 .editor-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
   max-width: 200px;
   font-size: var(--text-sm);
   color: var(--text-muted);
   background: transparent;
   border-right: 1px solid var(--border);
   border-bottom: 2px solid transparent;
-  cursor: pointer;
   white-space: nowrap;
   user-select: none;
+}
+.editor-tab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px 0 10px;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.editor-tab-label:focus-visible {
+  outline-offset: -2px;
 }
 .editor-tab:hover {
   color: var(--text-primary);
@@ -1812,6 +1825,7 @@ button.text-btn:hover {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   padding: 2px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
