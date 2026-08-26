@@ -3,6 +3,7 @@ import { CloudDownload, GitBranch, RefreshCw } from 'lucide-react';
 import { useGitStore, type RemoteAction, type RemoteResult } from '../../stores/gitStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { describeSyncState, hasDiverged } from '../../lib/gitFormat';
+import { CheckpointPanel } from './CheckpointPanel';
 
 const ACTION_LABEL: Record<RemoteAction, string> = {
   fetch: 'Fetch',
@@ -110,6 +111,8 @@ export const GitSyncBar: React.FC<Props> = ({ projectPath }) => {
           <pre className="git-sync-message">{lastResult.message}</pre>
         </div>
       )}
+
+      <CheckpointPanel projectPath={projectPath} />
     </div>
   );
 };

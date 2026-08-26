@@ -16,6 +16,11 @@ export interface RemoteResult {
   message: string;
 }
 
+export interface Checkpoint {
+  id: string;
+  commit: string;
+}
+
 interface GitState {
   // Per-project latest branch sync state; null while loading/unavailable.
   syncState: Record<string, BranchSyncState | null>;

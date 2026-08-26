@@ -158,6 +158,21 @@ export const useAgentSessionStore = create<AgentSessionState>()(
         recordFailure('control-plane', `Failed to register agent launch records: ${String(error)}`);
       }
 
+      // Phase 8.2: capture a git checkpoint under the run's hidden ref before the
+      // agent can touch anything. Best-effort - a non-git workspace or checkpoint
+      // failure must never block the launch.
+      if (session.runId) {
+        try {
+          const { id: checkpointId } = await invoke<{ id: string }>('git_create_checkpoint', {
+            projectPath: opts.projectPath,
+            runId: session.runId,
+          });
+          session.checkpointId = checkpointId;
+        } catch (error) {
+          console.warn('Git checkpoint unavailable for this run:', error);
+        }
+      }
+
       set((state) => ({
         sessions: [...state.sessions, session],
       }));

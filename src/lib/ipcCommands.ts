@@ -63,6 +63,10 @@ export const IPC_COMMANDS = [
   'git_fetch',
   'git_pull',
   'git_push',
+  'git_create_checkpoint',
+  'git_list_checkpoints',
+  'git_checkpoint_diff',
+  'git_restore_checkpoint',
   // review
   'create_review_record',
   'read_review_record',
