@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Draft v1 (2026-08-26) |
+| **Status** | Active. Decisions settled 2026-08-26 (see Decision log, section 9); M0 complete. |
 | **Goal** | One orchestrator agent (any harness, e.g. an opencode model) plans and drives many worker agents across different harnesses (Claude Code, Codex, Gemini, Droid, Grok, ...), each in its own git worktree, with deterministic lifecycle, verifiable settlement, and durable markdown context |
 | **Scope** | saple-bridge (Tauri app) + saple-mcp sidecar |
 | **Related** | `docs/agent-orchestration-plan.md` (engine phases 0-6), `docs/swarm-cross-provider-orchestration.md` (swarm v2 phases A-F) |
@@ -657,3 +657,19 @@ These five capabilities round out the orchestration surface; each is engine-enfo
 | M8 | Hardening, chaos, cost, docs | continuous | - |
 
 **Minimum lovable milestone:** M0+M1+M2+M3+M4 with UI slice 1 - one mission, two harnesses, identity-bound settlement, honest recovery. M5+M6 deliver the full "one model orchestrates many, in many worktrees" capability; M7 slices 2-3 make it feel effortless.
+
+---
+
+## 9. Decision log
+
+Settled during Phase M0 (2026-08-26). These are architecture-level commitments, not open questions. Any later change to a settled decision requires a new decision entry appended here that names the decision it supersedes and why.
+
+| # | Decision | Choice | Rejected alternative | Rationale |
+| --- | --- | --- | --- | --- |
+| D1 | Engine hosting | In-process inside the Bridge Tauri process (`saple-engine` crate) | Separate engine daemon process | One process to launch, update, and debug; no daemon lifecycle or discovery handshake beyond a loopback port; local-first single-host product |
+| D2 | Mission state storage | One atomic JSON document per mission (`.saple/missions/<id>/state.json`) | SQLite database | Mission scale is tens of tasks; whole-document atomic writes via `fs_lock.rs` close torn-write hazards by construction and stay hand-inspectable |
+| D3 | Planning context format | Markdown artifacts under `.saple/missions/<id>/` (`mission.md`, `artifacts/**`) read/written directly by agents | CRDT/Yjs replicated docs | Agents already have file tools; markdown is portable, diffable, and needs no sync infrastructure on a single host |
+| D4 | Completion authority | Identity-bound settlement: every report must carry `dispatch_id` + `attempt_id` + capability token hash + bound pane id, or it is rejected with a typed code | Prose-trust / marker-only completion | Closes stale-attempt and wrong-pane races; output attributed to attempt N can never settle attempt N+1 |
+| D5 | Liveness posture | Warn-only staleness: expired leases warn and probe before any action; failures only after a second silent window | Kill-on-first-timeout | A slow provider or long tool call must not destroy work; matches Orca's warn-only heartbeat semantics |
+
+Non-goals recorded in section 2.5 (cross-machine federation, cloud replication, broadcast addresses, SQLite, MCP Tasks, OS sandboxing) carry the same weight as decisions: reopening one requires a new entry here.
