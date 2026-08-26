@@ -45,7 +45,8 @@ function verifySidecarPin() {
     fail(
       `the saple-mcp sibling repo was not found at ${mcpRoot}.\n` +
         `Clone it next to this repo (so the layout is <workspace>/saple-bridge + <workspace>/saple-mcp),\n` +
-        `then check out commit ${SAPLE_MCP_PINNED_SHA || '(the SHA pinned in scripts/prepare-sidecar.mjs)'}.`
+        `then check out commit ${SAPLE_MCP_PINNED_SHA || '(the SHA pinned in scripts/prepare-sidecar.mjs)'}.\n` +
+        `See the "Sidecar MCP Server" section of README.md for full setup instructions.`
     );
   }
   const rev = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: mcpRoot, encoding: 'utf8', shell: isWindows });
