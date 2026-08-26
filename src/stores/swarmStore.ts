@@ -31,9 +31,69 @@ import { createCoordinatorLink } from '../lib/swarmCoordinatorLink';
 import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
 import { useNotificationStore } from './notificationStore';
 import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
+import { createWriteCoalescer } from '../lib/trailingWriteCoalescer';
 import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
+
+// Phase 7: scheduler transitions, digest delivery, and wave completion each fire a full-state
+// save, often several per tick. The coalescer keeps at most one in-flight write plus one
+// trailing write per project; the trailing write serializes whatever mutated mid-flight.
+// Still serialized through the existing writeQueue key inside persistSwarmState.
+const swarmStateSaves = createWriteCoalescer((projectPath: string) => persistSwarmState(projectPath));
+
+async function persistSwarmState(projectPath: string): Promise<void> {
+  const get = useSwarmStore.getState;
+  // Phase 2: a corrupt state.json is never overwritten by a subsequent action; recovery
+  // must clear the flag first.
+  if (get().corruptState) {
+    console.error('Swarm save skipped: state.json is corrupt and awaiting recovery.');
+    return;
+  }
+  try {
+    const state = {
+      swarmId: get().swarmId,
+      swarmName: get().swarmName,
+      mission: get().mission,
+      skills: get().skills,
+      contextFiles: get().contextFiles,
+      templateId: get().activeTemplateId,
+      swarmWorkspaceId: get().swarmWorkspaceId,
+      resolvedWorkerRequests: get().resolvedWorkerRequests,
+      plan: get().plan,
+      appliedPlanTaskIds: get().appliedPlanTaskIds,
+      autonomy: get().autonomy,
+      wave: get().wave,
+      maxWaves: get().maxWaves,
+      maxParallel: get().maxParallel,
+      digestLog: get().digestLog,
+      coordinatorCrashes: get().coordinatorCrashes,
+      lastDigestWave: get().lastDigestWave,
+      pendingDigests: get().pendingDigests,
+      hungAgentAlertMs: get().hungAgentAlertMs,
+      hungAlertedAgentIds: get().hungAlertedAgentIds,
+      acceptanceStatus: get().acceptanceStatus,
+      lastAcceptanceOutput: get().lastAcceptanceOutput,
+      lastAcceptanceFailureHash: get().lastAcceptanceFailureHash,
+      identicalAcceptanceFailures: get().identicalAcceptanceFailures,
+      escalation: get().escalation,
+      acceptanceApprovals: get().acceptanceApprovals,
+      agents: get().activeAgents,
+      status: get().status,
+      active: get().status === 'running' || get().status === 'paused'
+    };
+    // Serialized per project: the scheduler can fire several saves in one tick.
+    await enqueueWrite(`swarm:${projectPath}`, () =>
+      invoke('write_swarm_state', {
+        projectPath,
+        stateJson: JSON.stringify(state, null, 2)
+      })
+    );
+  } catch (error) {
+    console.error('Failed to save swarm state:', error);
+    recordFailure('state-save', `Failed to save swarm state: ${String(error)}`);
+  }
+}
 
 // Backing file for swarm state, and the request-sequence token that makes only the latest
 // loadSwarmState commit (Phase 2: replace boolean load guards with per-request tokens).
@@ -899,57 +959,7 @@ export const useSwarmStore = create<SwarmState>()(
         });
       },
 
-      saveSwarmState: async (projectPath) => {
-        // Phase 2: a corrupt state.json is never overwritten by a subsequent action; recovery
-        // must clear the flag first.
-        if (get().corruptState) {
-          console.error('Swarm save skipped: state.json is corrupt and awaiting recovery.');
-          return;
-        }
-        try {
-          const state = {
-            swarmId: get().swarmId,
-            swarmName: get().swarmName,
-            mission: get().mission,
-            skills: get().skills,
-            contextFiles: get().contextFiles,
-            templateId: get().activeTemplateId,
-            swarmWorkspaceId: get().swarmWorkspaceId,
-            resolvedWorkerRequests: get().resolvedWorkerRequests,
-            plan: get().plan,
-            appliedPlanTaskIds: get().appliedPlanTaskIds,
-            autonomy: get().autonomy,
-            wave: get().wave,
-            maxWaves: get().maxWaves,
-            maxParallel: get().maxParallel,
-            digestLog: get().digestLog,
-            coordinatorCrashes: get().coordinatorCrashes,
-            lastDigestWave: get().lastDigestWave,
-            pendingDigests: get().pendingDigests,
-            hungAgentAlertMs: get().hungAgentAlertMs,
-            hungAlertedAgentIds: get().hungAlertedAgentIds,
-            acceptanceStatus: get().acceptanceStatus,
-            lastAcceptanceOutput: get().lastAcceptanceOutput,
-            lastAcceptanceFailureHash: get().lastAcceptanceFailureHash,
-            identicalAcceptanceFailures: get().identicalAcceptanceFailures,
-            escalation: get().escalation,
-            acceptanceApprovals: get().acceptanceApprovals,
-            agents: get().activeAgents,
-            status: get().status,
-            active: get().status === 'running' || get().status === 'paused'
-          };
-          // Serialized per project: the scheduler can fire several saves in one tick.
-          await enqueueWrite(`swarm:${projectPath}`, () =>
-            invoke('write_swarm_state', {
-              projectPath,
-              stateJson: JSON.stringify(state, null, 2)
-            })
-          );
-        } catch (error) {
-          console.error('Failed to save swarm state:', error);
-          recordFailure('state-save', `Failed to save swarm state: ${String(error)}`);
-        }
-      },
+      saveSwarmState: (projectPath) => swarmStateSaves.submit(projectPath),
 
       startSwarmFromWizard: async (input) => {
         const { projectPath, swarmName, mission, agents, skills, contextFiles, templateId } = input;
