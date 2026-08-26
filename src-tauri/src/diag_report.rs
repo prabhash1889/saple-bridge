@@ -141,7 +141,7 @@ fn tail_lines(path: &Path, max_lines: usize) -> (Vec<String>, bool) {
     let selected: Vec<String> = lines
         .into_iter()
         .skip(skipped)
-        .map(|line| crate::app_log::redact(line))
+        .map(crate::app_log::redact)
         .collect();
     (selected, skipped > 0)
 }

@@ -327,7 +327,7 @@ fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, ReviewLoad
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum ReviewRecordLoad {
     Missing,
-    Loaded(ReviewRecord),
+    Loaded(Box<ReviewRecord>),
     Corrupt { error: String, backup_path: String },
 }
 
@@ -337,7 +337,7 @@ fn read_review_record_inner(project_path: String, task_id: String) -> Result<Rev
         return Ok(ReviewRecordLoad::Missing);
     }
     match load_review_record(&review_file_path) {
-        Ok(record) => Ok(ReviewRecordLoad::Loaded(record)),
+        Ok(record) => Ok(ReviewRecordLoad::Loaded(Box::new(record))),
         Err(ReviewLoadError::Corrupt { error, backup_path }) => {
             Ok(ReviewRecordLoad::Corrupt { error, backup_path })
         }

@@ -207,8 +207,10 @@ struct CachedNote {
     wikilinks: Vec<String>,
 }
 
-fn note_cache() -> MutexGuard<'static, HashMap<PathBuf, (SystemTime, Arc<CachedNote>)>> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, (SystemTime, Arc<CachedNote>)>>> = OnceLock::new();
+type NoteCacheMap = HashMap<PathBuf, (SystemTime, Arc<CachedNote>)>;
+
+fn note_cache() -> MutexGuard<'static, NoteCacheMap> {
+    static CACHE: OnceLock<Mutex<NoteCacheMap>> = OnceLock::new();
     CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()

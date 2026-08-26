@@ -724,18 +724,7 @@ mod tests {
         );
 
         // Detached HEAD has no ref: prefix -> None (callers fall back to git).
-        let head = fs::read_to_string(dir.join(".git").join("HEAD")).unwrap();
-        let commit = {
-            let out = Command::new("git")
-                .args(["commit", "--allow-empty", "-m", "c"])
-                .current_dir(&dir)
-                .no_window()
-                .output()
-                .unwrap();
-            assert!(out.status.success());
-            String::from_utf8_lossy(&out.stdout).to_string()
-        };
-        let _ = commit;
+        git(&["commit", "--allow-empty", "-m", "c"]);
         git(&["checkout", "--detach"]);
         assert_eq!(read_head_branch(dir.to_string_lossy().as_ref()), None);
 
