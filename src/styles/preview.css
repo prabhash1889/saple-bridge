@@ -61,7 +61,6 @@
   background: var(--bg-deep);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  outline: none;
 }
 
 .preview-url-input:focus {

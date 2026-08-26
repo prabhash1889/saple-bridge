@@ -147,7 +147,6 @@
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: var(--text-sm);
-  outline: none;
 }
 
 .review-commit-input:focus {

@@ -1233,10 +1233,6 @@ select optgroup {
   font: inherit;
 }
 
-.workspace-rename-input:focus {
-  outline: none;
-}
-
 .workspace-status {
   width: 7px;
   height: 7px;

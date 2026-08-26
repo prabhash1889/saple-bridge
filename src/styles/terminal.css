@@ -229,7 +229,6 @@ body.resizing-row * {
   width: 170px;
   background: transparent;
   border: none;
-  outline: none;
   color: var(--text-primary);
   font-size: var(--text-sm);
 }
@@ -1541,7 +1540,6 @@ body.resizing-row * {
   padding: 12px 16px;
   border-radius: 6px;
   color: var(--text-primary);
-  outline: none;
 }
 
 .agents-setup-footer {

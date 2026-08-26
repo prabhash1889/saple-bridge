@@ -108,7 +108,6 @@
   color: var(--text-primary);
   font-size: var(--text-md);
   font-family: var(--font-sans);
-  outline: none;
   width: 100%;
 }
 

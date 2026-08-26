@@ -89,8 +89,19 @@ input:hover, select:hover, textarea:hover {
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 2px rgba(93, 95, 239, 0.25);
-  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Keyboard focus on form controls keeps the solid shared outline. The softer
+   mouse-focus treatment above must not swallow it (input:focus outranks the
+   global *:focus-visible rule), so restate it at matching specificity. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--border-focus);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: var(--focus-ring);
 }
 
 button {
@@ -1375,7 +1386,6 @@ button.text-btn:hover {
 .palette-input {
   background: transparent;
   border: none;
-  outline: none;
   font-size: var(--text-md);
   color: var(--text-primary);
   flex: 1;
