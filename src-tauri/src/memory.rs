@@ -855,7 +855,12 @@ pub(crate) fn save_memory_node_inner(
     let mut unknown_fields = HashMap::new();
     
     let mut old_relative_path = None;
-    if let Some((_, node, cached)) = find_note_file_inner(&read_dir, &clean_id) {
+    // Notes are written to `<category>/<id>.md`, so probe that exact path first and only
+    // fall back to a full vault walk when the note lives somewhere else (e.g. its category
+    // was renamed since).
+    let existing = conventional_note_path(&read_dir, &clean_category, &clean_id)
+        .or_else(|| find_note_file_inner(&read_dir, &clean_id));
+    if let Some((_, node, cached)) = existing {
         let old_rel = format!("{}/{}.md", node.category, clean_id);
         old_relative_path = Some(old_rel.clone());
         if let Some(c) = cached.parsed.created.clone() {
@@ -942,6 +947,22 @@ pub(crate) fn save_memory_node_inner(
         aliases,
         file_path: relative_path,
     })
+}
+
+/// Probe the conventional `<category>/<id>.md` location directly. Returns None when no
+/// readable note exists there, letting callers fall back to a full vault walk.
+fn conventional_note_path(
+    memory_dir: &Path,
+    category: &str,
+    id: &str,
+) -> Option<(PathBuf, MemoryNode, Arc<CachedNote>)> {
+    if category.is_empty() || id.is_empty() {
+        return None;
+    }
+    let path = memory_dir.join(category).join(format!("{}.md", id));
+    let cached = cached_note(&path)?;
+    let rel = format!("{}/{}.md", category, id);
+    Some((path, node_from_cached(&cached.parsed, &rel), cached))
 }
 
 fn find_note_file_inner(memory_dir: &Path, id: &str) -> Option<(PathBuf, MemoryNode, Arc<CachedNote>)> {
@@ -1720,6 +1741,91 @@ Inline `[[inline-code]]` should not count either.
         let mut notes = Vec::new();
         collect_notes(&project.join(".saple/memory"), &project.join(".saple/memory"), &mut notes);
         assert!(notes[0].1.contains("version two"), "walker must see fresh body after save");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn conventional_path_probe_hits_without_a_walk_and_falls_back_correctly() {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-mem-conv-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let memory_dir = dir.join("memory");
+        fs::create_dir_all(memory_dir.join("decision")).unwrap();
+        fs::create_dir_all(memory_dir.join("archived")).unwrap();
+
+        // Conventional location: probe finds it directly.
+        let note = memory_dir.join("decision").join("jwt.md");
+        fs::write(&note, "---\nid: jwt\ncategory: decision\n---\n# JWT\nbody\n").unwrap();
+        let hit = conventional_note_path(&memory_dir, "decision", "jwt").unwrap();
+        assert_eq!(hit.1.id, "jwt");
+        assert_eq!(hit.1.file_path, "decision/jwt.md");
+
+        // Miss: no such conventional file.
+        assert!(conventional_note_path(&memory_dir, "decision", "absent").is_none());
+        assert!(conventional_note_path(&memory_dir, "", "jwt").is_none());
+
+        // A note stored outside the conventional layout is invisible to the probe but
+        // still found by the full walk.
+        let stray = memory_dir.join("archived").join("legacy.md");
+        fs::write(&stray, "---\nid: legacy\ncategory: archived\n---\n# Legacy\n").unwrap();
+        assert!(conventional_note_path(&memory_dir, "decision", "jwt").is_some());
+        let walked = find_note_file_inner(&memory_dir, "legacy").unwrap();
+        assert_eq!(walked.1.id, "legacy");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_preserves_created_time_via_the_conventional_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "saple-mem-save-created-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(dir.join(".saple")).unwrap();
+        let project = dir.canonicalize().unwrap();
+        let project_str = project.to_string_lossy().to_string();
+
+        save_memory_node_inner(
+            project_str.clone(),
+            "kept-note".to_string(),
+            "Kept".to_string(),
+            "general".to_string(),
+            vec![],
+            vec![],
+            "# Kept\noriginal body".to_string(),
+        )
+        .unwrap();
+        let saved = project.join(".saple/memory/general/kept-note.md");
+        let original = fs::read_to_string(&saved).unwrap();
+        let created_line = original
+            .lines()
+            .find(|l| l.starts_with("created: "))
+            .unwrap()
+            .to_string();
+
+        // Rewrite with different content; created must survive via the fast path.
+        save_memory_node_inner(
+            project_str.clone(),
+            "kept-note".to_string(),
+            "Kept".to_string(),
+            "general".to_string(),
+            vec![],
+            vec![],
+            "# Kept\nnew body".to_string(),
+        )
+        .unwrap();
+        let rewritten = fs::read_to_string(&saved).unwrap();
+        assert!(rewritten.contains("new body"));
+        assert!(
+            rewritten.contains(&created_line),
+            "created timestamp must be preserved, wanted {:?} in {:?}",
+            created_line,
+            rewritten
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
