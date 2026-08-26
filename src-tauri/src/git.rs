@@ -1273,11 +1273,11 @@ mod tests {
 
     #[test]
     fn conflict_classifier_flags_divergence_and_rejection() {
-        assert!(classify_conflict("your branch has diverged from the remote".into()));
-        assert!(classify_conflict("error: could not apply; conflict in a.txt".into()));
-        assert!(classify_conflict("! [rejected] main -> main (fetch first)".into()));
-        assert!(!classify_conflict("fatal: could not read Username for 'https://'".into()));
-        assert!(!classify_conflict("connection timed out".into()));
+        assert!(classify_conflict("your branch has diverged from the remote"));
+        assert!(classify_conflict("error: could not apply; conflict in a.txt"));
+        assert!(classify_conflict("! [rejected] main -> main (fetch first)"));
+        assert!(!classify_conflict("fatal: could not read Username for 'https://'"));
+        assert!(!classify_conflict("connection timed out"));
     }
 
     fn init_test_repo(name: &str) -> (std::path::PathBuf, String) {
