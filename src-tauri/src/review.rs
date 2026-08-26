@@ -327,7 +327,7 @@ fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, ReviewLoad
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum ReviewRecordLoad {
     Missing,
-    Loaded(ReviewRecord),
+    Loaded(Box<ReviewRecord>),
     Corrupt { error: String, backup_path: String },
 }
 
@@ -337,7 +337,7 @@ fn read_review_record_inner(project_path: String, task_id: String) -> Result<Rev
         return Ok(ReviewRecordLoad::Missing);
     }
     match load_review_record(&review_file_path) {
-        Ok(record) => Ok(ReviewRecordLoad::Loaded(record)),
+        Ok(record) => Ok(ReviewRecordLoad::Loaded(Box::new(record))),
         Err(ReviewLoadError::Corrupt { error, backup_path }) => {
             Ok(ReviewRecordLoad::Corrupt { error, backup_path })
         }
@@ -936,7 +936,11 @@ mod tests {
     fn verbose_output_exceeding_pipe_buffer_does_not_false_timeout() {
         let dir = std::env::temp_dir().to_string_lossy().to_string();
         // ~2 MiB of stdout plus ~1 MiB of stderr: several multiples of any pipe buffer.
-        let cmd = "$n=0; while ($n -lt 30000) { 'x' * 80; $n++ }; [Console]::Error.WriteLine(('e' * 80) * 12000); exit 0";
+        let cmd = if cfg!(target_os = "windows") {
+            "$n=0; while ($n -lt 30000) { 'x' * 80; $n++ }; [Console]::Error.WriteLine(('e' * 80) * 12000); exit 0"
+        } else {
+            "i=0; while [ $i -lt 30000 ]; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; i=0; while [ $i -lt 12000 ]; do echo eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee >&2; i=$((i+1)); done"
+        };
         let started = Instant::now();
         let (output, stop) =
             run_shell_with_timeout("test", &dir, cmd, Duration::from_secs(60), None).unwrap();
@@ -958,10 +962,11 @@ mod tests {
         let runner_flag = flag.clone();
         let dir_for_runner = dir.clone();
         let handle = std::thread::spawn(move || {
+            let sleep_cmd = if cfg!(target_os = "windows") { "Start-Sleep -Seconds 30" } else { "sleep 30" };
             run_shell_with_timeout(
                 "test",
                 &dir_for_runner,
-                "Start-Sleep -Seconds 30",
+                sleep_cmd,
                 Duration::from_secs(60),
                 Some(runner_flag),
             )
@@ -1004,36 +1009,40 @@ mod tests {
             )
         };
 
-        let short = Duration::from_secs(2);
+        // Long enough that nested PowerShell startup on a cold CI runner cannot outrun
+        // the deadline before the grandchild records its pid; short enough that the
+        // 30s sleeper still hits the timeout rather than finishing first.
+        let short = Duration::from_secs(10);
         let (output, stop) = run_shell_with_timeout("test", &dir_str, &cmd, short, None).unwrap();
         assert_eq!(stop, ShellStop::TimedOut);
         let _ = output;
 
-        // Give the OS a moment, then confirm the descendant is dead by polling its pid file.
+        // Confirm the descendant is dead by polling its pid file. Budget is generous
+        // because each liveness probe spawns a fresh PowerShell on Windows and CI runners
+        // run this alongside every other test in the binary.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut saw_pid = false;
         let mut alive = true;
-        for _ in 0..20 {
-            if !pid_file.exists() {
-                std::thread::sleep(Duration::from_millis(200));
-                continue;
-            }
-            let pid_text = fs::read_to_string(&pid_file).unwrap_or_default();
-            let pid: u32 = match pid_text.trim().parse() {
-                Ok(p) => p,
-                Err(_) => {
-                    std::thread::sleep(Duration::from_millis(200));
-                    continue;
+        loop {
+            let recorded = fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|text| text.trim().parse::<u32>().ok());
+            saw_pid = saw_pid || recorded.is_some();
+            if let Some(pid) = recorded {
+                if !process_alive(pid) {
+                    alive = false;
+                    break;
                 }
-            };
-            if process_alive(pid) {
-                std::thread::sleep(Duration::from_millis(250));
-            } else {
-                alive = false;
+            }
+            if std::time::Instant::now() >= deadline {
                 break;
             }
+            std::thread::sleep(Duration::from_millis(250));
         }
         assert!(
             !alive,
-            "the descendant spawned by the timed-out shell must have been killed"
+            "the descendant spawned by the timed-out shell must have been killed (saw_pid={})",
+            saw_pid
         );
         let _ = fs::remove_dir_all(&dir);
     }

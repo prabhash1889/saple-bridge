@@ -11,8 +11,13 @@
 
 use serde::{Serialize, Deserialize};
 use std::process::Command;
+use std::time::Duration;
 
 use crate::process_ext::CommandNoWindow;
+
+/// Bound on a single `--version` probe so a hung CLI cannot stall readiness checks,
+/// diagnostics, or the provider UI indefinitely.
+pub(crate) const CLI_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Keychain namespace every provider credential slot follows:
 /// `<PREFIX><provider-id><SUFFIX>` (e.g. `saple_provider_codex_api_key`).
@@ -222,15 +227,16 @@ pub struct CliStatus {
 }
 
 /// Resolve `bin` on PATH with `which` (handles `PATHEXT` on Windows - no shell needed), then
-/// run the version args. `available` reflects PATH resolution; `version` is best-effort.
-pub(crate) fn probe_cli(name: &str, bin: &str, args: &[&str]) -> CliStatus {
+/// run the version args. `available` reflects PATH resolution; `version` is best-effort and
+/// dropped when the CLI does not answer within `timeout`.
+pub(crate) fn probe_cli(name: &str, bin: &str, args: &[&str], timeout: Duration) -> CliStatus {
     match which::which(bin) {
         Ok(path) => {
             let mut command = Command::new(&path);
             command.args(args);
             command.no_window();
-            let version = match command.output() {
-                Ok(output) => {
+            let version = match crate::process_ext::run_with_timeout(command, timeout) {
+                Some(output) => {
                     let text = if output.status.success() {
                         String::from_utf8_lossy(&output.stdout).trim().to_string()
                     } else {
@@ -238,7 +244,7 @@ pub(crate) fn probe_cli(name: &str, bin: &str, args: &[&str]) -> CliStatus {
                     };
                     if text.is_empty() { None } else { Some(text) }
                 }
-                Err(_) => None,
+                None => None,
             };
             CliStatus { name: name.to_string(), available: true, version }
         }
@@ -252,7 +258,7 @@ pub(crate) fn probe_cli(name: &str, bin: &str, args: &[&str]) -> CliStatus {
 #[tauri::command]
 pub async fn check_provider_cli(provider: String) -> Result<CliStatus, String> {
     tauri::async_runtime::spawn_blocking(move || match cli_probe_spec(&provider) {
-        Some((bin, args)) => probe_cli(&provider, bin, &args),
+        Some((bin, args)) => probe_cli(&provider, bin, &args, CLI_PROBE_TIMEOUT),
         None => CliStatus { name: provider, available: false, version: None },
     })
     .await

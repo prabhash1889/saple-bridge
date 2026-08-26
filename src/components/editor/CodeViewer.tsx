@@ -24,8 +24,17 @@ interface LineMatch {
 }
 
 export const CodeViewer: React.FC = () => {
-  const { currentProjectPath, workspaceConfig } = useProjectStore();
-  const { activeFile, fileContent, saveFileContent, openExternal, loading, error, clearError, dirty, setDirty } = useFileStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
+  const activeFile = useFileStore((state) => state.activeFile);
+  const fileContent = useFileStore((state) => state.fileContent);
+  const saveFileContent = useFileStore((state) => state.saveFileContent);
+  const openExternal = useFileStore((state) => state.openExternal);
+  const loading = useFileStore((state) => state.loading);
+  const error = useFileStore((state) => state.error);
+  const clearError = useFileStore((state) => state.clearError);
+  const dirty = useFileStore((state) => state.dirty);
+  const setDirty = useFileStore((state) => state.setDirty);
   const themeMode = useThemeStore(s => s.mode);
   const shikiTheme = shikiThemeFor(resolveTheme(themeMode));
   // CodeMirror only needs a light/dark split; reuse the same classification as Shiki.

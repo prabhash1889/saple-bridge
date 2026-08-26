@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { formatElapsed } from '../../lib/swarmStatus';
+import { useProjectStore } from '../../stores/projectStore';
 
 // Ticking "running for" badge for active agent nodes/cards. `startedAt` is the ms epoch stamped
 // when the agent went running (persisted on the agent, so it survives room/project switches and
@@ -8,12 +9,16 @@ export const ElapsedTime: React.FC<{ startedAt?: number; className?: string }> =
   startedAt,
   className,
 }) => {
+  // The Swarm room stays mounted while other rooms are shown, so pause the 1s tick while it is
+  // hidden — badges render their last value off-screen and catch up on the next tick after
+  // returning to the room.
+  const swarmVisible = useProjectStore((state) => state.activeView) === 'swarm';
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!startedAt) return;
+    if (!startedAt || !swarmVisible) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [startedAt]);
+  }, [startedAt, swarmVisible]);
   if (!startedAt) return null;
   return <span className={className}>{formatElapsed(now - startedAt)}</span>;
 };

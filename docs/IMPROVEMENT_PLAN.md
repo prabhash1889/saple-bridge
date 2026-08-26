@@ -176,6 +176,7 @@ Updated at phase boundaries; completed implementation detail lives in git histor
 | 1 - Privileged-command trust boundaries | Complete | approved-root registry, per-command `project_path` validation, PTY cwd/env hardening, browser scheme and June fixes |
 | 2 - State integrity and recovery | Complete | structured load outcomes, recovery UI, request-sequence tokens, locked read-modify-writes, transactional snapshots, BOM handling, `.saple/` exclude disclosure |
 | 3 - Review, swarm, and process correctness | **Complete (code)** | all work items and automated checks landed; two environment-dependent QA/CI runs deferred into Phase 4 - see Phase 3 status |
+| 7 - Performance and scale | Complete | hidden-room suspension (terminal polling/WebGL, swarm tails/timers), narrow store selectors, stabilized card callbacks, coalesced swarm saves, mtime-keyed memory parse cache with conventional-path fast path, path-indexed git status with capped untracked enrichment, branch-from-HEAD, bounded concurrent diagnostics probes |
 | 4 - Observability, testing, and release hardening | **Complete (code)** | durable app log + privileged-action audit log, diagnostics report, failure escalation/dedupe, IPC contract registry tests, coverage baseline, sidecar pinning, SHA-pinned Actions, Dependabot/audit job, release gate; signing/notarization and maintainer-side pins deferred - see Phase 4 status |
 | 5 - Architecture deepening | Complete | single-owner path policy with coded errors, terminal transport/bridge inversion, coordinator-link and crash-recovery extraction from swarmStore, provider facts table (Rust + renderer), memory layout owner, sidecar module split, coded IPC error surfaces - see Phase 5 notes |
 | 6 - Frontend, UX, and accessibility | Complete | error banners with retry, cold-start path validation with relocate/remove, memory-first dashboard counts plus external-edit watching, per-recent-project removal, reopenable onboarding with provider readiness, quit confirmation for live agents, theme aliases + tokenized overlays + restored text selection + type scale + narrow-window responsive pass, keyboard/screen-reader accessibility incl. xterm SR mode and AA muted contrast - see Phase 6 notes |
@@ -420,9 +421,17 @@ Deferred deliberately: close-to-tray (plan says "later if users need background 
 
 ---
 
-## Phase 7 — Performance and scale
+## Phase 7 - Performance and scale
 
 **Outcome:** Hidden rooms stop consuming significant work and memory performance scales beyond small vaults.
+
+### Status
+
+All work items landed with automated checks. Frontend: terminal context polling (4s per Claude pane) and WebGL context acquisition now gate on the Terminals room being the active view, not just pane visibility; swarm tail subscriptions, swarm event listeners, mailbox refreshes, and per-card elapsed timers suspend outside Swarm and re-subscribe plus refresh on re-entry; large views (dashboard, file tree, memory views, editor tabs, kanban dialogs, template editor) use narrow Zustand selectors; `SwarmAgentCard` callbacks are stabilized so memoization holds; full swarm-state saves coalesce into at most one in-flight write plus one trailing write per project through the existing writeQueue (`createWriteCoalescer`, unit-tested), and digest-history caps were verified on every append site.
+
+Backend: memory note parsing is cached by path + mtime with explicit invalidation after save/delete/restore; walkers share one parse per file (no double parse in search/mentions/save/link operations); saves probe the conventional `<category>/<id>.md` path before falling back to a vault walk; `git_status` numstat enrichment uses a path-index map instead of a linear scan; untracked-file enrichment is capped by count (50) and aggregate bytes (4MB); ordinary branch names read directly from `.git/HEAD` (worktree `gitdir:` links included) with git as fallback; diagnostics shell/git/provider probes have bounded timeouts (`run_with_timeout`) and independent probe groups run concurrently.
+
+### Original work items
 
 ### Frontend
 

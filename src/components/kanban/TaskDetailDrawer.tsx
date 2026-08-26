@@ -21,10 +21,12 @@ interface TaskDetailDrawerProps {
 }
 
 export const TaskDetailDrawer: React.FC<TaskDetailDrawerProps> = ({ task, isOpen, onClose, onEdit }) => {
-  const { currentProjectPath } = useProjectStore();
-  const { updateTask } = useKanbanStore();
-  const { sessions: agentSessions } = useAgentSessionStore();
-  const { sessions: terminalSessions, addPane, setFocusedPane } = useTerminalStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const updateTask = useKanbanStore((state) => state.updateTask);
+  const agentSessions = useAgentSessionStore((state) => state.sessions);
+  const terminalSessions = useTerminalStore((state) => state.sessions);
+  const addPane = useTerminalStore((state) => state.addPane);
+  const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const drawerRef = useRef<HTMLDivElement>(null);
   useFocusTrap(drawerRef, isOpen && Boolean(task), onClose);
 

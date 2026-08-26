@@ -14,7 +14,9 @@ const clamp = (value: number, min: number, max: number) =>
 const KEYBOARD_RESIZE_STEP = 24;
 
 export const MemoryWorkspace: React.FC = () => {
-  const { currentProjectPath, openWorkspace, setActiveView } = useProjectStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const openWorkspace = useProjectStore((state) => state.openWorkspace);
+  const setActiveView = useProjectStore((state) => state.setActiveView);
   const loadGraph = useMemoryStore((state) => state.loadGraph);
   const activeNote = useMemoryStore((state) => state.activeNote);
   const memoryError = useMemoryStore((state) => state.error);

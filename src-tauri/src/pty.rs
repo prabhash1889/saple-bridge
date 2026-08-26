@@ -182,8 +182,8 @@ fn bracketed_paste(prompt: &str) -> String {
 // string must pass through the validators below. (`custom_command` is exempt by design: like the
 // review verification command, it is operator-typed and shown verbatim in the UI before launch.)
 
-/// Allowlist of launchable provider CLIs lives in `providers.rs` (single owner of provider
-/// facts); `spawn_pty` resolves through it so an unknown provider never runs verbatim.
+// Allowlist of launchable provider CLIs lives in `providers.rs` (single owner of provider
+// facts); `spawn_pty` resolves through it so an unknown provider never runs verbatim.
 
 /// Model names are interpolated inside a double-quoted shell string; restrict them to
 /// characters that are inert there (no `"`, backtick, `$`, backslash, whitespace, ...).
@@ -254,9 +254,9 @@ fn is_forbidden_env_key(key: &str) -> bool {
     FORBIDDEN.contains(&k.as_str())
 }
 
-/// Provider credential variables are constructed by Rust from the OS keychain; the
-/// renderer-refusal list is derived from the provider table in `providers.rs`
-/// (`is_provider_env_key`). Execution-affecting keys are refused separately below.
+// Provider credential variables are constructed by Rust from the OS keychain; the
+// renderer-refusal list is derived from the provider table in `providers.rs`
+// (`is_provider_env_key`). Execution-affecting keys are refused separately below.
 
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]

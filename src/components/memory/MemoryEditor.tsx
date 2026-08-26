@@ -9,22 +9,22 @@ import { MemoryMarkdown } from './markdown/MemoryMarkdown';
 import { memoryPathPrefix } from '../../lib/memoryLayout';
 
 export const MemoryEditor: React.FC = () => {
-  const { currentProjectPath, workspaceConfig } = useProjectStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
   // Display-only note path prefix; the on-disk layout itself is owned by Rust (memory_layout.rs).
   const memoryPathPrefixText = memoryPathPrefix(workspaceConfig?.memoryMode);
-  const { files, loadFiles } = useFileStore();
-  const {
-    activeNote,
-    activeNoteContent,
-    saveNote,
-    deleteNote,
-    setActiveNote,
-    nodes,
-    edges,
-    loadNote,
-    unlinkedMentions,
-    addLink,
-  } = useMemoryStore();
+  const files = useFileStore((state) => state.files);
+  const loadFiles = useFileStore((state) => state.loadFiles);
+  const activeNote = useMemoryStore((state) => state.activeNote);
+  const activeNoteContent = useMemoryStore((state) => state.activeNoteContent);
+  const saveNote = useMemoryStore((state) => state.saveNote);
+  const deleteNote = useMemoryStore((state) => state.deleteNote);
+  const setActiveNote = useMemoryStore((state) => state.setActiveNote);
+  const nodes = useMemoryStore((state) => state.nodes);
+  const edges = useMemoryStore((state) => state.edges);
+  const loadNote = useMemoryStore((state) => state.loadNote);
+  const unlinkedMentions = useMemoryStore((state) => state.unlinkedMentions);
+  const addLink = useMemoryStore((state) => state.addLink);
 
   useEffect(() => {
     if (currentProjectPath && files.length === 0) {

@@ -32,8 +32,15 @@ const TAIL_CHARS = 4000;
 const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => {
   const [tail, setTail] = useState('');
   const scrollRef = useRef<HTMLPreElement>(null);
+  // The room stays mounted while other rooms are shown; drop the per-frame output
+  // subscription while hidden and re-subscribe (with a fresh buffer snapshot) on return.
+  const roomActive = useProjectStore((state) => state.activeView) === 'swarm';
 
   useEffect(() => {
+    if (!roomActive) {
+      setTail('');
+      return;
+    }
     const { getBufferedOutput, subscribeOutput } = useTerminalStore.getState();
     let text = stripAnsi(getBufferedOutput(terminalId)).slice(-TAIL_CHARS);
     setTail(text);
@@ -41,7 +48,7 @@ const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => 
       text = (text + stripAnsi(event.data)).slice(-TAIL_CHARS);
       setTail(text);
     });
-  }, [terminalId]);
+  }, [terminalId, roomActive]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -57,6 +64,10 @@ const AgentTerminalTail: React.FC<{ terminalId: string }> = ({ terminalId }) => 
 
 export const SwarmWorkspace: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  // The room stays mounted in every view (App.tsx HEAVY_VIEWS); gate the room's subscriptions
+  // and polling on actually being visible so hidden rooms do no work. Re-entering re-runs each
+  // gated effect below, which re-subscribes and fires its immediate refresh.
+  const roomActive = useProjectStore((state) => state.activeView) === 'swarm';
   const swarmId = useSwarmStore((state) => state.swarmId);
   const mission = useSwarmStore((state) => state.mission);
   const status = useSwarmStore((state) => state.status);
@@ -82,7 +93,6 @@ export const SwarmWorkspace: React.FC = () => {
   const readHandoff = useSwarmStore((state) => state.readHandoff);
   const ingestPlan = useSwarmStore((state) => state.ingestPlan);
   const ingestVerdict = useSwarmStore((state) => state.ingestVerdict);
-  const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'graph' | 'grid'>('graph');
   const [composerOpen, setComposerOpen] = useState(false);
@@ -101,10 +111,11 @@ export const SwarmWorkspace: React.FC = () => {
   const [pendingRequests, setPendingRequests] = useState<WorkerRequest[]>([]);
 
   useEffect(() => {
-    if (currentProjectPath) {
-      loadSwarmState(currentProjectPath);
-    }
-  }, [currentProjectPath, loadSwarmState]);
+    if (!roomActive || !currentProjectPath) return;
+    // Re-sync persisted swarm state on every room entry, not just first mount: agents may have
+    // advanced while the room was hidden.
+    loadSwarmState(currentProjectPath);
+  }, [roomActive, currentProjectPath, loadSwarmState]);
 
   // Set default selected agent once swarm starts
   useEffect(() => {
@@ -127,7 +138,7 @@ export const SwarmWorkspace: React.FC = () => {
   // the room is open, re-ingest whenever the Rust watcher reports the file changed (belt and
   // braces). Verdict intake is lenient here — only the reviewer-completion path may park a task.
   useEffect(() => {
-    if (!currentProjectPath || !swarmActive) return;
+    if (!roomActive || !currentProjectPath || !swarmActive) return;
     const unsubscribe = subscribeSwarmEvents((event) => {
       if (event.projectPath !== currentProjectPath) return; // drop away-project events
       if (event.category === 'plan') void ingestPlan(currentProjectPath);
@@ -136,8 +147,10 @@ export const SwarmWorkspace: React.FC = () => {
         if (match) void ingestVerdict(currentProjectPath, match[1]);
       }
     });
+    // Catch up on plan changes the watcher reported while the room was hidden.
+    void ingestPlan(currentProjectPath);
     return () => unsubscribe();
-  }, [currentProjectPath, swarmActive, ingestPlan, ingestVerdict]);
+  }, [roomActive, currentProjectPath, swarmActive, ingestPlan, ingestVerdict]);
 
   // Drop any in-progress mailbox draft when the inspected agent changes so a message
   // typed for one agent isn't accidentally sent to another.
@@ -160,34 +173,40 @@ export const SwarmWorkspace: React.FC = () => {
     await resumeSwarm(currentProjectPath);
   };
 
-  const handleViewTerminal = (paneId: string) => {
-    setFocusedPane(paneId);
-    useProjectStore.getState().setActiveView('terminals');
-  };
+  const handleViewTerminal = useCallback(
+    (paneId: string) => {
+      useTerminalStore.getState().setFocusedPane(paneId);
+      useProjectStore.getState().setActiveView('terminals');
+    },
+    [],
+  );
 
   // Review gate (P4): reject routes the agent back through one bounded rework — feedback to its
   // mailbox, relaunch with that feedback. Past the attempt budget the store refuses and we require
   // an explicit human approval before forcing another attempt.
-  const handleAgentReject = async (agentId: string, feedback: string) => {
-    if (!currentProjectPath) return;
-    const result = await reworkAgent(currentProjectPath, agentId, feedback);
-    if (result.limitReached) {
-      useConfirmStore.getState().confirm({
-        title: 'Rework limit reached',
-        message: `This agent has already used its ${result.maxAttempts ?? 1} allowed rework attempt(s). Approve another rework?`,
-        confirmLabel: 'Approve rework',
-        onConfirm: () => {
-          void reworkAgent(currentProjectPath, agentId, feedback, true);
-        },
-      });
-    }
-  };
+  const handleAgentReject = useCallback(
+    async (agentId: string, feedback: string) => {
+      if (!currentProjectPath) return;
+      const result = await reworkAgent(currentProjectPath, agentId, feedback);
+      if (result.limitReached) {
+        useConfirmStore.getState().confirm({
+          title: 'Rework limit reached',
+          message: `This agent has already used its ${result.maxAttempts ?? 1} allowed rework attempt(s). Approve another rework?`,
+          confirmLabel: 'Approve rework',
+          onConfirm: () => {
+            void reworkAgent(currentProjectPath, agentId, feedback, true);
+          },
+        });
+      }
+    },
+    [currentProjectPath, reworkAgent],
+  );
 
   // P6/P1: the agent-written worker-requests file (`.saple/swarm/requests.json`). Read once on
   // entry, then re-read only when the Rust swarm watcher reports that exact file changed - no poll.
   // Bridge reads it; agents never launch anything themselves.
   useEffect(() => {
-    if (!currentProjectPath || !swarmActive) {
+    if (!roomActive || !currentProjectPath || !swarmActive) {
       setPendingRequests([]);
       return;
     }
@@ -205,7 +224,7 @@ export const SwarmWorkspace: React.FC = () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [currentProjectPath, swarmActive, loadWorkerRequests]);
+  }, [roomActive, currentProjectPath, swarmActive, loadWorkerRequests]);
 
   // Estimated pane picture the operator sees before approving: each approved request adds one pane.
   const runningPaneCount = useMemo(
@@ -240,20 +259,41 @@ export const SwarmWorkspace: React.FC = () => {
     void useSwarmStore.getState().runAcceptance(currentProjectPath);
   };
 
-  const handleAgentStop = async (agentId: string) => {
-    if (!currentProjectPath) return;
-    const agent = activeAgents.find(a => a.id === agentId);
-    // Mark stopped BEFORE killing the pane: the kill fires pty-exit, and the exit fallback
-    // must see a deliberate stop, not a running agent whose process died (-> failed).
-    await updateAgentStatus(currentProjectPath, agentId, 'stopped', { statusReason: 'Stopped by operator.' });
-    if (agent?.terminalId) {
-      try {
-        await useTerminalStore.getState().removePane(agent.terminalId);
-      } catch (e) {
-        console.error('Failed to remove pane:', e);
+  const handleAgentStop = useCallback(
+    async (agentId: string) => {
+      if (!currentProjectPath) return;
+      // Mark stopped BEFORE killing the pane: the kill fires pty-exit, and the exit fallback
+      // must see a deliberate stop, not a running agent whose process died (-> failed).
+      await updateAgentStatus(currentProjectPath, agentId, 'stopped', { statusReason: 'Stopped by operator.' });
+      const agent = useSwarmStore.getState().activeAgents.find(a => a.id === agentId);
+      if (agent?.terminalId) {
+        try {
+          await useTerminalStore.getState().removePane(agent.terminalId);
+        } catch (e) {
+          console.error('Failed to remove pane:', e);
+        }
       }
-    }
-  };
+    },
+    [currentProjectPath, updateAgentStatus],
+  );
+
+  // Card callbacks are stabilized so memoized SwarmAgentCard instances skip re-renders that
+  // only come from parent state churn (mailbox polls, selection changes in sibling cards).
+  const handleAgentRelaunch = useCallback(
+    (agentId: string) => {
+      const projectPath = currentProjectPath;
+      if (projectPath) void relaunchAgent(projectPath, agentId);
+    },
+    [currentProjectPath, relaunchAgent],
+  );
+
+  const handleAgentForceComplete = useCallback(
+    (agentId: string) => {
+      const projectPath = currentProjectPath;
+      if (projectPath) void forceCompleteAgent(projectPath, agentId);
+    },
+    [currentProjectPath, forceCompleteAgent],
+  );
 
   const polledAgentIds = useMemo(() => {
     const ids = viewMode === 'grid'
@@ -383,6 +423,7 @@ export const SwarmWorkspace: React.FC = () => {
   }, [fetchVisibleMailboxes]);
 
   useEffect(() => {
+    if (!roomActive) return;
     void fetchVisibleMailboxesRef.current();
     if (!currentProjectPath || polledAgentKey.length === 0) return;
 
@@ -397,8 +438,9 @@ export const SwarmWorkspace: React.FC = () => {
     return () => unsubscribe();
     // Only re-run when the actual set of polled agents (polledAgentKey), the set of polled
     // handoff pairs (polledHandoffKey), or the project changes — not on every render that
-    // leaves the polled sets identical.
-  }, [currentProjectPath, polledAgentKey, polledHandoffKey]);
+    // leaves the polled sets identical. roomActive re-runs it on room entry for an immediate
+    // refresh after the hidden gap.
+  }, [roomActive, currentProjectPath, polledAgentKey, polledHandoffKey]);
 
   // Resolved (content-present) handoffs grouped per agent, split by direction.
   const handoffsByAgent = useMemo(() => {
@@ -652,7 +694,7 @@ export const SwarmWorkspace: React.FC = () => {
                     agents={activeAgents}
                     onSelectAgent={setSelectedAgentId}
                     selectedAgentId={selectedAgentId || undefined}
-                    onRelaunch={(agentId) => currentProjectPath && relaunchAgent(currentProjectPath, agentId)}
+                    onRelaunch={handleAgentRelaunch}
                   />
                 ) : (
                   <div style={cardsGridStyle}>
@@ -666,8 +708,8 @@ export const SwarmWorkspace: React.FC = () => {
                           agent={agent}
                           projectPath={currentProjectPath}
                           onViewTerminal={handleViewTerminal}
-                          onRelaunch={(id) => currentProjectPath && relaunchAgent(currentProjectPath, id)}
-                          onForceComplete={(id) => currentProjectPath && forceCompleteAgent(currentProjectPath, id)}
+                          onRelaunch={handleAgentRelaunch}
+                          onForceComplete={handleAgentForceComplete}
                           onReject={handleAgentReject}
                           onStop={handleAgentStop}
                           mailboxContent={mailboxContents[agent.id]}
@@ -693,8 +735,8 @@ export const SwarmWorkspace: React.FC = () => {
                       agent={selectedAgent}
                       projectPath={currentProjectPath}
                       onViewTerminal={handleViewTerminal}
-                      onRelaunch={(id) => currentProjectPath && relaunchAgent(currentProjectPath, id)}
-                      onForceComplete={(id) => currentProjectPath && forceCompleteAgent(currentProjectPath, id)}
+                      onRelaunch={handleAgentRelaunch}
+                      onForceComplete={handleAgentForceComplete}
                       onReject={handleAgentReject}
                       onStop={handleAgentStop}
                       mailboxContent={mailboxContents[selectedAgent.id]}

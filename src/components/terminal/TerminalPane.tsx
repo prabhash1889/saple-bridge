@@ -38,6 +38,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const [contextLeft, setContextLeft] = useState<number | null>(null);
 
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const activeView = useProjectStore((state) => state.activeView);
   const setActiveView = useProjectStore((state) => state.setActiveView);
   const linkedTask = useKanbanStore((state) => state.tasks.find(t => t.terminalId === sessionId));
   const focusedPaneId = useTerminalStore((state) => state.focusedPaneId);
@@ -58,9 +59,15 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   const isFocused = focusedPaneId === sessionId;
   const canCreatePane = Boolean(currentProjectPath && canAddPane());
 
+  // The whole Terminals room stays mounted while other rooms are shown (App.tsx HEAVY_VIEWS),
+  // so panes must drop their per-room work (context polling, WebGL renderer) whenever the
+  // room is hidden, not just when their own workspace is off-screen.
+  const roomActive = activeView === 'terminals';
+  const paneActive = active && roomActive;
+
   const { containerRef, terminalRef, searchAddonRef } = useXtermSession({
     sessionId,
-    active,
+    active: paneActive,
     isFocused,
     onSearchOpen: () => setSearchOpen(true),
   });
@@ -85,13 +92,13 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
   }, [isFocused, sessionId]);
 
   // Claude context badge: poll this session's transcript for the latest usage while the
-  // pane's workspace is on screen. Errors keep the last shown value (transcript may not
-  // exist yet right after spawn).
+  // pane's workspace is on screen and the Terminals room is the active view. Errors keep
+  // the last shown value (transcript may not exist yet right after spawn).
   const claudeSessionId = sessionInfo?.aiProvider === 'claude' ? sessionInfo.claudeSessionId : undefined;
   const claudeCwd = sessionInfo?.cwd;
   const claudeModel = sessionInfo?.model;
   useEffect(() => {
-    if (!claudeSessionId || !active || exited) return;
+    if (!claudeSessionId || !paneActive || exited) return;
     let cancelled = false;
     const poll = () => {
       invoke<ClaudeContextUsage | null>('get_claude_context_usage', {
@@ -112,7 +119,7 @@ const TerminalPaneComponent: React.FC<TerminalPaneProps> = ({ sessionId, maximiz
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [claudeSessionId, claudeCwd, claudeModel, active, exited]);
+  }, [claudeSessionId, claudeCwd, claudeModel, paneActive, exited]);
 
   const closeSearch = () => {
     setSearchOpen(false);

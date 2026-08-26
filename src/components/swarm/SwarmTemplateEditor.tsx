@@ -17,7 +17,7 @@ export const SwarmTemplateEditor: React.FC<SwarmTemplateEditorProps> = ({
   onSave,
   onCancel
 }) => {
-  const { saveTemplatePreset } = useSwarmStore();
+  const saveTemplatePreset = useSwarmStore((state) => state.saveTemplatePreset);
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description);
   
