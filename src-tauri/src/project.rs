@@ -363,8 +363,45 @@ fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: Str
     })
 }
 
+/// Read the ordinary branch name straight from `.git/HEAD` without spawning git.
+/// Handles the `ref: refs/heads/<name>` form and `.git` being a file (worktree/submodule
+/// `gitdir:` link, resolved relative to the project). Detached HEAD and unreadable files
+/// return None so callers fall back to a real git invocation.
+fn read_head_branch(project_path: &str) -> Option<String> {
+    let dot_git = Path::new(project_path).join(".git");
+    let head_path = if dot_git.is_dir() {
+        dot_git.join("HEAD")
+    } else if dot_git.is_file() {
+        let link = fs::read_to_string(&dot_git).ok()?;
+        let target = link.trim().strip_prefix("gitdir:")?.trim();
+        let target_path = Path::new(target);
+        if target_path.is_absolute() {
+            target_path.join("HEAD")
+        } else {
+            Path::new(project_path).join(target).join("HEAD")
+        }
+    } else {
+        return None;
+    };
+
+    let head = fs::read_to_string(head_path).ok()?;
+    let head = head.trim();
+    let ref_name = head.strip_prefix("ref:")?.trim();
+    let branch = ref_name.strip_prefix("refs/heads/")?;
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch.to_string())
+    }
+}
+
 fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) -> Result<String, CodedError> {
     registry.ensure_inside_approved_root(project_path)?;
+    // Fast path: an ordinary branch name is directly readable from .git/HEAD; only fall
+    // back to spawning git when it cannot be read that way (detached HEAD, unusual setup).
+    if let Some(branch) = read_head_branch(project_path) {
+        return Ok(branch);
+    }
     let output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(project_path)
@@ -664,5 +701,99 @@ mod tests {
         // No saple-memory entry at all.
         let none = serde_json::json!({ "mcpServers": { "other": { "command": "x", "args": [] }}});
         assert!(!saple_memory_is_legacy(&none));
+    }
+
+    #[test]
+    fn head_branch_reads_ordinary_branch_without_git() {
+        let dir = std::env::temp_dir().join(format!("saple-head-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed", args);
+        };
+        git(&["init", "-b", "feature/head-read"]);
+        git(&["config", "user.email", "test@saple.local"]);
+        git(&["config", "user.name", "Saple Test"]);
+
+        assert_eq!(
+            read_head_branch(dir.to_string_lossy().as_ref()),
+            Some("feature/head-read".to_string()),
+            "ordinary branch must come straight from .git/HEAD"
+        );
+
+        // Detached HEAD has no ref: prefix -> None (callers fall back to git).
+        let head = fs::read_to_string(dir.join(".git").join("HEAD")).unwrap();
+        let commit = {
+            let out = Command::new("git")
+                .args(["commit", "--allow-empty", "-m", "c"])
+                .current_dir(&dir)
+                .no_window()
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        let _ = commit;
+        git(&["checkout", "--detach"]);
+        assert_eq!(read_head_branch(dir.to_string_lossy().as_ref()), None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn head_branch_follows_worktree_gitdir_links() {
+        let dir = std::env::temp_dir().join(format!("saple-head-wt-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        let _ = fs::remove_dir_all(&dir);
+        let main = dir.join("main");
+        let wt = dir.join("linked");
+        fs::create_dir_all(&main).unwrap();
+        fs::create_dir_all(&wt).unwrap();
+
+        let git_in = |sub: &Path, args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(sub).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+        };
+        git_in(&main, &["init", "-b", "trunk"]);
+        git_in(&main, &["config", "user.email", "test@saple.local"]);
+        git_in(&main, &["config", "user.name", "Saple Test"]);
+        fs::write(main.join("f.txt"), "x\n").unwrap();
+        git_in(&main, &["add", "."]);
+        git_in(&main, &["commit", "-m", "base"]);
+
+        // Real worktree: .git in the linked dir is a file pointing back at the gitdir.
+        git_in(&main, &["worktree", "add", wt.to_string_lossy().as_ref(), "-b", "wt-branch"]);
+
+        // Absolute gitdir link.
+        let link_content = fs::read_to_string(wt.join(".git")).unwrap();
+        assert!(link_content.starts_with("gitdir:"), "worktree .git must be a gitdir link");
+        assert_eq!(
+            read_head_branch(wt.to_string_lossy().as_ref()),
+            Some("wt-branch".to_string()),
+            "absolute gitdir link must resolve"
+        );
+
+        // Relative gitdir link.
+        let abs_target = link_content.trim().strip_prefix("gitdir:").unwrap().trim().to_string();
+        let relative = make_relative(&abs_target, &wt).unwrap_or_else(|| abs_target.clone());
+        if !relative.is_empty() && Path::new(&relative).is_relative() {
+            fs::write(wt.join(".git"), format!("gitdir: {}", relative)).unwrap();
+            assert_eq!(
+                read_head_branch(wt.to_string_lossy().as_ref()),
+                Some("wt-branch".to_string()),
+                "relative gitdir link must resolve against the project path"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Best-effort relative path from `base` to `target` (same drive on Windows), or
+    /// None when they cannot be related.
+    fn make_relative(target: &str, base: &Path) -> Option<String> {
+        let target = Path::new(target).canonicalize().ok()?;
+        let base = base.canonicalize().ok()?;
+        target.strip_prefix(&base).ok().map(|p| p.to_string_lossy().to_string())
     }
 }
