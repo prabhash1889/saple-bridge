@@ -37,8 +37,9 @@ function resolveTarget(target: string, nodes: MemoryNode[]): MemoryNode | undefi
 }
 
 export const MemoryMarkdown: React.FC<Props> = ({ content }) => {
-  const { nodes, loadNote } = useMemoryStore();
-  const { currentProjectPath } = useProjectStore();
+  const nodes = useMemoryStore((state) => state.nodes);
+  const loadNote = useMemoryStore((state) => state.loadNote);
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
 
   const components: Components = {
     a(props) {

@@ -7,7 +7,10 @@ import { useConfirmStore, type ConfirmOpts } from '../../../stores/confirmStore'
 
 export const MemoryTab: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
-  const { snapshots, loadSnapshots, takeSnapshot, restoreSnapshot } = useMemoryStore();
+  const snapshots = useMemoryStore((state) => state.snapshots);
+  const loadSnapshots = useMemoryStore((state) => state.loadSnapshots);
+  const takeSnapshot = useMemoryStore((state) => state.takeSnapshot);
+  const restoreSnapshot = useMemoryStore((state) => state.restoreSnapshot);
   const [snapshotName, setSnapshotName] = useState('');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
 

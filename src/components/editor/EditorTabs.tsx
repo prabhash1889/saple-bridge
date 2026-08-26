@@ -6,8 +6,12 @@ import { useProjectStore } from '../../stores/projectStore';
 const basename = (path: string) => path.split('/').pop() || path;
 
 export const EditorTabs: React.FC = () => {
-  const { currentProjectPath } = useProjectStore();
-  const { openFiles, activeFile, dirty, openFile, closeTab } = useFileStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const openFiles = useFileStore((state) => state.openFiles);
+  const activeFile = useFileStore((state) => state.activeFile);
+  const dirty = useFileStore((state) => state.dirty);
+  const openFile = useFileStore((state) => state.openFile);
+  const closeTab = useFileStore((state) => state.closeTab);
   const tablistRef = useRef<HTMLDivElement>(null);
 
   const selectTab = useCallback(

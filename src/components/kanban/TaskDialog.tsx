@@ -61,9 +61,10 @@ const ROLE_PROMPTS: Record<string, { role: AgentConfig['role']; prompt: string }
 };
 
 export const TaskDialog: React.FC<TaskDialogProps> = ({ isOpen, onClose, taskToEdit }) => {
-  const { currentProjectPath } = useProjectStore();
-  const { addTask, updateTask } = useKanbanStore();
-  const { providers } = useProviderStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const addTask = useKanbanStore((state) => state.addTask);
+  const updateTask = useKanbanStore((state) => state.updateTask);
+  const providers = useProviderStore((state) => state.providers);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');

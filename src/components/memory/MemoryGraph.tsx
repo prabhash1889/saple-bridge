@@ -23,8 +23,11 @@ const CATEGORY_COLORS: Record<string, string> = {
 type GraphMode = 'global' | 'local';
 
 export const MemoryGraph: React.FC = () => {
-  const { currentProjectPath } = useProjectStore();
-  const { nodes, edges, loadNote, setActiveNote } = useMemoryStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const nodes = useMemoryStore((state) => state.nodes);
+  const edges = useMemoryStore((state) => state.edges);
+  const loadNote = useMemoryStore((state) => state.loadNote);
+  const setActiveNote = useMemoryStore((state) => state.setActiveNote);
 
   const canvasRef = useRef<SVGSVGElement>(null);
   const isSimulationActive = useRef(true);

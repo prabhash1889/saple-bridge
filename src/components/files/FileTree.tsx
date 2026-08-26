@@ -262,12 +262,23 @@ const parentDir = (path: string) => {
 };
 
 export const FileTree: React.FC = () => {
-  const { currentProjectPath } = useProjectStore();
-  const {
-    files, activeFile, gitStatus, expanded, toggleExpanded, setExpandedPaths,
-    loadFiles, loadGitStatus, openFile, openExternal,
-    createFile, createDirectory, renamePath, deletePath, loading, error,
-  } = useFileStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const files = useFileStore((state) => state.files);
+  const activeFile = useFileStore((state) => state.activeFile);
+  const gitStatus = useFileStore((state) => state.gitStatus);
+  const expanded = useFileStore((state) => state.expanded);
+  const toggleExpanded = useFileStore((state) => state.toggleExpanded);
+  const setExpandedPaths = useFileStore((state) => state.setExpandedPaths);
+  const loadFiles = useFileStore((state) => state.loadFiles);
+  const loadGitStatus = useFileStore((state) => state.loadGitStatus);
+  const openFile = useFileStore((state) => state.openFile);
+  const openExternal = useFileStore((state) => state.openExternal);
+  const createFile = useFileStore((state) => state.createFile);
+  const createDirectory = useFileStore((state) => state.createDirectory);
+  const renamePath = useFileStore((state) => state.renamePath);
+  const deletePath = useFileStore((state) => state.deletePath);
+  const loading = useFileStore((state) => state.loading);
+  const error = useFileStore((state) => state.error);
   const [search, setSearch] = useState('');
   const [menu, setMenu] = useState<MenuState>(null);
   const [prompt, setPrompt] = useState<PromptState>(null);

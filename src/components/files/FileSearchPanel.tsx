@@ -15,8 +15,9 @@ const groupByFile = (hits: SearchHit[]): [string, SearchHit[]][] => {
 };
 
 export const FileSearchPanel: React.FC = () => {
-  const { currentProjectPath } = useProjectStore();
-  const { searchInFiles, openFile } = useFileStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const searchInFiles = useFileStore((state) => state.searchInFiles);
+  const openFile = useFileStore((state) => state.openFile);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [truncated, setTruncated] = useState(false);

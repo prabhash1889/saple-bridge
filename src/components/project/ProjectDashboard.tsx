@@ -93,34 +93,34 @@ const formatRelativeTime = (ts: number): string => {
 const recentHealthCache: Record<string, boolean> = {};
 
 export const ProjectDashboard: React.FC = () => {
-  const {
-    currentProjectPath,
-    currentProjectName,
-    recentProjects,
-    workspaceHistory,
-    clearWorkspaceHistory,
-    openWorkspace,
-    addWorkspace,
-    setActiveView,
-    workspaceSummary,
-    workspaceLoading,
-    checkPathExists,
-    openWorkspaces,
-    removeRecentProject,
-    stalePaths,
-    dismissStalePath,
-    relocateWorkspace,
-    workspaceError,
-    currentWorkspaceId,
-    openWorkspaceInstance,
-    clearWorkspaceError,
-    onboardingOpen,
-    onboardingDismissed,
-    dismissOnboarding,
-  } = useProjectStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const currentProjectName = useProjectStore((state) => state.currentProjectName);
+  const recentProjects = useProjectStore((state) => state.recentProjects);
+  const workspaceHistory = useProjectStore((state) => state.workspaceHistory);
+  const clearWorkspaceHistory = useProjectStore((state) => state.clearWorkspaceHistory);
+  const openWorkspace = useProjectStore((state) => state.openWorkspace);
+  const addWorkspace = useProjectStore((state) => state.addWorkspace);
+  const setActiveView = useProjectStore((state) => state.setActiveView);
+  const workspaceSummary = useProjectStore((state) => state.workspaceSummary);
+  const workspaceLoading = useProjectStore((state) => state.workspaceLoading);
+  const checkPathExists = useProjectStore((state) => state.checkPathExists);
+  const openWorkspaces = useProjectStore((state) => state.openWorkspaces);
+  const removeRecentProject = useProjectStore((state) => state.removeRecentProject);
+  const stalePaths = useProjectStore((state) => state.stalePaths);
+  const dismissStalePath = useProjectStore((state) => state.dismissStalePath);
+  const relocateWorkspace = useProjectStore((state) => state.relocateWorkspace);
+  const workspaceError = useProjectStore((state) => state.workspaceError);
+  const currentWorkspaceId = useProjectStore((state) => state.currentWorkspaceId);
+  const openWorkspaceInstance = useProjectStore((state) => state.openWorkspaceInstance);
+  const clearWorkspaceError = useProjectStore((state) => state.clearWorkspaceError);
+  const onboardingOpen = useProjectStore((state) => state.onboardingOpen);
+  const onboardingDismissed = useProjectStore((state) => state.onboardingDismissed);
+  const dismissOnboarding = useProjectStore((state) => state.dismissOnboarding);
   const openWorkspacePaths = openWorkspaces.map((w) => w.path);
   const [historyOpen, setHistoryOpen] = React.useState(false);
-  const { panes, sessions, setFocusedPane } = useTerminalStore();
+  const panes = useTerminalStore((state) => state.panes);
+  const sessions = useTerminalStore((state) => state.sessions);
+  const setFocusedPane = useTerminalStore((state) => state.setFocusedPane);
   const tasks = useKanbanStore((state) => state.tasks);
   const memories = useMemoryStore((state) => state.nodes);
   // The home page must not show a premature zero for memory counts: gate them on the

@@ -17,22 +17,20 @@ const CATEGORY_CHIPS = [
 ];
 
 export const MemoryList: React.FC = () => {
-  const { currentProjectPath } = useProjectStore();
-  const {
-    nodes,
-    activeNote,
-    loadNote,
-    searchQuery,
-    setSearchQuery,
-    selectedCategory,
-    setSelectedCategory,
-    snapshots,
-    loadSnapshots,
-    takeSnapshot,
-    restoreSnapshot,
-    contentMatchIds,
-    searchContent
-  } = useMemoryStore();
+  const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
+  const nodes = useMemoryStore((state) => state.nodes);
+  const activeNote = useMemoryStore((state) => state.activeNote);
+  const loadNote = useMemoryStore((state) => state.loadNote);
+  const searchQuery = useMemoryStore((state) => state.searchQuery);
+  const setSearchQuery = useMemoryStore((state) => state.setSearchQuery);
+  const selectedCategory = useMemoryStore((state) => state.selectedCategory);
+  const setSelectedCategory = useMemoryStore((state) => state.setSelectedCategory);
+  const snapshots = useMemoryStore((state) => state.snapshots);
+  const loadSnapshots = useMemoryStore((state) => state.loadSnapshots);
+  const takeSnapshot = useMemoryStore((state) => state.takeSnapshot);
+  const restoreSnapshot = useMemoryStore((state) => state.restoreSnapshot);
+  const contentMatchIds = useMemoryStore((state) => state.contentMatchIds);
+  const searchContent = useMemoryStore((state) => state.searchContent);
 
   const [snapshotName, setSnapshotName] = useState('');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
