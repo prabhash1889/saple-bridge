@@ -37,6 +37,7 @@ import {
   MAX_SUMMARY_PROJECTS,
 } from '../../lib/recentProjectSummaries';
 import { workspaceEntries } from './workspaceEntries';
+import { isMissionsEnabled } from '../../lib/featureFlags';
 
 const getWorkspaceName = (path: string) => {
   const parts = path.split(/[\\/]/);
@@ -108,6 +109,7 @@ export const ProjectDashboard: React.FC = () => {
   const addWorkspace = useProjectStore((state) => state.addWorkspace);
   const setActiveView = useProjectStore((state) => state.setActiveView);
   const workspaceSummary = useProjectStore((state) => state.workspaceSummary);
+  const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
   const workspaceLoading = useProjectStore((state) => state.workspaceLoading);
   const checkPathExists = useProjectStore((state) => state.checkPathExists);
   const openWorkspaces = useProjectStore((state) => state.openWorkspaces);
@@ -584,7 +586,7 @@ export const ProjectDashboard: React.FC = () => {
         </div>
 
         <div className="saple-start-actions" role="list">
-          {workspaceEntries.map((entry) => {
+          {workspaceEntries.filter((entry) => entry.id !== 'missions' || isMissionsEnabled(workspaceConfig)).map((entry) => {
             const Icon = ENTRY_ICONS[entry.id] ?? FolderOpen;
             return (
               <button

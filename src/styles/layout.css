@@ -346,6 +346,7 @@ html[data-theme="latte"] .terminal-provider-menu {
 .room-nav-item.accent-memory.active svg { color: var(--accent-memory); }
 .room-nav-item.accent-review.active svg { color: var(--accent-review); }
 .room-nav-item.accent-swarm.active svg { color: var(--accent-swarm); }
+.room-nav-item.accent-missions.active svg { color: var(--accent-swarm); }
 
 .sidebar-area.collapsed .sidebar-brand,
 .sidebar-area.collapsed .room-nav-item {

@@ -3,11 +3,11 @@ import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../lib/id';
 
-export type ViewType = 'dashboard' | 'terminals' | 'kanban' | 'memory' | 'swarm' | 'review' | 'activity' | 'settings' | 'editor';
+export type ViewType = 'dashboard' | 'terminals' | 'kanban' | 'memory' | 'swarm' | 'missions' | 'review' | 'activity' | 'settings' | 'editor';
 
 // Canonical room order. The global Alt+1..9 shortcut (App.tsx) and any UI that shows a
 // room's shortcut hint derive from this list, so the two can never drift apart.
-export const ROOM_ORDER: ViewType[] = ['dashboard', 'terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'settings'];
+export const ROOM_ORDER: ViewType[] = ['dashboard', 'terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'settings', 'missions'];
 
 export interface WorkspaceConfig {
   workspaceId: string;
