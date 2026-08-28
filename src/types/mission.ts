@@ -46,6 +46,7 @@ export interface MissionTask {
   spec: string;
   deps: string[];
   fanout: number;
+  allowStaleBase?: boolean;
   status: TaskStatus;
   result?: unknown | null;
   gateId?: string | null;
@@ -131,6 +132,7 @@ export interface TaskDispatchOutput {
   paneId: string;
   promptFile: string;
   capabilityToken: string;
+  worktreePath?: string | null;
 }
 
 export interface ProviderAdapterDto {
@@ -296,7 +298,43 @@ export interface TaskSpecInput {
   spec?: string;
   deps?: string[];
   fanout?: number;
+  allowStaleBase?: boolean;
 }
+
+export interface WorktreeInfo {
+  worktreePath: string;
+  branch: string;
+  missionId: string;
+  taskId?: string | null;
+  headCommit?: string | null;
+  baseCommit?: string | null;
+  isClean: boolean;
+  ahead: number;
+  behind: number;
+}
+
+export interface GitDiffSummary {
+  branch: string;
+  files: Array<{
+    path: string;
+    status: string;
+    insertions?: number;
+    deletions?: number;
+    staged?: boolean;
+  }>;
+  totalInsertions: number;
+  totalDeletions: number;
+  fullDiff: string;
+}
+
+export interface WorktreeMergeResult {
+  ok: boolean;
+  message: string;
+  conflicts: boolean;
+  mergedCommit?: string | null;
+}
+
+export type WorktreeMergeStrategy = 'merge' | 'pr' | 'discard';
 
 export type MissionCommand =
   | { type: 'start' }

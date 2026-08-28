@@ -6,6 +6,7 @@ import type {
   AskInput,
   AskOutcome,
   GateRequestInput,
+  GitDiffSummary,
   MissionCommand,
   MissionCreateInput,
   MissionMessage,
@@ -18,6 +19,9 @@ import type {
   StepReport,
   TaskDispatchOutput,
   TaskSpecInput,
+  WorktreeInfo,
+  WorktreeMergeResult,
+  WorktreeMergeStrategy,
 } from '../types/mission';
 
 // Missions room projection (Phase M1/M2/M3/M4). React never writes mission state directly: every
@@ -121,6 +125,31 @@ interface MissionStoreState {
     missionId: string,
     report: StepReport,
   ) => Promise<SettlementOutcome>;
+  // Phase M5 Worktree Actions
+  worktrees: Record<string, WorktreeInfo[]>;
+  loadWorktrees: (projectPath: string, missionId?: string) => Promise<WorktreeInfo[]>;
+  createWorktree: (
+    projectPath: string,
+    missionId: string,
+    taskId?: string,
+    baseRef?: string,
+  ) => Promise<WorktreeInfo>;
+  diffWorktree: (
+    projectPath: string,
+    worktreePath: string,
+    baseRef?: string,
+  ) => Promise<GitDiffSummary>;
+  mergeWorktree: (
+    projectPath: string,
+    worktreePath: string,
+    strategy: WorktreeMergeStrategy,
+    targetBranch?: string,
+  ) => Promise<WorktreeMergeResult>;
+  removeWorktree: (
+    projectPath: string,
+    worktreePath: string,
+    force?: boolean,
+  ) => Promise<void>;
 }
 
 // Currency tokens so overlapping loads (rapid switches, watcher bursts, focus polls)
@@ -143,6 +172,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   activeDoc: null,
   activeWarnings: [],
   activeLoading: false,
+  worktrees: {},
 
   // Always re-fetch: the list read is cheap, focus polling relies on it, and the seq
   // token below discards any response that loses a race against a newer request.
@@ -651,5 +681,63 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
     }
     await get().loadMissions(projectPath, true);
     return outcome;
+  },
+
+  loadWorktrees: async (projectPath, missionId) => {
+    const list = await invoke<WorktreeInfo[]>('mission_worktree_list', {
+      projectPath,
+      missionId: missionId ?? null,
+    });
+    if (missionId) {
+      set((state) => ({
+        worktrees: { ...state.worktrees, [missionId]: list },
+      }));
+    }
+    return list;
+  },
+
+  createWorktree: async (projectPath, missionId, taskId, baseRef) => {
+    const info = await invoke<WorktreeInfo>('mission_worktree_create', {
+      projectPath,
+      missionId,
+      taskId: taskId ?? null,
+      baseRef: baseRef ?? null,
+    });
+    await get().loadWorktrees(projectPath, missionId);
+    return info;
+  },
+
+  diffWorktree: async (projectPath, worktreePath, baseRef) => {
+    return invoke<GitDiffSummary>('mission_worktree_diff', {
+      projectPath,
+      worktreePath,
+      baseRef: baseRef ?? null,
+    });
+  },
+
+  mergeWorktree: async (projectPath, worktreePath, strategy, targetBranch) => {
+    const result = await invoke<WorktreeMergeResult>('mission_worktree_merge', {
+      projectPath,
+      worktreePath,
+      strategy,
+      targetBranch: targetBranch ?? null,
+    });
+    const activeId = get().activeId;
+    if (activeId) {
+      await get().loadWorktrees(projectPath, activeId);
+    }
+    return result;
+  },
+
+  removeWorktree: async (projectPath, worktreePath, force) => {
+    await invoke('mission_worktree_remove', {
+      projectPath,
+      worktreePath,
+      force: force ?? false,
+    });
+    const activeId = get().activeId;
+    if (activeId) {
+      await get().loadWorktrees(projectPath, activeId);
+    }
   },
 }));

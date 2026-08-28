@@ -918,4 +918,109 @@ describe('missionStore projection (M1)', () => {
       expect(state.events.some((e) => e.kind === 'artifact_published')).toBe(true);
     });
   });
+
+  describe('Phase M5 Worktrees', () => {
+    const fakeWorktree: import('../types/mission').WorktreeInfo = {
+      worktreePath: 'C:/project/.saple/worktrees/msn_a/task_1',
+      branch: 'saple/msn_a/task_1',
+      missionId: 'msn_a',
+      taskId: 'task_1',
+      headCommit: 'abc1234',
+      baseCommit: 'def5678',
+      isClean: true,
+      ahead: 1,
+      behind: 0,
+    };
+
+    it('loadWorktrees fetches worktree list and sets into map', async () => {
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_worktree_list') return [fakeWorktree];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const list = await useMissionStore.getState().loadWorktrees(PROJECT, 'msn_a');
+      expect(list).toHaveLength(1);
+      expect(list[0].branch).toBe('saple/msn_a/task_1');
+      expect(useMissionStore.getState().worktrees['msn_a']).toEqual([fakeWorktree]);
+    });
+
+    it('createWorktree invokes engine and reloads worktrees', async () => {
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_worktree_create') return fakeWorktree;
+        if (cmd === 'mission_worktree_list') return [fakeWorktree];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const created = await useMissionStore
+        .getState()
+        .createWorktree(PROJECT, 'msn_a', 'task_1', 'main');
+
+      expect(created.worktreePath).toContain('task_1');
+      expect(useMissionStore.getState().worktrees['msn_a']).toHaveLength(1);
+    });
+
+    it('diffWorktree queries git diff summary for worktree', async () => {
+      const diffSummary: import('../types/mission').GitDiffSummary = {
+        branch: 'saple/msn_a/task_1',
+        files: [{ path: 'src/lib.rs', status: 'modified', insertions: 10, deletions: 2 }],
+        totalInsertions: 10,
+        totalDeletions: 2,
+        fullDiff: '+ added code\n- old code',
+      };
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_worktree_diff') return diffSummary;
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const diff = await useMissionStore
+        .getState()
+        .diffWorktree(PROJECT, 'C:/project/.saple/worktrees/msn_a/task_1');
+
+      expect(diff.totalInsertions).toBe(10);
+      expect(diff.files[0].path).toBe('src/lib.rs');
+    });
+
+    it('mergeWorktree merges and refreshes worktrees', async () => {
+      useMissionStore.setState({ activeId: 'msn_a' });
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_worktree_merge') {
+          return { ok: true, message: 'Merged successfully', conflicts: false, mergedCommit: 'sha999' };
+        }
+        if (cmd === 'mission_worktree_list') return [];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const result = await useMissionStore
+        .getState()
+        .mergeWorktree(PROJECT, 'C:/project/.saple/worktrees/msn_a/task_1', 'merge');
+
+      expect(result.ok).toBe(true);
+      expect(result.mergedCommit).toBe('sha999');
+    });
+
+    it('removeWorktree prunes worktree and refreshes active list', async () => {
+      useMissionStore.setState({ activeId: 'msn_a' });
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_worktree_remove') return null;
+        if (cmd === 'mission_worktree_list') return [];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      await useMissionStore
+        .getState()
+        .removeWorktree(PROJECT, 'C:/project/.saple/worktrees/msn_a/task_1', false);
+
+      expect(invokeMock).toHaveBeenCalledWith('mission_worktree_remove', {
+        projectPath: PROJECT,
+        worktreePath: 'C:/project/.saple/worktrees/msn_a/task_1',
+        force: false,
+      });
+    });
+  });
 });
