@@ -114,8 +114,19 @@ fn existing_corrupt_backup(path: &Path, contents: &[u8]) -> Option<PathBuf> {
 pub(crate) fn preserve_and_flag_corrupt(path: &Path, parse_error: &str) -> Result<PathBuf, String> {
     let contents = std::fs::read(path)
         .map_err(|e| format!("Failed to preserve corrupt file {}: {}", path.display(), e))?;
-    let backup =
-        existing_corrupt_backup(path, &contents).unwrap_or_else(|| corrupt_backup_path(path));
+    let backup = existing_corrupt_backup(path, &contents).unwrap_or_else(|| {
+        let mut backup = corrupt_backup_path(path);
+        let mut suffix = 1;
+        while backup.exists() {
+            let name = backup
+                .file_name()
+                .map(|name| name.to_string_lossy().trim_end_matches(".bak").to_string())
+                .unwrap_or_else(|| "state.corrupt".to_string());
+            backup = backup.with_file_name(format!("{}-{}.bak", name, suffix));
+            suffix += 1;
+        }
+        backup
+    });
     if !backup.exists() {
         std::fs::write(&backup, &contents)
             .map_err(|e| format!("Failed to preserve corrupt file {}: {}", path.display(), e))?;
