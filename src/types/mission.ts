@@ -3,24 +3,12 @@
 // tests round-trip a real engine-shaped payload against these types.
 
 export type MissionStatus =
-  | 'draft'
-  | 'running'
-  | 'paused'
-  | 'gated'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+  'draft' | 'running' | 'paused' | 'gated' | 'completed' | 'failed' | 'cancelled';
 
 export type TaskKind = 'implement' | 'review' | 'verify';
 
 export type TaskStatus =
-  | 'pending'
-  | 'ready'
-  | 'dispatched'
-  | 'completed'
-  | 'failed'
-  | 'blocked'
-  | 'circuit_broken';
+  'pending' | 'ready' | 'dispatched' | 'completed' | 'failed' | 'blocked' | 'circuit_broken';
 
 export interface CoordinatorSpec {
   provider: string;

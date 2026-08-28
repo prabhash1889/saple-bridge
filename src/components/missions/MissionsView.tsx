@@ -32,7 +32,10 @@ interface TaskDraft {
 
 const TASK_KINDS: TaskKind[] = ['implement', 'review', 'verify'];
 
-const STATUS_ORDER: Record<MissionState['status'], Array<{ cmd: 'start' | 'pause' | 'resume' | 'cancel'; label: string; icon: React.ElementType }>> = {
+const STATUS_ORDER: Record<
+  MissionState['status'],
+  Array<{ cmd: 'start' | 'pause' | 'resume' | 'cancel'; label: string; icon: React.ElementType }>
+> = {
   draft: [
     { cmd: 'start', label: 'Start', icon: Play },
     { cmd: 'cancel', label: 'Cancel', icon: Square },
@@ -155,7 +158,9 @@ export const MissionsView: React.FC = () => {
   const handleSaveDoc = async () => {
     if (!currentProjectPath || !activeId || !activeState) return;
     try {
-      await useMissionStore.getState().saveDoc(currentProjectPath, activeId, docBuffer, activeState.revision);
+      await useMissionStore
+        .getState()
+        .saveDoc(currentProjectPath, activeId, docBuffer, activeState.revision);
       setDocDirty(false);
       useNotificationStore.getState().success('Mission document saved');
     } catch {
@@ -174,7 +179,9 @@ export const MissionsView: React.FC = () => {
       fanout: 1,
     }));
     try {
-      await useMissionStore.getState().saveTasks(currentProjectPath, activeId, activeState.revision, specs);
+      await useMissionStore
+        .getState()
+        .saveTasks(currentProjectPath, activeId, activeState.revision, specs);
       setTasksDirty(false);
       useNotificationStore.getState().success('Task graph saved');
     } catch {
@@ -199,7 +206,7 @@ export const MissionsView: React.FC = () => {
   }, []);
 
   const lifecycleActions = useMemo(
-    () => (activeState ? STATUS_ORDER[activeState.status] ?? [] : []),
+    () => (activeState ? (STATUS_ORDER[activeState.status] ?? []) : []),
     [activeState],
   );
 
@@ -283,12 +290,19 @@ export const MissionsView: React.FC = () => {
           <>
             <div className="missions-detail-header">
               <h2 className="missions-detail-title">{activeState.spec.title}</h2>
-              <span className={`mission-status-badge ${activeState.status}`}>{activeState.status}</span>
+              <span className={`mission-status-badge ${activeState.status}`}>
+                {activeState.status}
+              </span>
               <span className="missions-revision">rev {activeState.revision}</span>
               {lifecycleActions.map(({ cmd, label, icon: Icon }) => (
                 <button
                   key={cmd}
-                  onClick={() => currentProjectPath && void useMissionStore.getState().runCommand(currentProjectPath, activeState.id, { type: cmd })}
+                  onClick={() =>
+                    currentProjectPath &&
+                    void useMissionStore
+                      .getState()
+                      .runCommand(currentProjectPath, activeState.id, { type: cmd })
+                  }
                   title={label}
                 >
                   <Icon size={13} />
@@ -344,7 +358,13 @@ export const MissionsView: React.FC = () => {
                     onClick={() => {
                       setTaskDrafts((prev) => [
                         ...prev,
-                        { key: `t${Date.now().toString(36)}`, title: '', kind: 'implement', spec: '', deps: [] },
+                        {
+                          key: `t${Date.now().toString(36)}`,
+                          title: '',
+                          kind: 'implement',
+                          spec: '',
+                          deps: [],
+                        },
                       ]);
                       setTasksDirty(true);
                     }}
@@ -391,7 +411,9 @@ export const MissionsView: React.FC = () => {
                         <td>
                           <select
                             value={draft.kind}
-                            onChange={(e) => updateDraft(index, { kind: e.target.value as TaskKind })}
+                            onChange={(e) =>
+                              updateDraft(index, { kind: e.target.value as TaskKind })
+                            }
                             aria-label={`Task ${index + 1} kind`}
                           >
                             {TASK_KINDS.map((kind) => (
@@ -419,7 +441,11 @@ export const MissionsView: React.FC = () => {
                                   key={other.key}
                                   className={`missions-dep-chip${draft.deps.includes(other.key) ? ' selected' : ''}`}
                                   onClick={() => toggleDep(index, other.key)}
-                                  title={draft.deps.includes(other.key) ? 'Remove dependency' : 'Add dependency'}
+                                  title={
+                                    draft.deps.includes(other.key)
+                                      ? 'Remove dependency'
+                                      : 'Add dependency'
+                                  }
                                 >
                                   {other.title || 'untitled'}
                                 </button>

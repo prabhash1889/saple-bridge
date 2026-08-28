@@ -52,7 +52,9 @@
   flex-direction: column;
   gap: 4px;
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .missions-summary:hover {
@@ -129,14 +131,30 @@
   text-transform: capitalize;
 }
 
-.mission-status-badge.draft { color: var(--text-secondary); }
-.mission-status-badge.running { color: var(--color-success); border-color: var(--color-success); }
-.mission-status-badge.paused { color: var(--color-warning); border-color: var(--color-warning); }
-.mission-status-badge.gated { color: var(--color-info); border-color: var(--color-info); }
+.mission-status-badge.draft {
+  color: var(--text-secondary);
+}
+.mission-status-badge.running {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+.mission-status-badge.paused {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+.mission-status-badge.gated {
+  color: var(--color-info);
+  border-color: var(--color-info);
+}
 .mission-status-badge.completed,
 .mission-status-badge.failed,
-.mission-status-badge.cancelled { color: var(--text-muted); }
-.mission-status-badge.corrupt { color: var(--color-danger); border-color: var(--color-danger); }
+.mission-status-badge.cancelled {
+  color: var(--text-muted);
+}
+.mission-status-badge.corrupt {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
 
 .task-status-chip.pending,
 .task-status-chip.ready,
@@ -153,10 +171,21 @@
   text-transform: capitalize;
 }
 
-.task-status-chip.ready { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 55%, transparent); }
-.task-status-chip.dispatched { color: var(--color-info); border-color: color-mix(in srgb, var(--color-info) 55%, transparent); }
-.task-status-chip.completed { color: var(--text-primary); }
-.task-status-chip.failed { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 55%, transparent); }
+.task-status-chip.ready {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 55%, transparent);
+}
+.task-status-chip.dispatched {
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 55%, transparent);
+}
+.task-status-chip.completed {
+  color: var(--text-primary);
+}
+.task-status-chip.failed {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent);
+}
 
 .missions-warning-banner {
   border: 1px solid var(--color-warning);

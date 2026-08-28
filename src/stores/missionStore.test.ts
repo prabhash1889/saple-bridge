@@ -73,6 +73,7 @@ beforeEach(() => {
     loading: false,
     error: null,
     activeId: null,
+    activeProjectPath: null,
     activeState: null,
     activeDoc: null,
     activeWarnings: [],
@@ -136,7 +137,12 @@ describe('missionStore projection (M1)', () => {
       const cmd = args[0] as string;
       if (cmd === 'mission_create') return summaryOf({ id: 'msn_new', title: 'New Mission' });
       if (cmd === 'mission_read') {
-        return { status: 'loaded', state: { ...engineState, id: 'msn_new' }, doc: '---\n---\n', warnings: [] };
+        return {
+          status: 'loaded',
+          state: { ...engineState, id: 'msn_new' },
+          doc: '---\n---\n',
+          warnings: [],
+        };
       }
       throw new Error(`unexpected command ${cmd}`);
     });
@@ -147,13 +153,21 @@ describe('missionStore projection (M1)', () => {
 
     expect(id).toBe('msn_new');
     const createArgs = invokeMock.mock.calls.find((c) => c[0] === 'mission_create')?.[1];
-    expect(createArgs).toMatchObject({ projectPath: PROJECT, title: 'New Mission', objective: 'obj' });
+    expect(createArgs).toMatchObject({
+      projectPath: PROJECT,
+      title: 'New Mission',
+      objective: 'obj',
+    });
     expect(useMissionStore.getState().missions[0].id).toBe('msn_new');
     expect(useMissionStore.getState().activeId).toBe('msn_new');
   });
 
   it('saveTasks passes CAS revision through to the engine', async () => {
-    useMissionStore.setState({ activeId: 'msn_a', activeState: engineState });
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: engineState,
+    });
     invokeMock.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'mission_set_tasks') return { ...engineState, revision: 4 };
@@ -175,8 +189,12 @@ describe('missionStore projection (M1)', () => {
   });
 
   it('runCommand mints a fresh request_id per call and reports engine rejections', async () => {
-    useMissionStore.setState({ activeId: 'msn_a', activeState: engineState });
-    invokeMock.mockRejectedValue('cannot start a mission from status \'running\'');
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: engineState,
+    });
+    invokeMock.mockRejectedValue("cannot start a mission from status 'running'");
 
     await expect(
       useMissionStore.getState().runCommand(PROJECT, 'msn_a', { type: 'start' }),
@@ -201,5 +219,73 @@ describe('missionStore projection (M1)', () => {
 
     const stored = JSON.parse(JSON.stringify(useMissionStore.getState().activeState));
     expect(stored).toEqual(engineState);
+  });
+
+  it('ignores a save response after the selected mission changes', async () => {
+    let resolveSave: ((state: MissionState) => void) | undefined;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'mission_update_doc') {
+        return new Promise<MissionState>((resolve) => {
+          resolveSave = resolve;
+        });
+      }
+      return [];
+    });
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: engineState,
+      activeDoc: 'old doc',
+    });
+
+    const pending = useMissionStore.getState().saveDoc(PROJECT, 'msn_a', 'new doc', 3);
+    useMissionStore.setState({
+      activeId: 'msn_b',
+      activeProjectPath: PROJECT,
+      activeState: { ...engineState, id: 'msn_b' },
+      activeDoc: 'mission b',
+    });
+    resolveSave?.({ ...engineState, revision: 4 });
+    await pending;
+
+    expect(useMissionStore.getState().activeId).toBe('msn_b');
+    expect(useMissionStore.getState().activeDoc).toBe('mission b');
+  });
+
+  it('invalidates an in-flight open when the mission is closed', async () => {
+    let resolveRead: ((result: unknown) => void) | undefined;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'mission_read') {
+        return new Promise((resolve) => {
+          resolveRead = resolve;
+        });
+      }
+      return [];
+    });
+
+    const pending = useMissionStore.getState().openMission(PROJECT, 'msn_a');
+    useMissionStore.getState().closeMission();
+    resolveRead?.({ status: 'loaded', state: engineState, doc: 'doc', warnings: [] });
+    await pending;
+
+    expect(useMissionStore.getState().activeId).toBeNull();
+    expect(useMissionStore.getState().activeState).toBeNull();
+  });
+
+  it('clears the active mission when loading a different project', async () => {
+    useMissionStore.setState({
+      loadedProjectPath: 'C:/old-project',
+      activeId: 'msn_a',
+      activeProjectPath: 'C:/old-project',
+      activeState: engineState,
+      activeDoc: 'old doc',
+    });
+    invokeMock.mockResolvedValue([]);
+
+    await useMissionStore.getState().loadMissions(PROJECT);
+
+    expect(useMissionStore.getState().activeId).toBeNull();
+    expect(useMissionStore.getState().activeState).toBeNull();
+    expect(useMissionStore.getState().activeProjectPath).toBeNull();
   });
 });
