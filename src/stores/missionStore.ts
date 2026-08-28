@@ -2,17 +2,25 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { toErrorMessage } from '../lib/errors';
 import type {
+  ArtifactPublishInput,
+  AskInput,
+  AskOutcome,
+  GateRequestInput,
   MissionCommand,
   MissionCreateInput,
+  MissionMessage,
   MissionReadResult,
   MissionState,
   MissionSummary,
   ProviderAdapterDto,
+  SendMessageInput,
+  SettlementOutcome,
+  StepReport,
   TaskDispatchOutput,
   TaskSpecInput,
 } from '../types/mission';
 
-// Missions room projection (Phase M1/M2/M3). React never writes mission state directly: every
+// Missions room projection (Phase M1/M2/M3/M4). React never writes mission state directly: every
 // mutation goes through the engine commands in src-tauri/src/missions.rs, and this store
 // only folds command results back into memory.
 
@@ -68,6 +76,51 @@ interface MissionStoreState {
   recover: (projectPath: string) => Promise<MissionSummary[]>;
   retryDispatch: (projectPath: string, missionId: string, dispatchId: string) => Promise<void>;
   abandonDispatch: (projectPath: string, missionId: string, dispatchId: string) => Promise<void>;
+
+  // Phase M4 Actions
+  requestGate: (
+    projectPath: string,
+    missionId: string,
+    input: GateRequestInput,
+  ) => Promise<MissionState>;
+  resolveGate: (
+    projectPath: string,
+    missionId: string,
+    gateId: string,
+    resolution: string,
+  ) => Promise<MissionState>;
+  ask: (projectPath: string, missionId: string, input: AskInput) => Promise<AskOutcome>;
+  reply: (
+    projectPath: string,
+    missionId: string,
+    threadId: string,
+    body: string,
+  ) => Promise<MissionState>;
+  sendMessage: (
+    projectPath: string,
+    missionId: string,
+    input: SendMessageInput,
+  ) => Promise<MissionState>;
+  fetchInbox: (
+    projectPath: string,
+    missionId: string,
+    recipient: string,
+  ) => Promise<MissionMessage[]>;
+  ackInbox: (
+    projectPath: string,
+    missionId: string,
+    messageIds: string[],
+  ) => Promise<MissionState>;
+  publishArtifact: (
+    projectPath: string,
+    missionId: string,
+    input: ArtifactPublishInput,
+  ) => Promise<MissionState>;
+  settleReport: (
+    projectPath: string,
+    missionId: string,
+    report: StepReport,
+  ) => Promise<SettlementOutcome>;
 }
 
 // Currency tokens so overlapping loads (rapid switches, watcher bursts, focus polls)
@@ -474,5 +527,129 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
 
   abandonDispatch: async (projectPath, missionId, dispatchId) => {
     return get().runCommand(projectPath, missionId, { type: 'abandon', dispatchId });
+  },
+
+  requestGate: async (projectPath, missionId, input) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const state = await invoke<MissionState>('mission_request_gate', {
+      projectPath,
+      missionId,
+      input,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: state, error: null });
+    }
+    return state;
+  },
+
+  resolveGate: async (projectPath, missionId, gateId, resolution) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const state = await invoke<MissionState>('mission_resolve_gate', {
+      projectPath,
+      missionId,
+      gateId,
+      resolution,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: state, error: null });
+    }
+    await get().loadMissions(projectPath, true);
+    return state;
+  },
+
+  ask: async (projectPath, missionId, input) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const outcome = await invoke<AskOutcome>('mission_ask', {
+      projectPath,
+      missionId,
+      input,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: outcome.state, error: null });
+    }
+    return outcome;
+  },
+
+  reply: async (projectPath, missionId, threadId, body) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const state = await invoke<MissionState>('mission_reply', {
+      projectPath,
+      missionId,
+      threadId,
+      body,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: state, error: null });
+    }
+    return state;
+  },
+
+  sendMessage: async (projectPath, missionId, input) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const state = await invoke<MissionState>('mission_send_message', {
+      projectPath,
+      missionId,
+      input,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: state, error: null });
+    }
+    return state;
+  },
+
+  fetchInbox: async (projectPath, missionId, recipient) => {
+    return invoke<MissionMessage[]>('mission_inbox_fetch', {
+      projectPath,
+      missionId,
+      recipient,
+    });
+  },
+
+  ackInbox: async (projectPath, missionId, messageIds) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const state = await invoke<MissionState>('mission_inbox_ack', {
+      projectPath,
+      missionId,
+      messageIds,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: state, error: null });
+    }
+    return state;
+  },
+
+  publishArtifact: async (projectPath, missionId, input) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const state = await invoke<MissionState>('mission_publish_artifact', {
+      projectPath,
+      missionId,
+      input,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: state, error: null });
+    }
+    return state;
+  },
+
+  settleReport: async (projectPath, missionId, report) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const outcome = await invoke<SettlementOutcome>('mission_settle_report', {
+      projectPath,
+      missionId,
+      report,
+      expectedRevision,
+    });
+    if (get().activeId === missionId) {
+      set({ activeState: outcome.state, error: null });
+    }
+    await get().loadMissions(projectPath, true);
+    return outcome;
   },
 }));

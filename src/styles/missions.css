@@ -394,3 +394,121 @@
   margin-top: 4px;
 }
 
+/* Phase M4: Decision Gates, Ask/Reply Clarifications, Mailbox */
+
+.missions-gate-card,
+.missions-ask-card {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.missions-gate-card:last-child,
+.missions-ask-card:last-child {
+  border-bottom: none;
+}
+
+.missions-gate-header,
+.missions-ask-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.missions-gate-question,
+.missions-ask-question {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.missions-gate-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.missions-gate-btn {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-surface-light);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.missions-gate-btn:hover {
+  border-color: var(--accent-swarm);
+  color: var(--accent-swarm);
+}
+
+.missions-gate-btn.approve {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.missions-gate-btn.reject {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.missions-reply-form,
+.missions-compose-box {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.missions-reply-input,
+.missions-compose-input {
+  flex: 1;
+  background: var(--bg-surface-light);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 5px 8px;
+  font-size: var(--text-xs);
+}
+
+.missions-messages-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.missions-message-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.missions-message-item:last-child {
+  border-bottom: none;
+}
+
+.missions-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.missions-message-body {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+

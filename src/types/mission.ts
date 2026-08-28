@@ -193,6 +193,86 @@ export type MissionReadResult =
   | { status: 'corrupt'; error: string; backupPath: string }
   | { status: 'locked' };
 
+// Settlement Types ---------------------------------------------------------------------
+
+export interface StepReport {
+  dispatchId: string;
+  attemptId: string;
+  token: string;
+  paneId?: string | null;
+  status: 'done' | 'progress' | 'blocked' | 'failed';
+  summary: string;
+  changedFiles?: string[] | null;
+  tests?: string[] | null;
+}
+
+export type SettlementRejectionCode =
+  | 'sender_not_assignee'
+  | 'stale_attempt'
+  | 'task_dispatch_mismatch'
+  | 'inactive_dispatch'
+  | 'invalid_payload'
+  | 'unknown_dispatch';
+
+export type SettlementResult =
+  | { status: 'succeeded'; taskId: string }
+  | { status: 'failed'; taskId: string; retryScheduled: boolean }
+  | { status: 'progress'; taskId: string }
+  | { status: 'blocked'; taskId: string; reason: string }
+  | { status: 'rejected'; code: SettlementRejectionCode; reason: string }
+  | { status: 'duplicate_ignored'; taskId: string };
+
+export interface SettlementOutcome {
+  state: MissionState;
+  result: SettlementResult;
+}
+
+// Gate & Ask/Reply & Mailbox Types -----------------------------------------------------
+
+export interface GateRequestInput {
+  dispatchId: string;
+  question: string;
+  options: string[];
+}
+
+export interface AskInput {
+  dispatchId: string;
+  attemptId: string;
+  token: string;
+  paneId?: string | null;
+  question: string;
+  options?: string[] | null;
+  timeoutMs?: number | null;
+}
+
+export interface AskOutput {
+  threadId: string;
+  messageId: string;
+  autoReply?: string | null;
+}
+
+export interface AskOutcome {
+  state: MissionState;
+  output: AskOutput;
+}
+
+export interface SendMessageInput {
+  from: string;
+  to: string;
+  kind: string;
+  body: string;
+  expectsReply?: boolean;
+  threadId?: string | null;
+  inReplyTo?: string | null;
+}
+
+export interface ArtifactPublishInput {
+  dispatchId: string;
+  kind?: string;
+  content: string;
+  label: string;
+}
+
 // Inputs -------------------------------------------------------------------------------
 
 export interface MissionCreateInput {

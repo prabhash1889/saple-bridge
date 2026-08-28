@@ -662,4 +662,260 @@ describe('missionStore projection (M1)', () => {
       expect(current?.dispatches[0].status).toBe('stop_unknown');
     });
   });
+
+  describe('Phase M4 - Settlement, Gates, Ask/Reply, and Mailbox', () => {
+    it('settleReport invokes mission_settle_report and updates state', async () => {
+      const settledOutcome = {
+        state: {
+          ...engineState,
+          revision: 4,
+          tasks: [{ ...engineState.tasks[0], status: 'completed' as const }, engineState.tasks[1]],
+        },
+        result: {
+          status: 'succeeded' as const,
+          taskId: 'task_1',
+        },
+      };
+
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_settle_report') return settledOutcome;
+        if (cmd === 'mission_list') return [summaryOf()];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const outcome = await useMissionStore.getState().settleReport(PROJECT, 'msn_a', {
+        dispatchId: 'dsp_1',
+        attemptId: 'att_1',
+        token: 'tok_1',
+        status: 'done',
+        summary: 'All tasks completed successfully',
+      });
+
+      expect(outcome.result.status).toBe('succeeded');
+      expect(useMissionStore.getState().activeState?.tasks[0].status).toBe('completed');
+    });
+
+    it('requestGate and resolveGate invoke appropriate engine commands', async () => {
+      const gatedState: MissionState = {
+        ...engineState,
+        revision: 4,
+        tasks: [{ ...engineState.tasks[0], status: 'blocked' as const }, engineState.tasks[1]],
+        gates: [
+          {
+            id: 'gate_1',
+            taskId: 'task_1',
+            question: 'Proceed with destructive action?',
+            options: ['approve', 'reject'],
+            status: 'pending',
+          },
+        ],
+      };
+
+      const resolvedState: MissionState = {
+        ...gatedState,
+        revision: 5,
+        tasks: [{ ...gatedState.tasks[0], status: 'ready' as const }, gatedState.tasks[1]],
+        gates: [{ ...gatedState.gates![0], status: 'resolved', resolution: 'approve' }],
+      };
+
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_request_gate') return gatedState;
+        if (cmd === 'mission_resolve_gate') return resolvedState;
+        if (cmd === 'mission_list') return [summaryOf()];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const s1 = await useMissionStore.getState().requestGate(PROJECT, 'msn_a', {
+        dispatchId: 'dsp_1',
+        question: 'Proceed with destructive action?',
+        options: ['approve', 'reject'],
+      });
+      expect(s1.gates?.[0].status).toBe('pending');
+      expect(useMissionStore.getState().activeState?.tasks[0].status).toBe('blocked');
+
+      const s2 = await useMissionStore.getState().resolveGate(PROJECT, 'msn_a', 'gate_1', 'approve');
+      expect(s2.gates?.[0].status).toBe('resolved');
+      expect(useMissionStore.getState().activeState?.tasks[0].status).toBe('ready');
+    });
+
+    it('ask and reply channels invoke backend ask/reply methods', async () => {
+      const askOutcome = {
+        state: {
+          ...engineState,
+          revision: 4,
+          messages: [
+            {
+              id: 'msg_1',
+              threadId: 'thr_1',
+              from: 'task_task_1',
+              to: 'operator',
+              kind: 'ask' as const,
+              body: 'Which auth provider?',
+              expectsReply: true,
+              read: false,
+              acked: false,
+              createdAt: '2026-08-28T00:00:00Z',
+            },
+          ],
+        },
+        output: {
+          threadId: 'thr_1',
+          messageId: 'msg_1',
+        },
+      };
+
+      const repliedState: MissionState = {
+        ...askOutcome.state,
+        revision: 5,
+        messages: [
+          { ...askOutcome.state.messages[0], answeredBy: 'msg_2' },
+          {
+            id: 'msg_2',
+            threadId: 'thr_1',
+            from: 'operator',
+            to: 'task_task_1',
+            kind: 'reply' as const,
+            body: 'Use GitHub OAuth',
+            expectsReply: false,
+            read: false,
+            acked: false,
+            createdAt: '2026-08-28T00:00:01Z',
+          },
+        ],
+      };
+
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_ask') return askOutcome;
+        if (cmd === 'mission_reply') return repliedState;
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const out = await useMissionStore.getState().ask(PROJECT, 'msn_a', {
+        dispatchId: 'dsp_1',
+        attemptId: 'att_1',
+        token: 'tok_1',
+        question: 'Which auth provider?',
+      });
+      expect(out.output.threadId).toBe('thr_1');
+      expect(useMissionStore.getState().activeState?.messages).toHaveLength(1);
+
+      const rState = await useMissionStore.getState().reply(PROJECT, 'msn_a', 'thr_1', 'Use GitHub OAuth');
+      expect(rState.messages).toHaveLength(2);
+      expect(useMissionStore.getState().activeState?.messages?.[0].answeredBy).toBe('msg_2');
+    });
+
+    it('sendMessage, fetchInbox, and ackInbox work seamlessly', async () => {
+      const msgState: MissionState = {
+        ...engineState,
+        revision: 4,
+        messages: [
+          {
+            id: 'msg_1',
+            threadId: 'thr_1',
+            from: 'operator',
+            to: 'task_task_1',
+            kind: 'message' as const,
+            body: 'Heads up',
+            expectsReply: false,
+            read: false,
+            acked: false,
+            createdAt: '2026-08-28T00:00:00Z',
+          },
+        ],
+      };
+
+      const ackedState: MissionState = {
+        ...msgState,
+        revision: 5,
+        messages: [{ ...msgState.messages![0], acked: true }],
+      };
+
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_send_message') return msgState;
+        if (cmd === 'mission_inbox_fetch') return msgState.messages;
+        if (cmd === 'mission_inbox_ack') return ackedState;
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const s1 = await useMissionStore.getState().sendMessage(PROJECT, 'msn_a', {
+        from: 'operator',
+        to: 'task_task_1',
+        kind: 'message',
+        body: 'Heads up',
+      });
+      expect(s1.messages).toHaveLength(1);
+
+      const inbox = await useMissionStore.getState().fetchInbox(PROJECT, 'msn_a', 'task_task_1');
+      expect(inbox).toHaveLength(1);
+
+      const s2 = await useMissionStore.getState().ackInbox(PROJECT, 'msn_a', ['msg_1']);
+      expect(s2.messages?.[0].acked).toBe(true);
+    });
+
+    it('publishArtifact invokes mission_publish_artifact', async () => {
+      const artState: MissionState = {
+        ...engineState,
+        revision: 4,
+        events: [
+          ...engineState.events,
+          {
+            seq: 2,
+            kind: 'artifact_published',
+            payload: { label: 'Report', path: 'artifacts/report/index.md' },
+            at: '2026-08-28T00:00:00Z',
+          },
+        ],
+      };
+
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_publish_artifact') return artState;
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const state = await useMissionStore.getState().publishArtifact(PROJECT, 'msn_a', {
+        dispatchId: 'dsp_1',
+        kind: 'report',
+        content: '# Report content',
+        label: 'Report',
+      });
+
+      expect(state.revision).toBe(4);
+      expect(state.events.some((e) => e.kind === 'artifact_published')).toBe(true);
+    });
+  });
 });

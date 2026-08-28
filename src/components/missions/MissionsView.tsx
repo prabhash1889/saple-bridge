@@ -4,13 +4,17 @@ import {
   Database,
   Flag,
   FolderOpen,
+  HelpCircle,
   ListChecks,
+  Mail,
   Pause,
   Play,
   Plus,
   RefreshCw,
   RotateCw,
   Save,
+  Send,
+  ShieldAlert,
   Square,
   Trash2,
   XCircle,
@@ -92,6 +96,9 @@ export const MissionsView: React.FC = () => {
   const retryDispatch = useMissionStore((state) => state.retryDispatch);
   const abandonDispatch = useMissionStore((state) => state.abandonDispatch);
   const tickMission = useMissionStore((state) => state.tick);
+  const resolveGate = useMissionStore((state) => state.resolveGate);
+  const replyAsk = useMissionStore((state) => state.reply);
+  const sendMessage = useMissionStore((state) => state.sendMessage);
 
   // Doc editor buffer. Kept local so typing never touches the engine until Save.
   const [docBuffer, setDocBuffer] = useState('');
@@ -101,10 +108,17 @@ export const MissionsView: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [dispatchingTask, setDispatchingTask] = useState<string | null>(null);
   const [selectedProviders, setSelectedProviders] = useState<Record<string, string>>({});
+  const [replyBuffers, setReplyBuffers] = useState<Record<string, string>>({});
+  const [composeBody, setComposeBody] = useState('');
   const docBufferRef = useRef(docBuffer);
   const taskDraftsRef = useRef(taskDrafts);
   docBufferRef.current = docBuffer;
   taskDraftsRef.current = taskDrafts;
+
+  const pendingAsks = useMemo(() => {
+    if (!activeState?.messages) return [];
+    return activeState.messages.filter((m) => m.kind === 'ask' && m.expectsReply && !m.answeredBy);
+  }, [activeState?.messages]);
 
   useEffect(() => {
     void loadAdapters();
@@ -285,6 +299,47 @@ export const MissionsView: React.FC = () => {
       useNotificationStore.getState().success('Dispatch abandoned');
     } catch (err) {
       useNotificationStore.getState().error(`Abandon failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleResolveGate = async (gateId: string, resolution: string) => {
+    if (!currentProjectPath || !activeId) return;
+    try {
+      await resolveGate(currentProjectPath, activeId, gateId, resolution);
+      useNotificationStore.getState().success(`Gate resolved: ${resolution}`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to resolve gate: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleReplyAsk = async (threadId: string) => {
+    if (!currentProjectPath || !activeId) return;
+    const body = (replyBuffers[threadId] || '').trim();
+    if (!body) return;
+    try {
+      await replyAsk(currentProjectPath, activeId, threadId, body);
+      setReplyBuffers((prev) => ({ ...prev, [threadId]: '' }));
+      useNotificationStore.getState().success('Reply sent');
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to send reply: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!currentProjectPath || !activeId) return;
+    const body = composeBody.trim();
+    if (!body) return;
+    try {
+      await sendMessage(currentProjectPath, activeId, {
+        from: 'operator',
+        to: 'all',
+        kind: 'message',
+        body,
+      });
+      setComposeBody('');
+      useNotificationStore.getState().success('Message posted to mission mailbox');
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to send message: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -777,6 +832,149 @@ export const MissionsView: React.FC = () => {
                 </table>
               </section>
             )}
+
+            {activeState.gates && activeState.gates.length > 0 && (
+              <section className="missions-section">
+                <div className="missions-section-heading">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <ShieldAlert size={13} />
+                    <span>Decision Gates ({activeState.gates.length})</span>
+                  </span>
+                </div>
+                <div className="missions-gates-list">
+                  {activeState.gates.map((gate) => {
+                    const task = activeState.tasks.find((t) => t.id === gate.taskId);
+                    const isPending = gate.status === 'pending';
+                    return (
+                      <div key={gate.id} className="missions-gate-card">
+                        <div className="missions-gate-header">
+                          <span className={`mission-status-badge ${gate.status}`}>{gate.status}</span>
+                          <span>Task: {task?.title || gate.taskId}</span>
+                        </div>
+                        <div className="missions-gate-question">{gate.question}</div>
+                        {isPending ? (
+                          <div className="missions-gate-actions">
+                            {gate.options.map((opt) => (
+                              <button
+                                key={opt}
+                                className={`missions-gate-btn ${opt.toLowerCase()}`}
+                                onClick={() => handleResolveGate(gate.id, opt)}
+                              >
+                                {opt}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-success)' }}>
+                            Decision: {gate.resolution}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {pendingAsks.length > 0 && (
+              <section className="missions-section">
+                <div className="missions-section-heading">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <HelpCircle size={13} />
+                    <span>Pending Clarifications ({pendingAsks.length})</span>
+                  </span>
+                </div>
+                <div className="missions-asks-list">
+                  {pendingAsks.map((ask) => {
+                    const task = activeState.tasks.find((t) => `task_${t.id}` === ask.from);
+                    return (
+                      <div key={ask.id} className="missions-ask-card">
+                        <div className="missions-ask-header">
+                          <span>From: {task?.title || ask.from}</span>
+                          <span>{new Date(ask.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="missions-ask-question">{ask.body}</div>
+                        <div className="missions-reply-form">
+                          <input
+                            className="missions-reply-input"
+                            placeholder="Type reply to worker..."
+                            value={replyBuffers[ask.threadId] || ''}
+                            onChange={(e) =>
+                              setReplyBuffers((prev) => ({ ...prev, [ask.threadId]: e.target.value }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && (replyBuffers[ask.threadId] || '').trim()) {
+                                void handleReplyAsk(ask.threadId);
+                              }
+                            }}
+                          />
+                          <button
+                            className="missions-dispatch-btn"
+                            disabled={!(replyBuffers[ask.threadId] || '').trim()}
+                            onClick={() => void handleReplyAsk(ask.threadId)}
+                          >
+                            <Send size={10} />
+                            <span>Reply</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            <section className="missions-section">
+              <div className="missions-section-heading">
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Mail size={13} />
+                  <span>Mission Mailbox ({activeState.messages?.length || 0})</span>
+                </span>
+              </div>
+              {activeState.messages && activeState.messages.length > 0 ? (
+                <div className="missions-messages-list">
+                  {activeState.messages.map((msg) => (
+                    <div key={msg.id} className="missions-message-item">
+                      <div className="missions-message-meta">
+                        <span style={{ fontWeight: 600 }}>{msg.from}</span>
+                        <span>→</span>
+                        <span>{msg.to}</span>
+                        <span style={{ color: 'var(--text-muted)' }}>({msg.kind})</span>
+                        <span style={{ marginLeft: 'auto' }}>
+                          {new Date(msg.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <div className="missions-message-body">{msg.body}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="missions-empty-tasks">No messages in mission mailbox.</div>
+              )}
+              <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+                <div className="missions-compose-box">
+                  <input
+                    className="missions-compose-input"
+                    placeholder="Send message to worker or operator..."
+                    value={composeBody}
+                    onChange={(e) => setComposeBody(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && composeBody.trim()) {
+                        void handleSendMessage();
+                      }
+                    }}
+                  />
+                  <button
+                    className="missions-dispatch-btn"
+                    disabled={!composeBody.trim()}
+                    onClick={() => void handleSendMessage()}
+                  >
+                    <Send size={10} />
+                    <span>Send</span>
+                  </button>
+                </div>
+              </div>
+            </section>
           </>
         )}
       </div>
