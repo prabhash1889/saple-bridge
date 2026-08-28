@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Flag,
@@ -91,6 +91,10 @@ export const MissionsView: React.FC = () => {
   const [taskDrafts, setTaskDrafts] = useState<TaskDraft[]>([]);
   const [tasksDirty, setTasksDirty] = useState(false);
   const [creating, setCreating] = useState(false);
+  const docBufferRef = useRef(docBuffer);
+  const taskDraftsRef = useRef(taskDrafts);
+  docBufferRef.current = docBuffer;
+  taskDraftsRef.current = taskDrafts;
 
   useEffect(() => {
     if (currentProjectPath) void loadMissions(currentProjectPath);
@@ -157,12 +161,22 @@ export const MissionsView: React.FC = () => {
 
   const handleSaveDoc = async () => {
     if (!currentProjectPath || !activeId || !activeState) return;
+    const submittedPath = currentProjectPath;
+    const submittedId = activeId;
+    const submittedDoc = docBuffer;
     try {
       await useMissionStore
         .getState()
-        .saveDoc(currentProjectPath, activeId, docBuffer, activeState.revision);
-      setDocDirty(false);
-      useNotificationStore.getState().success('Mission document saved');
+        .saveDoc(submittedPath, submittedId, submittedDoc, activeState.revision);
+      const current = useMissionStore.getState();
+      if (
+        current.activeId === submittedId &&
+        current.activeProjectPath === submittedPath &&
+        docBufferRef.current === submittedDoc
+      ) {
+        setDocDirty(false);
+        useNotificationStore.getState().success('Mission document saved');
+      }
     } catch {
       // Error surfaced through the store banner (validation or revision conflict).
     }
@@ -170,6 +184,9 @@ export const MissionsView: React.FC = () => {
 
   const handleSaveTasks = async () => {
     if (!currentProjectPath || !activeId || !activeState) return;
+    const submittedPath = currentProjectPath;
+    const submittedId = activeId;
+    const submittedDrafts = taskDrafts;
     const specs: TaskSpecInput[] = taskDrafts.map((draft) => ({
       key: draft.key,
       title: draft.title.trim() || 'Untitled task',
@@ -181,9 +198,16 @@ export const MissionsView: React.FC = () => {
     try {
       await useMissionStore
         .getState()
-        .saveTasks(currentProjectPath, activeId, activeState.revision, specs);
-      setTasksDirty(false);
-      useNotificationStore.getState().success('Task graph saved');
+        .saveTasks(submittedPath, submittedId, activeState.revision, specs);
+      const current = useMissionStore.getState();
+      if (
+        current.activeId === submittedId &&
+        current.activeProjectPath === submittedPath &&
+        taskDraftsRef.current === submittedDrafts
+      ) {
+        setTasksDirty(false);
+        useNotificationStore.getState().success('Task graph saved');
+      }
     } catch {
       // Validation errors surface in the store banner.
     }
