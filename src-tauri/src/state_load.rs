@@ -87,13 +87,39 @@ fn corrupt_backup_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{}.corrupt-{}.bak", name, ts))
 }
 
+fn existing_corrupt_backup(path: &Path, contents: &[u8]) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy();
+    let prefix = format!("{}.corrupt-", name);
+    let mut backups: Vec<PathBuf> = std::fs::read_dir(path.parent()?)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|candidate| {
+            candidate
+                .file_name()
+                .map(|name| {
+                    let name = name.to_string_lossy();
+                    name.starts_with(&prefix) && name.ends_with(".bak")
+                })
+                .unwrap_or(false)
+        })
+        .filter(|candidate| std::fs::read(candidate).ok().as_deref() == Some(contents))
+        .collect();
+    backups.sort();
+    backups.pop()
+}
+
 /// Preserve the original bytes of a corrupt file and flag the path so all writes are blocked
 /// until a recovery action resolves it. Returns the backup path. Shared with other modules
 /// (review records, project config) that parse JSON outside [`load_state_inner`].
 pub(crate) fn preserve_and_flag_corrupt(path: &Path, parse_error: &str) -> Result<PathBuf, String> {
-    let backup = corrupt_backup_path(path);
-    std::fs::copy(path, &backup)
+    let contents = std::fs::read(path)
         .map_err(|e| format!("Failed to preserve corrupt file {}: {}", path.display(), e))?;
+    let backup =
+        existing_corrupt_backup(path, &contents).unwrap_or_else(|| corrupt_backup_path(path));
+    if !backup.exists() {
+        std::fs::write(&backup, &contents)
+            .map_err(|e| format!("Failed to preserve corrupt file {}: {}", path.display(), e))?;
+    }
     crate::fs_lock::flag_corrupt(path, parse_error);
     Ok(backup)
 }
@@ -309,6 +335,25 @@ mod tests {
             "{ not json",
             "original bytes must be preserved verbatim"
         );
+
+        // Repeated polls reuse the preserved copy instead of leaking one backup per read.
+        let StateLoadResult::Corrupt {
+            backup_path: repeated_backup,
+            ..
+        } = load_state_inner(&p.project(), rel).unwrap()
+        else {
+            panic!("expected corrupt on repeated load");
+        };
+        assert_eq!(repeated_backup, backup_path);
+        let backup_count = std::fs::read_dir(file.parent().unwrap())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                name.starts_with("tasks.json.corrupt-") && name.ends_with(".bak")
+            })
+            .count();
+        assert_eq!(backup_count, 1);
 
         // Subsequent writes through the shared atomic-write funnel are blocked...
         let blocked = crate::fs_lock::atomic_write(&file, b"[]");

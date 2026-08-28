@@ -81,6 +81,8 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
       activeSeq += 1;
       mutationSeq += 1;
       set({
+        missions: [],
+        loadedProjectPath: null,
         activeId: null,
         activeProjectPath: null,
         activeState: null,
@@ -103,6 +105,8 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   },
 
   openMission: async (projectPath, id) => {
+    const requestedProjectPath = get().requestedProjectPath;
+    if (requestedProjectPath && requestedProjectPath !== projectPath) return;
     const token = ++activeSeq;
     set({
       activeId: id,

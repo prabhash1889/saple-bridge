@@ -635,7 +635,7 @@ pub(crate) fn render_mission_doc(spec: &MissionSpec, body: &str) -> String {
 
 // --- Paths -------------------------------------------------------------------------------------
 
-/// Mission ids are minted here (`msn_<uuid>`), but they arrive from the renderer on every
+/// Mission ids are minted here (`msn_<ulid>`), but they arrive from the renderer on every
 /// read/write, so enforce the exact minted shape before they touch the filesystem: no
 /// separators, no dots, nothing that could escape the missions directory.
 pub(crate) fn validate_mission_id(id: &str) -> Result<(), String> {
@@ -652,7 +652,8 @@ pub(crate) fn validate_mission_id(id: &str) -> Result<(), String> {
 }
 
 fn missions_root(project_path: &str) -> Result<PathBuf, String> {
-    get_project_file_path(project_path, MISSIONS_DIR).map_err(|e| e.to_string())
+    let base = crate::project_roots::canonical_base(project_path).map_err(|e| e.to_string())?;
+    crate::project_roots::contained_target(&base, MISSIONS_DIR).map_err(|e| e.to_string())
 }
 
 fn ensure_missions_enabled(project_path: &str) -> Result<(), String> {
@@ -739,11 +740,22 @@ fn load_state(project_path: &str, id: &str) -> Result<LoadedState, String> {
         crate::state_load::JsonText::Encoding(m) => return Err(m),
     };
     match serde_json::from_str::<MissionState>(&text) {
-        Ok(state) => {
+        Ok(state) if state.id == id => {
             // The user may have repaired the file externally while it was flagged; a clean
             // parse lifts the write block automatically (mirrors load_state_inner).
             crate::fs_lock::clear_corrupt_flag(&path);
             Ok(LoadedState::Ok(Box::new(state)))
+        }
+        Ok(state) => {
+            let err = format!(
+                "Mission state id '{}' does not match its directory '{}'",
+                state.id, id
+            );
+            let backup = crate::state_load::preserve_and_flag_corrupt(&path, &err)?;
+            Ok(LoadedState::Corrupt {
+                error: err,
+                backup_path: backup.to_string_lossy().to_string(),
+            })
         }
         Err(e) => {
             let err = format!("Failed to parse mission state.json: {}", e);
@@ -1785,6 +1797,26 @@ mod tests {
             mission_read_inner(&p.project(), "msn_doesnotexist").unwrap(),
             MissionReadResult::Missing
         ));
+        assert!(!p.path.join(".saple").join("missions").exists());
+    }
+
+    #[test]
+    fn state_id_mismatch_is_corrupt_and_preserves_evidence() {
+        let p = TempProject::new();
+        let mission = create_mission(&p, "Identity");
+        let state_path = p.mission_dir(&mission.id).join("state.json");
+        let mut state: MissionState =
+            serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+        state.id = "msn_other".to_string();
+        fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+        match mission_read_inner(&p.project(), &mission.id).unwrap() {
+            MissionReadResult::Corrupt { error, backup_path } => {
+                assert!(error.contains("does not match"), "{}", error);
+                assert!(Path::new(&backup_path).exists());
+            }
+            other => panic!("expected corrupt identity, got {:?}", other),
+        }
     }
 
     #[test]
