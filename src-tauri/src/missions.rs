@@ -21,11 +21,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 
 use crate::project_roots::{get_project_file_path, ProjectRootRegistry};
 
 pub mod preamble;
+pub mod scheduler;
+pub mod supervisor;
 
 /// Root folder for all missions inside a project's `.saple` directory.
 pub const MISSIONS_DIR: &str = ".saple/missions";
@@ -128,6 +129,61 @@ pub struct MissionTask {
     pub gate_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolEntry {
+    pub key: String,
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    pub session_id: String,
+    /// `idle | retained | released`
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_task_id: Option<String>,
+    #[serde(default)]
+    pub reused_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MissionGate {
+    pub id: String,
+    pub task_id: String,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// `pending | resolved | timeout`
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MissionMessage {
+    pub id: String,
+    pub thread_id: String,
+    pub from: String,
+    pub to: String,
+    /// `message | ask | reply | notice`
+    pub kind: String,
+    pub body: String,
+    #[serde(default)]
+    pub expects_reply: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_by: Option<String>,
+    #[serde(default)]
+    pub read: bool,
+    #[serde(default)]
+    pub acked: bool,
+    pub created_at: String,
+}
+
 /// One concrete worker dispatch attempt assignment.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -135,6 +191,8 @@ pub struct MissionDispatch {
     pub id: String,
     pub task_id: String,
     pub attempt_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
     pub provider: String,
     #[serde(default)]
     pub model: String,
@@ -212,6 +270,12 @@ pub struct MissionState {
     pub tasks: Vec<MissionTask>,
     #[serde(default)]
     pub dispatches: Vec<MissionDispatch>,
+    #[serde(default)]
+    pub gates: Vec<MissionGate>,
+    #[serde(default)]
+    pub messages: Vec<MissionMessage>,
+    #[serde(default)]
+    pub pool: Vec<PoolEntry>,
     #[serde(default)]
     pub events: Vec<MissionEvent>,
     /// `request_id` -> recorded outcome, pruned to [`IDEMPOTENCY_CAP`] entries.
@@ -948,6 +1012,9 @@ pub(crate) fn mission_create_inner(
         spec: spec.clone(),
         tasks: Vec::new(),
         dispatches: Vec::new(),
+        gates: Vec::new(),
+        messages: Vec::new(),
+        pool: Vec::new(),
         events: Vec::new(),
         idempotency: BTreeMap::new(),
         created_at: now.clone(),
@@ -1135,6 +1202,9 @@ fn rebuild_missing_state(project_path: &str, id: &str, doc: &str) -> Result<Miss
         spec: parsed.spec,
         tasks: Vec::new(),
         dispatches: Vec::new(),
+        gates: Vec::new(),
+        messages: Vec::new(),
+        pool: Vec::new(),
         events: Vec::new(),
         idempotency: BTreeMap::new(),
         created_at: now.clone(),
@@ -1414,17 +1484,41 @@ pub(crate) fn mission_command_inner(
                 )),
                 _ => {
                     state.status = "cancelled".to_string();
+                    for entry in &mut state.pool {
+                        entry.state = "released".to_string();
+                    }
                     Ok(())
                 }
             },
-            MissionCommand::Retry { dispatch_id } => Err(format!(
-                "unknown dispatch '{}' (dispatches arrive with Phase M3)",
-                dispatch_id
-            )),
-            MissionCommand::Abandon { dispatch_id } => Err(format!(
-                "unknown dispatch '{}' (dispatches arrive with Phase M3)",
-                dispatch_id
-            )),
+            MissionCommand::Retry { dispatch_id } => {
+                let dsp = state
+                    .dispatches
+                    .iter()
+                    .find(|d| d.id == dispatch_id)
+                    .ok_or_else(|| format!("unknown dispatch '{}'", dispatch_id))?;
+                let task_id = dsp.task_id.clone();
+                let task_idx = state
+                    .tasks
+                    .iter()
+                    .position(|t| t.id == task_id)
+                    .ok_or_else(|| format!("task '{}' for dispatch '{}' not found", task_id, dispatch_id))?;
+
+                state.tasks[task_idx].status = "ready".to_string();
+                Ok(())
+            }
+            MissionCommand::Abandon { dispatch_id } => {
+                let dsp_idx = state
+                    .dispatches
+                    .iter()
+                    .position(|d| d.id == dispatch_id)
+                    .ok_or_else(|| format!("unknown dispatch '{}'", dispatch_id))?;
+                state.dispatches[dsp_idx].status = "abandoned".to_string();
+                let task_id = state.dispatches[dsp_idx].task_id.clone();
+                if let Some(task_idx) = state.tasks.iter().position(|t| t.id == task_id) {
+                    state.tasks[task_idx].status = "failed".to_string();
+                }
+                Ok(())
+            }
             MissionCommand::ResolveGate {
                 gate_id,
                 resolution,
@@ -1481,13 +1575,6 @@ pub(crate) fn mission_dispatch_task_inner(
     model: Option<String>,
     expected_revision: u64,
 ) -> Result<TaskDispatchOutput, String> {
-    if !crate::providers::is_mission_eligible(provider) {
-        return Err(format!(
-            "Provider '{}' is not eligible for mission dispatches",
-            provider
-        ));
-    }
-
     let state_path = state_file_path(project_path, mission_id)?;
     crate::fs_lock::with_path_lock(&state_path, || {
         let mut state = require_state(project_path, mission_id)?;
@@ -1495,142 +1582,26 @@ pub(crate) fn mission_dispatch_task_inner(
             return Err(revision_conflict(mission_id, state.revision, expected_revision));
         }
 
-        let task_idx = state
-            .tasks
-            .iter()
-            .position(|t| t.id == task_id)
-            .ok_or_else(|| format!("Task '{}' not found in mission '{}'", task_id, mission_id))?;
-
-        let task = &state.tasks[task_idx];
-        if task.status != "ready" && task.status != "pending" && task.status != "failed" {
-            return Err(format!(
-                "Cannot dispatch task '{}' in status '{}'",
-                task_id, task.status
-            ));
-        }
-
-        let dispatch_id = new_id("dsp");
-        let attempt_id = new_id("att");
-        let pane_id = format!("pane_{}", &attempt_id["att_".len()..]);
-
-        let capability_token = format!(
-            "{:x}{:x}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        );
-        let mut hasher = sha2::Sha256::new();
-        sha2::Digest::update(&mut hasher, capability_token.as_bytes());
-        let capability_hash = format!("sha256:{:x}", sha2::Digest::finalize(hasher));
-
-        let ad = crate::providers::adapter(provider);
-        let supports_mcp = ad.map(|a| a.supports_mcp).unwrap_or(false);
-
-        let mut upstream_summaries = Vec::new();
-        for dep_id in &task.deps {
-            if let Some(dep_task) = state.tasks.iter().find(|t| t.id == *dep_id) {
-                if let Some(res) = &dep_task.result {
-                    let summary_str = res
-                        .get("summary")
-                        .or_else(|| res.get("text"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if !summary_str.is_empty() {
-                        upstream_summaries.push((dep_task.title.clone(), summary_str.to_string()));
-                    }
-                }
-            }
-        }
-
-        let dir = mission_dir(project_path, mission_id)?;
-        let artifacts_dir = dir.join("artifacts");
-        let mut artifact_paths = Vec::new();
-        if artifacts_dir.exists() {
-            if let Ok(entries) = fs::read_dir(&artifacts_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let p = entry.path();
-                    if p.is_file() {
-                        artifact_paths.push(p);
-                    }
-                }
-            }
-        }
-
-        let preamble_input = preamble::PreambleInput {
-            mission_id: mission_id.to_string(),
-            task_id: task_id.to_string(),
-            dispatch_id: dispatch_id.clone(),
-            attempt_id: attempt_id.clone(),
-            capability_token: capability_token.clone(),
-            supports_mcp,
-            worktree_branch: None,
-            worktree_path: None,
-            task_title: task.title.clone(),
-            task_kind: task.kind.clone(),
-            task_spec: task.spec.clone(),
-            mission_doc_path: doc_file_path(project_path, mission_id)?,
-            artifact_paths,
-            upstream_summaries,
-        };
-
-        let preamble_content = preamble::generate_preamble(&preamble_input);
-        preamble::write_preamble_file(
+        let prepared = supervisor::prepare_dispatch_launch(
+            &mut state,
             project_path,
             mission_id,
-            &attempt_id,
-            &preamble_content,
+            task_id,
+            provider,
+            model,
         )?;
 
-        let now = crate::project::now_iso();
-        let dispatch = MissionDispatch {
-            id: dispatch_id.clone(),
-            task_id: task_id.to_string(),
-            attempt_id: attempt_id.clone(),
-            provider: provider.to_string(),
-            model: model.unwrap_or_else(|| "default".to_string()),
-            worktree_path: None,
-            pane_id: Some(pane_id.clone()),
-            capability_hash,
-            status: "running".to_string(),
-            failure_count: 0,
-            last_heartbeat_at: Some(now.clone()),
-            started_at: Some(now),
-            finished_at: None,
-            termination_reason: None,
-            output_log_path: Some(format!(
-                ".saple/missions/{}/logs/{}.log",
-                mission_id, attempt_id
-            )),
-            result: None,
-        };
-
-        state.tasks[task_idx].status = "dispatched".to_string();
-        state.dispatches.push(dispatch);
         state.revision += 1;
         state.updated_at = crate::project::now_iso();
-        record_event(
-            project_path,
-            mission_id,
-            &mut state,
-            "task_dispatched",
-            serde_json::json!({
-                "taskId": task_id,
-                "dispatchId": dispatch_id,
-                "attemptId": attempt_id,
-                "provider": provider,
-            }),
-        )?;
-
         persist_state(project_path, mission_id, &state)?;
-
-        let rel_prompt_file = format!(".saple/missions/{}/prompts/{}.md", mission_id, attempt_id);
 
         Ok(TaskDispatchOutput {
             state: Box::new(state),
-            dispatch_id,
-            attempt_id,
-            pane_id,
-            prompt_file: rel_prompt_file,
-            capability_token,
+            dispatch_id: prepared.dispatch_id,
+            attempt_id: prepared.attempt_id,
+            pane_id: prepared.pane_id,
+            prompt_file: prepared.prompt_file,
+            capability_token: prepared.capability_token,
         })
     })?
 }
@@ -1658,6 +1629,7 @@ pub(crate) fn mission_record_dispatch_result_inner(
 
         let task_id = state.dispatches[dispatch_idx].task_id.clone();
         let provider = state.dispatches[dispatch_idx].provider.clone();
+        let model = state.dispatches[dispatch_idx].model.clone();
 
         let parsed = crate::providers::parse_provider_result(
             &provider,
@@ -1678,18 +1650,22 @@ pub(crate) fn mission_record_dispatch_result_inner(
                 state.tasks[task_idx].result = Some(result_val);
             }
 
-            let completed_ids: std::collections::HashSet<String> = state
-                .tasks
-                .iter()
-                .filter(|t| t.status == "completed")
-                .map(|t| t.id.clone())
-                .collect();
-
-            for task in &mut state.tasks {
-                if task.status == "pending" && task.deps.iter().all(|dep| completed_ids.contains(dep)) {
-                    task.status = "ready".to_string();
+            if let Some(session_id) = &parsed.session_id {
+                let ad = crate::providers::adapter(&provider);
+                if ad.map(|a| a.resume.is_some()).unwrap_or(false) {
+                    supervisor::pool_idle_session(
+                        &mut state,
+                        &provider,
+                        &model,
+                        None,
+                        session_id,
+                        &task_id,
+                    );
                 }
             }
+
+            scheduler::promote_ready_tasks(&mut state, project_path, mission_id)?;
+            scheduler::evaluate_mission_terminal_status(&mut state, project_path, mission_id)?;
 
             record_event(
                 project_path,
@@ -1703,27 +1679,16 @@ pub(crate) fn mission_record_dispatch_result_inner(
                 }),
             )?;
         } else {
-            state.dispatches[dispatch_idx].status = "failed".to_string();
-            state.dispatches[dispatch_idx].finished_at = Some(now.clone());
-            state.dispatches[dispatch_idx].failure_count += 1;
-            state.dispatches[dispatch_idx].result = Some(result_val.clone());
-
-            if let Some(task_idx) = state.tasks.iter().position(|t| t.id == task_id) {
-                state.tasks[task_idx].status = "failed".to_string();
-                state.tasks[task_idx].result = Some(result_val);
-            }
-
-            record_event(
+            supervisor::handle_dispatch_failure(
+                &mut state,
                 project_path,
                 mission_id,
-                &mut state,
-                "dispatch_failed",
-                serde_json::json!({
-                    "dispatchId": dispatch_id,
-                    "taskId": task_id,
-                    "status": "failed",
-                }),
+                dispatch_id,
+                Some("execution_error".to_string()),
+                Some(result_val),
             )?;
+            scheduler::propagate_deadlocks(&mut state, project_path, mission_id)?;
+            scheduler::evaluate_mission_terminal_status(&mut state, project_path, mission_id)?;
         }
 
         state.revision += 1;
@@ -1731,6 +1696,77 @@ pub(crate) fn mission_record_dispatch_result_inner(
         persist_state(project_path, mission_id, &state)?;
         Ok(state)
     })?
+}
+
+pub(crate) fn mission_tick_inner(
+    project_path: &str,
+    mission_id: &str,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        let caps = std::collections::HashMap::new();
+        let outcome = scheduler::scheduler_tick(&mut state, project_path, mission_id, &caps)?;
+
+        if outcome.terminal_status.is_some()
+            || !outcome.promoted_task_ids.is_empty()
+            || !outcome.blocked_task_ids.is_empty()
+        {
+            state.revision += 1;
+            state.updated_at = crate::project::now_iso();
+            persist_state(project_path, mission_id, &state)?;
+        }
+
+        Ok(state)
+    })?
+}
+
+pub(crate) fn mission_recover_inner(
+    project_path: &str,
+    live_pane_ids: &std::collections::HashSet<String>,
+) -> Result<Vec<MissionSummary>, String> {
+    let root = missions_root(project_path)?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut summaries = Vec::new();
+    for entry in fs::read_dir(&root).map_err(|e| format!("Failed to list missions: {}", e))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(id) = path.file_name().map(|n| n.to_string_lossy().to_string()) else {
+            continue;
+        };
+        if validate_mission_id(&id).is_err() {
+            continue;
+        }
+        let state_path = state_file_path(project_path, &id)?;
+        if !state_path.exists() {
+            continue;
+        }
+        let res: Result<(), String> = crate::fs_lock::with_path_lock(&state_path, || {
+            let mut state = match load_state(project_path, &id)? {
+                LoadedState::Ok(s) => *s,
+                _ => return Ok(()),
+            };
+            let changed = supervisor::reconcile_orphan_dispatches(&mut state, project_path, &id, live_pane_ids)?;
+            if changed {
+                state.revision += 1;
+                state.updated_at = crate::project::now_iso();
+                persist_state(project_path, &id, &state)?;
+            }
+            Ok(())
+        })?;
+        if res.is_ok() {
+            if let Ok(MissionReadResult::Loaded { state, .. }) = mission_read_inner(project_path, &id) {
+                summaries.push(summary_of(&state));
+            }
+        }
+    }
+    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
+    Ok(summaries)
 }
 
 // --- Tauri commands -----------------------------------------------------------------------------
@@ -1897,6 +1933,44 @@ pub async fn mission_record_dispatch_result(
             last_message_content,
             expected_revision,
         )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_tick(
+    project_path: String,
+    mission_id: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_tick_inner(&project_path, &mission_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_recover(
+    project_path: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+    pty_registry: tauri::State<'_, crate::pty::PtyRegistry>,
+) -> Result<Vec<MissionSummary>, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    let live_pane_ids: std::collections::HashSet<String> = {
+        let sessions = pty_registry.sessions.lock().unwrap();
+        sessions.keys().cloned().collect()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_recover_inner(&project_path, &live_pane_ids)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2619,7 +2693,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(first_err.contains("Phase M3"), "{}", first_err);
+        assert!(first_err.contains("unknown dispatch"), "{}", first_err);
         let replay_err = mission_command_inner(
             &p.project(),
             &m.id,
@@ -2738,7 +2812,7 @@ mod tests {
         assert_eq!(d.task_id, task1_id);
         assert_eq!(d.provider, "codex");
         assert_eq!(d.model, "gpt-5.2");
-        assert_eq!(d.status, "running");
+        assert_eq!(d.status, "starting");
         assert!(d.capability_hash.starts_with("sha256:"));
 
         // Check that prompt file was written to disk
@@ -2832,5 +2906,180 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("Revision conflict"), "{}", err);
+    }
+
+    // --- Phase M3: Scheduler, Supervisor, Pooling, and Recovery Tests -------------------------------
+
+    #[test]
+    fn scheduler_tick_promotes_waves_and_completes_mission() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "WaveTest");
+
+        // Start mission
+        let started = mission_command_inner(&p.project(), &m.id, 1, "start_1", MissionCommand::Start).unwrap();
+        assert_eq!(started.status, "running");
+
+        // Set DAG: T1 -> T2
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            2,
+            vec![
+                TaskSpecInput {
+                    key: Some("t1".to_string()),
+                    title: "Task 1".to_string(),
+                    kind: "implement".to_string(),
+                    spec: "Step 1".to_string(),
+                    deps: Vec::new(),
+                    fanout: 1,
+                },
+                TaskSpecInput {
+                    key: Some("t2".to_string()),
+                    title: "Task 2".to_string(),
+                    kind: "verify".to_string(),
+                    spec: "Step 2".to_string(),
+                    deps: vec!["t1".to_string()],
+                    fanout: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let t2_id = state.tasks[1].id.clone();
+
+        // Dispatch T1
+        let dsp1 = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 3).unwrap();
+        assert_eq!(dsp1.state.tasks[0].status, "dispatched");
+
+        // Settle T1
+        let fixture = include_str!("../fixtures/codex_jsonl.jsonl");
+        let settled1 = mission_record_dispatch_result_inner(
+            &p.project(),
+            &m.id,
+            &dsp1.dispatch_id,
+            fixture,
+            Some("Step 1 done".to_string()),
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(settled1.tasks[0].status, "completed");
+        assert_eq!(settled1.tasks[1].status, "ready");
+        // Session was pooled
+        assert_eq!(settled1.pool.len(), 1);
+        assert_eq!(settled1.pool[0].state, "idle");
+
+        // Dispatch T2 with session reuse!
+        let dsp2 = mission_dispatch_task_inner(&p.project(), &m.id, &t2_id, "codex", None, 5).unwrap();
+        assert_eq!(dsp2.state.pool[0].state, "retained");
+        assert_eq!(dsp2.state.pool[0].reused_count, 1);
+
+        // Settle T2 -> mission automatically completes!
+        let settled2 = mission_record_dispatch_result_inner(
+            &p.project(),
+            &m.id,
+            &dsp2.dispatch_id,
+            fixture,
+            Some("Step 2 verified".to_string()),
+            6,
+        )
+        .unwrap();
+
+        assert_eq!(settled2.status, "completed");
+        assert_eq!(settled2.tasks[1].status, "completed");
+        assert_eq!(settled2.pool[0].state, "released");
+    }
+
+    #[test]
+    fn retry_and_abandon_commands_behave_correctly() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "RetryAbandonTest");
+
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Task 1".to_string(),
+                kind: "implement".to_string(),
+                spec: "Do something".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let dsp = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 2).unwrap();
+
+        // Abandon command
+        let abandoned = mission_command_inner(
+            &p.project(),
+            &m.id,
+            3,
+            "req_abandon",
+            MissionCommand::Abandon {
+                dispatch_id: dsp.dispatch_id.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(abandoned.dispatches[0].status, "abandoned");
+        assert_eq!(abandoned.tasks[0].status, "failed");
+
+        // Retry command resets task to ready
+        let retried = mission_command_inner(
+            &p.project(),
+            &m.id,
+            4,
+            "req_retry",
+            MissionCommand::Retry {
+                dispatch_id: dsp.dispatch_id,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(retried.tasks[0].status, "ready");
+    }
+
+    #[test]
+    fn recovery_scans_and_updates_orphan_dispatches() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "RecoveryTest");
+
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Task 1".to_string(),
+                kind: "implement".to_string(),
+                spec: "Do something".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let dsp = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 2).unwrap();
+        assert_eq!(dsp.state.dispatches[0].status, "starting");
+
+        // Recover without live panes -> starting dispatch becomes starting_unknown
+        let live_panes = std::collections::HashSet::new();
+        let summaries = mission_recover_inner(&p.project(), &live_panes).unwrap();
+        assert_eq!(summaries.len(), 1);
+
+        // Read mission state to verify honest unknown state
+        match mission_read_inner(&p.project(), &m.id).unwrap() {
+            MissionReadResult::Loaded { state, .. } => {
+                assert_eq!(state.dispatches[0].status, "starting_unknown");
+                assert_eq!(state.tasks[0].status, "failed");
+            }
+            other => panic!("expected loaded mission, got {:?}", other),
+        }
     }
 }

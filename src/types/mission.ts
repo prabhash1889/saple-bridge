@@ -3,12 +3,24 @@
 // tests round-trip a real engine-shaped payload against these types.
 
 export type MissionStatus =
-  'draft' | 'running' | 'paused' | 'gated' | 'completed' | 'failed' | 'cancelled';
+  | 'draft'
+  | 'running'
+  | 'paused'
+  | 'gated'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export type TaskKind = 'implement' | 'review' | 'verify';
 
 export type TaskStatus =
-  'pending' | 'ready' | 'dispatched' | 'completed' | 'failed' | 'blocked' | 'circuit_broken';
+  | 'pending'
+  | 'ready'
+  | 'dispatched'
+  | 'completed'
+  | 'failed'
+  | 'blocked'
+  | 'circuit_broken';
 
 export interface CoordinatorSpec {
   provider: string;
@@ -61,6 +73,7 @@ export interface MissionDispatch {
   id: string;
   taskId: string;
   attemptId: string;
+  retryOf?: string | null;
   provider: string;
   model: string;
   worktreePath?: string | null;
@@ -74,6 +87,41 @@ export interface MissionDispatch {
   terminationReason?: string | null;
   outputLogPath?: string | null;
   result?: AgentResultDto | null;
+}
+
+export interface PoolEntry {
+  key: string;
+  provider: string;
+  model: string;
+  worktreePath?: string | null;
+  sessionId: string;
+  state: 'idle' | 'retained' | 'released';
+  lastTaskId?: string | null;
+  reusedCount: number;
+}
+
+export interface MissionGate {
+  id: string;
+  taskId: string;
+  question: string;
+  options: string[];
+  status: 'pending' | 'resolved' | 'timeout';
+  resolution?: string | null;
+}
+
+export interface MissionMessage {
+  id: string;
+  threadId: string;
+  from: string;
+  to: string;
+  kind: 'message' | 'ask' | 'reply' | 'notice';
+  body: string;
+  expectsReply: boolean;
+  inReplyTo?: string | null;
+  answeredBy?: string | null;
+  read: boolean;
+  acked: boolean;
+  createdAt: string;
 }
 
 export interface TaskDispatchOutput {
@@ -100,6 +148,12 @@ export interface MissionEvent {
   at: string;
 }
 
+export interface MissionEventPayload {
+  missionId: string;
+  seq: number;
+  event: MissionEvent;
+}
+
 export interface CommandOutcome {
   applied: boolean;
   revision: number;
@@ -114,6 +168,9 @@ export interface MissionState {
   spec: MissionSpec;
   tasks: MissionTask[];
   dispatches: MissionDispatch[];
+  gates?: MissionGate[];
+  messages?: MissionMessage[];
+  pool?: PoolEntry[];
   events: MissionEvent[];
   idempotency: Record<string, CommandOutcome>;
   createdAt: string;

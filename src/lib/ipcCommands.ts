@@ -104,6 +104,8 @@ export const IPC_COMMANDS = [
   'mission_command',
   'mission_dispatch_task',
   'mission_record_dispatch_result',
+  'mission_tick',
+  'mission_recover',
   // filesystem helpers
   'list_project_files',
   'read_text_file',
