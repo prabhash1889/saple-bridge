@@ -145,6 +145,10 @@ pub struct CommandOutcome {
     pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Successful replays return the same state that the original request returned.
+    /// Receipts are cleared from the snapshot to avoid recursive idempotency data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<Box<MissionState>>,
 }
 
 /// Engine-owned mission truth. Everything except `spec` is written exclusively here;
@@ -202,6 +206,31 @@ fn default_task_kind() -> String {
     "implement".to_string()
 }
 
+const ULID_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+fn new_ulid() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let random = uuid::Uuid::new_v4();
+    let mut random_value = 0u128;
+    for byte in &random.as_bytes()[..10] {
+        random_value = (random_value << 8) | u128::from(*byte);
+    }
+    let mut value = ((millis as u128) << 80) | random_value;
+    let mut output = [b'0'; 26];
+    for slot in output.iter_mut().rev() {
+        *slot = ULID_ALPHABET[(value & 31) as usize];
+        value >>= 5;
+    }
+    String::from_utf8(output.to_vec()).expect("ULID alphabet is ASCII")
+}
+
+fn new_id(prefix: &str) -> String {
+    format!("{}_{}", prefix, new_ulid())
+}
+
 /// Optional overrides at creation time. Anything omitted falls back to the defaults.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -245,7 +274,10 @@ pub enum MissionReadResult {
         warnings: Vec<String>,
     },
     Missing,
-    Corrupt { error: String, backup_path: String },
+    Corrupt {
+        error: String,
+        backup_path: String,
+    },
     Locked,
 }
 
@@ -306,7 +338,9 @@ pub(crate) fn validate_spec(spec: &MissionSpec) -> Result<(), String> {
 fn unquote(value: &str) -> String {
     let value = value.trim();
     if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        value[1..value.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\")
+        value[1..value.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     } else {
         value.to_string()
     }
@@ -475,7 +509,10 @@ pub(crate) fn parse_mission_doc(content: &str) -> Result<ParsedDoc, String> {
                 }
             }
             other => {
-                return Err(format!("line {}: unknown frontmatter key '{}'", line_no, other));
+                return Err(format!(
+                    "line {}: unknown frontmatter key '{}'",
+                    line_no, other
+                ));
             }
         }
     }
@@ -522,14 +559,18 @@ pub(crate) fn parse_mission_doc(content: &str) -> Result<ParsedDoc, String> {
     if coordinator_inline.is_some() || !coordinator_block.is_empty() {
         let map = match &coordinator_inline {
             // Inline form: one `{ k: v, ... }` fragment.
-            Some(inline) => parse_inline_map(inline)
-                .map_err(|e| format!("frontmatter 'coordinator': {}", e))?,
+            Some(inline) => {
+                parse_inline_map(inline).map_err(|e| format!("frontmatter 'coordinator': {}", e))?
+            }
             // Block form: each indented line is its own `k: v` entry.
             None => {
                 let mut map = BTreeMap::new();
                 for line in &coordinator_block {
                     let (key, value) = line.split_once(':').ok_or_else(|| {
-                        format!("frontmatter 'coordinator' entry '{}' has no ':' separator", line)
+                        format!(
+                            "frontmatter 'coordinator' entry '{}' has no ':' separator",
+                            line
+                        )
                     })?;
                     map.insert(key.trim().to_string(), unquote(value));
                 }
@@ -598,10 +639,11 @@ pub(crate) fn render_mission_doc(spec: &MissionSpec, body: &str) -> String {
 /// read/write, so enforce the exact minted shape before they touch the filesystem: no
 /// separators, no dots, nothing that could escape the missions directory.
 pub(crate) fn validate_mission_id(id: &str) -> Result<(), String> {
-    let valid =
-        id.starts_with("msn_") && id.len() > "msn_".len() && id["msn_".len()..].chars().all(
-            |c| c.is_ascii_alphanumeric() || c == '-',
-        );
+    let valid = id.starts_with("msn_")
+        && id.len() > "msn_".len()
+        && id["msn_".len()..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-');
     if valid {
         Ok(())
     } else {
@@ -611,6 +653,26 @@ pub(crate) fn validate_mission_id(id: &str) -> Result<(), String> {
 
 fn missions_root(project_path: &str) -> Result<PathBuf, String> {
     get_project_file_path(project_path, MISSIONS_DIR).map_err(|e| e.to_string())
+}
+
+fn ensure_missions_enabled(project_path: &str) -> Result<(), String> {
+    let config_path =
+        get_project_file_path(project_path, ".saple/config.json").map_err(|e| e.to_string())?;
+    let content = match crate::state_load::read_json_text(&config_path) {
+        crate::state_load::JsonText::Ok(content) => content,
+        crate::state_load::JsonText::Io(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err("Missions are disabled for this workspace".to_string())
+        }
+        crate::state_load::JsonText::Io(e) => return Err(e.to_string()),
+        crate::state_load::JsonText::Encoding(message) => return Err(message),
+    };
+    let config: crate::project::WorkspaceConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse workspace config: {}", e))?;
+    if config.missions_enabled {
+        Ok(())
+    } else {
+        Err("Missions are disabled for this workspace".to_string())
+    }
 }
 
 fn mission_dir(project_path: &str, id: &str) -> Result<PathBuf, String> {
@@ -632,8 +694,23 @@ fn summary_of(state: &MissionState) -> MissionSummary {
         title: state.spec.title.clone(),
         status: state.status.clone(),
         task_total: state.tasks.len(),
-        task_completed: state.tasks.iter().filter(|t| t.status == "completed").count(),
+        task_completed: state
+            .tasks
+            .iter()
+            .filter(|t| t.status == "completed")
+            .count(),
         updated_at: state.updated_at.clone(),
+    }
+}
+
+fn corrupt_summary(id: String) -> MissionSummary {
+    MissionSummary {
+        id,
+        title: "(unreadable mission)".to_string(),
+        status: "corrupt".to_string(),
+        task_total: 0,
+        task_completed: 0,
+        updated_at: String::new(),
     }
 }
 
@@ -645,7 +722,10 @@ enum LoadedState {
     Missing,
     /// `state.json` exists but does not parse. Bytes preserved, writes blocked until
     /// recovery - identical semantics to every other `.saple` store.
-    Corrupt { error: String, backup_path: String },
+    Corrupt {
+        error: String,
+        backup_path: String,
+    },
 }
 
 fn load_state(project_path: &str, id: &str) -> Result<LoadedState, String> {
@@ -692,8 +772,10 @@ fn record_event(
         at: crate::project::now_iso(),
     });
     if state.events.len() > EVENT_CAP {
-        let overflow: Vec<MissionEvent> =
-            state.events.drain(..state.events.len() - EVENT_CAP).collect();
+        let overflow: Vec<MissionEvent> = state
+            .events
+            .drain(..state.events.len() - EVENT_CAP)
+            .collect();
         let mut lines = String::new();
         for event in overflow {
             lines.push_str(&format!(
@@ -730,7 +812,9 @@ fn remember_outcome(state: &mut MissionState, request_id: &str, outcome: Command
     while state.idempotency.len() >= IDEMPOTENCY_CAP {
         // Remove an arbitrary first entry (BTreeMap order); replay correctness needs the
         // recent window, not LRU precision.
-        let Some(first) = state.idempotency.keys().next().cloned() else { break };
+        let Some(first) = state.idempotency.keys().next().cloned() else {
+            break;
+        };
         state.idempotency.remove(&first);
     }
     state.idempotency.insert(request_id.to_string(), outcome);
@@ -796,7 +880,7 @@ pub(crate) fn mission_create_inner(
     validate_spec(&spec)?;
 
     let now = crate::project::now_iso();
-    let id = format!("msn_{}", uuid::Uuid::new_v4());
+    let id = new_id("msn");
     let state = MissionState {
         id: id.clone(),
         revision: 1,
@@ -869,18 +953,27 @@ pub(crate) fn mission_list_inner(project_path: &str) -> Result<Vec<MissionSummar
         }
         match load_state(project_path, &id)? {
             LoadedState::Ok(state) => summaries.push(summary_of(&state)),
-            LoadedState::Missing => {}
+            LoadedState::Missing => {
+                // A crash can leave mission.md without state.json. Keep the mission visible so
+                // the user can open it; mission_read then rebuilds engine truth from the doc.
+                let doc_path = doc_file_path(project_path, &id)?;
+                if let Ok(doc) = fs::read_to_string(doc_path) {
+                    if let Ok(parsed) = parse_mission_doc(&doc) {
+                        summaries.push(MissionSummary {
+                            id,
+                            title: parsed.spec.title,
+                            status: "draft".to_string(),
+                            task_total: 0,
+                            task_completed: 0,
+                            updated_at: String::new(),
+                        });
+                    }
+                }
+            }
             LoadedState::Corrupt { .. } => {
                 // Stay honest: a corrupt mission still shows up (status `corrupt`) instead
                 // of silently disappearing from the room.
-                summaries.push(MissionSummary {
-                    id,
-                    title: "(unreadable mission)".to_string(),
-                    status: "corrupt".to_string(),
-                    task_total: 0,
-                    task_completed: 0,
-                    updated_at: String::new(),
-                });
+                summaries.push(corrupt_summary(id));
             }
         }
     }
@@ -888,7 +981,10 @@ pub(crate) fn mission_list_inner(project_path: &str) -> Result<Vec<MissionSummar
     Ok(summaries)
 }
 
-pub(crate) fn mission_read_inner(project_path: &str, id: &str) -> Result<MissionReadResult, String> {
+pub(crate) fn mission_read_inner(
+    project_path: &str,
+    id: &str,
+) -> Result<MissionReadResult, String> {
     let doc_path = doc_file_path(project_path, id)?;
     // Fast path: an unknown id has no directory yet, so there is nothing to lock or read.
     if !doc_path.exists() {
@@ -917,7 +1013,8 @@ pub(crate) fn mission_read_inner(project_path: &str, id: &str) -> Result<Mission
                 let mut state = rebuild_missing_state(project_path, id, &doc)?;
                 let mut result = reconcile_on_read(project_path, id, &doc, &mut state)?;
                 if let MissionReadResult::Loaded { warnings, .. } = &mut result {
-                    warnings.push("state.json was missing and was rebuilt from mission.md".to_string());
+                    warnings
+                        .push("state.json was missing and was rebuilt from mission.md".to_string());
                 }
                 Ok(result)
             }
@@ -1021,7 +1118,13 @@ pub(crate) fn mission_update_doc_inner(
         state.spec = parsed.spec;
         state.revision += 1;
         state.updated_at = crate::project::now_iso();
-        record_event(project_path, id, &mut state, "doc_updated", serde_json::json!({}))?;
+        record_event(
+            project_path,
+            id,
+            &mut state,
+            "doc_updated",
+            serde_json::json!({}),
+        )?;
         persist_state(project_path, id, &state)?;
         Ok(state)
     })?
@@ -1136,7 +1239,7 @@ pub(crate) fn mission_set_tasks_inner(
         // Server-side id minting: client keys resolve to fresh task ids.
         let key_to_id: BTreeMap<String, String> = keys
             .iter()
-            .map(|key| (key.clone(), format!("task_{}", uuid::Uuid::new_v4())))
+            .map(|key| (key.clone(), new_id("task")))
             .collect();
 
         let tasks: Vec<MissionTask> = specs
@@ -1147,9 +1250,18 @@ pub(crate) fn mission_set_tasks_inner(
                 title: input.title.trim().to_string(),
                 kind: input.kind,
                 spec: input.spec,
-                deps: input.deps.iter().map(|dep| key_to_id[dep].clone()).collect(),
+                deps: input
+                    .deps
+                    .iter()
+                    .map(|dep| key_to_id[dep].clone())
+                    .collect(),
                 fanout: input.fanout,
-                status: if input.deps.is_empty() { "ready" } else { "pending" }.to_string(),
+                status: if input.deps.is_empty() {
+                    "ready"
+                } else {
+                    "pending"
+                }
+                .to_string(),
                 result: None,
                 gate_id: None,
             })
@@ -1159,7 +1271,13 @@ pub(crate) fn mission_set_tasks_inner(
         state.tasks = tasks;
         state.revision += 1;
         state.updated_at = crate::project::now_iso();
-        record_event(project_path, id, &mut state, "tasks_set", serde_json::json!({ "count": count }))?;
+        record_event(
+            project_path,
+            id,
+            &mut state,
+            "tasks_set",
+            serde_json::json!({ "count": count }),
+        )?;
         persist_state(project_path, id, &state)?;
         Ok(state)
     })?
@@ -1197,10 +1315,11 @@ pub(crate) fn mission_command_inner(
         // touches nothing. Successful replays return the recorded revision's successor
         // state from disk; rejected replays re-raise the recorded error.
         if let Some(recorded) = state.idempotency.get(request_id) {
-            return match (&recorded.applied, &recorded.error) {
-                (true, _) => Ok(state),
-                (_, Some(error)) => Err(error.clone()),
-                (false, None) => unreachable!("rejected outcomes always carry an error"),
+            return match (&recorded.applied, &recorded.error, &recorded.state) {
+                (true, _, Some(snapshot)) => Ok((**snapshot).clone()),
+                (true, _, None) => Ok(state),
+                (_, Some(error), _) => Err(error.clone()),
+                (false, None, _) => unreachable!("rejected outcomes always carry an error"),
             };
         }
 
@@ -1211,6 +1330,7 @@ pub(crate) fn mission_command_inner(
                 applied: false,
                 revision: state.revision,
                 error: Some(conflict.clone()),
+                state: None,
             };
             remember_outcome(&mut state, request_id, receipt);
             persist_state(project_path, id, &state)?;
@@ -1257,7 +1377,10 @@ pub(crate) fn mission_command_inner(
                 "unknown dispatch '{}' (dispatches arrive with Phase M3)",
                 dispatch_id
             )),
-            MissionCommand::ResolveGate { gate_id, resolution } => Err(format!(
+            MissionCommand::ResolveGate {
+                gate_id,
+                resolution,
+            } => Err(format!(
                 "unknown gate '{}' (gates arrive with Phase M4; resolution '{}' was not applied)",
                 gate_id, resolution
             )),
@@ -1274,21 +1397,30 @@ pub(crate) fn mission_command_inner(
                     &cmd_label,
                     serde_json::json!({ "requestId": request_id }),
                 )?;
-                CommandOutcome { applied: true, revision: state.revision, error: None }
+                let mut snapshot = state.clone();
+                snapshot.idempotency.clear();
+                CommandOutcome {
+                    applied: true,
+                    revision: state.revision,
+                    error: None,
+                    state: Some(Box::new(snapshot)),
+                }
             }
             Err(error) => CommandOutcome {
                 applied: false,
                 revision: state.revision,
                 error: Some(error),
+                state: None,
             },
         };
 
         remember_outcome(&mut state, request_id, outcome.clone());
         // Recording the replay receipt is bookkeeping, not a mutation: revision unchanged.
         persist_state(project_path, id, &state)?;
+        let response_state = outcome.state.as_deref().cloned();
         match outcome.error {
             Some(error) => Err(error),
-            None => Ok(state),
+            None => Ok(response_state.unwrap_or(state)),
         }
     })?
 }
@@ -1300,14 +1432,20 @@ pub async fn mission_create(
     project_path: String,
     title: String,
     objective: String,
+    acceptance: Option<Vec<String>>,
     options: Option<MissionOptions>,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
 ) -> Result<MissionSummary, String> {
     registry
         .ensure_inside_approved_root(&project_path)
         .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
-        mission_create_inner(&project_path, &title, &objective, options.unwrap_or_default())
+        let mut options = options.unwrap_or_default();
+        if acceptance.is_some() {
+            options.acceptance = acceptance;
+        }
+        mission_create_inner(&project_path, &title, &objective, options)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1321,6 +1459,7 @@ pub async fn mission_list(
     registry
         .ensure_inside_approved_root(&project_path)
         .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || mission_list_inner(&project_path))
         .await
         .map_err(|e| e.to_string())?
@@ -1335,6 +1474,7 @@ pub async fn mission_read(
     registry
         .ensure_inside_approved_root(&project_path)
         .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || mission_read_inner(&project_path, &id))
         .await
         .map_err(|e| e.to_string())?
@@ -1351,6 +1491,7 @@ pub async fn mission_update_doc(
     registry
         .ensure_inside_approved_root(&project_path)
         .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         mission_update_doc_inner(&project_path, &id, &body, expected_revision)
     })
@@ -1369,6 +1510,7 @@ pub async fn mission_set_tasks(
     registry
         .ensure_inside_approved_root(&project_path)
         .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         mission_set_tasks_inner(&project_path, &id, expected_revision, tasks)
     })
@@ -1388,6 +1530,7 @@ pub async fn mission_command(
     registry
         .ensure_inside_approved_root(&project_path)
         .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         mission_command_inner(&project_path, &id, expected_revision, &request_id, cmd)
     })
@@ -1409,11 +1552,15 @@ mod tests {
 
     impl TempProject {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("saple_missions_{}", uuid::Uuid::new_v4()));
+            let path =
+                std::env::temp_dir().join(format!("saple_missions_{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(path.join(".saple")).unwrap();
             let registry = Arc::new(ProjectRootRegistry::new());
             registry.register_root(&path).unwrap();
-            TempProject { path, _registry: registry }
+            TempProject {
+                path,
+                _registry: registry,
+            }
         }
         fn project(&self) -> String {
             self.path.to_string_lossy().to_string()
@@ -1439,7 +1586,13 @@ mod tests {
     }
 
     fn create_mission(p: &TempProject, title: &str) -> MissionSummary {
-        mission_create_inner(&p.project(), title, "Do the thing", MissionOptions::default()).unwrap()
+        mission_create_inner(
+            &p.project(),
+            title,
+            "Do the thing",
+            MissionOptions::default(),
+        )
+        .unwrap()
     }
 
     // --- Frontmatter parsing -------------------------------------------------------------------
@@ -1482,8 +1635,13 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_keys_with_their_line_number() {
-        let err = parse_mission_doc("---\ntitle: t\nobjective: o\nbogus_key: 1\n---\n").unwrap_err();
-        assert!(err.contains("unknown frontmatter key 'bogus_key'"), "{}", err);
+        let err =
+            parse_mission_doc("---\ntitle: t\nobjective: o\nbogus_key: 1\n---\n").unwrap_err();
+        assert!(
+            err.contains("unknown frontmatter key 'bogus_key'"),
+            "{}",
+            err
+        );
         assert!(err.contains("line 4"), "{}", err);
     }
 
@@ -1498,21 +1656,33 @@ mod tests {
             ("max_parallel: many", "whole number"),
         ];
         for (override_line, needle) in cases {
-            let doc = format!(
-                "---\ntitle: t\nobjective: o\n{}\n---\n",
-                override_line
-            );
+            let doc = format!("---\ntitle: t\nobjective: o\n{}\n---\n", override_line);
             let err = parse_mission_doc(&doc).unwrap_err();
-            assert!(err.contains(needle), "'{}' should mention {}: got {}", override_line, needle, err);
+            assert!(
+                err.contains(needle),
+                "'{}' should mention {}: got {}",
+                override_line,
+                needle,
+                err
+            );
         }
     }
 
     #[test]
     fn parse_rejects_missing_fences_and_empty_required_fields() {
         assert!(parse_mission_doc("no frontmatter here").is_err());
-        assert!(parse_mission_doc("---\ntitle: t\nobjective: o\n").is_err(), "missing close fence");
-        assert!(parse_mission_doc("---\nobjective: o\n---\n").is_err(), "missing title");
-        assert!(parse_mission_doc("---\ntitle: t\n---\n").is_err(), "missing objective");
+        assert!(
+            parse_mission_doc("---\ntitle: t\nobjective: o\n").is_err(),
+            "missing close fence"
+        );
+        assert!(
+            parse_mission_doc("---\nobjective: o\n---\n").is_err(),
+            "missing title"
+        );
+        assert!(
+            parse_mission_doc("---\ntitle: t\n---\n").is_err(),
+            "missing objective"
+        );
     }
 
     #[test]
@@ -1527,8 +1697,14 @@ mod tests {
     #[test]
     fn mission_id_validation_blocks_path_tricks() {
         assert!(validate_mission_id("msn_01JqZ9").is_ok());
-        for bad in ["", "task_1", "msn_", "../etc", "msn_a/b", "msn_a b", "MSN_x"] {
-            assert!(validate_mission_id(bad).is_err(), "'{}' must be rejected", bad);
+        for bad in [
+            "", "task_1", "msn_", "../etc", "msn_a/b", "msn_a b", "MSN_x",
+        ] {
+            assert!(
+                validate_mission_id(bad).is_err(),
+                "'{}' must be rejected",
+                bad
+            );
         }
     }
 
@@ -1554,7 +1730,11 @@ mod tests {
         assert!(summary.id.starts_with("msn_"));
 
         match mission_read_inner(&p.project(), &summary.id).unwrap() {
-            MissionReadResult::Loaded { state, doc, warnings } => {
+            MissionReadResult::Loaded {
+                state,
+                doc,
+                warnings,
+            } => {
                 assert_eq!(state.id, summary.id);
                 assert_eq!(state.revision, 1);
                 assert_eq!(state.spec.max_parallel, 2);
@@ -1567,6 +1747,35 @@ mod tests {
             }
             other => panic!("expected loaded, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn generated_ids_use_the_documented_prefix_and_ulid_shape() {
+        let p = TempProject::new();
+        let mission = create_mission(&p, "IDs");
+        assert!(mission.id.starts_with("msn_"));
+        assert_eq!(mission.id.len(), 30);
+
+        let state = mission_read_inner(&p.project(), &mission.id).unwrap();
+        let MissionReadResult::Loaded { state, .. } = state else {
+            panic!("expected loaded mission")
+        };
+        let tasks = mission_set_tasks_inner(
+            &p.project(),
+            &mission.id,
+            state.revision,
+            vec![TaskSpecInput {
+                key: Some("one".to_string()),
+                title: "One".to_string(),
+                kind: "implement".to_string(),
+                spec: String::new(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+        assert!(tasks.tasks[0].id.starts_with("task_"));
+        assert_eq!(tasks.tasks[0].id.len(), 31);
     }
 
     #[test]
@@ -1602,6 +1811,45 @@ mod tests {
         assert_eq!(mission_list_inner(&p.project()).unwrap().len(), 2);
     }
 
+    #[test]
+    fn list_surfaces_a_doc_when_state_is_missing() {
+        let p = TempProject::new();
+        let mission = create_mission(&p, "Recover me");
+        fs::remove_file(p.mission_dir(&mission.id).join("state.json")).unwrap();
+
+        let summaries = mission_list_inner(&p.project()).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, mission.id);
+        assert_eq!(summaries[0].title, "Recover me");
+        assert_eq!(summaries[0].status, "draft");
+    }
+
+    #[test]
+    fn mission_commands_require_the_workspace_flag() {
+        let p = TempProject::new();
+        assert!(ensure_missions_enabled(&p.project()).is_err());
+
+        fs::write(
+            p.path.join(".saple").join("config.json"),
+            serde_json::json!({
+                "workspaceId": "test",
+                "workspaceName": "test",
+                "memoryMode": "saple",
+                "defaultProvider": "codex",
+                "defaultModelByProvider": {},
+                "maxParallelAgents": 12,
+                "enableEditMode": true,
+                "verificationPresets": [],
+                "missionsEnabled": true,
+                "createdAt": "now",
+                "updatedAt": "now"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(ensure_missions_enabled(&p.project()).is_ok());
+    }
+
     // --- Doc editing -----------------------------------------------------------------------------
 
     #[test]
@@ -1627,10 +1875,14 @@ mod tests {
 
         // Invalid frontmatter refused without touching disk.
         let before = fs::read_to_string(p.mission_dir(&m.id).join("mission.md")).unwrap();
-        let err = mission_update_doc_inner(&p.project(), &m.id, "---\nbogus: 1\n---\n", state.revision)
-            .unwrap_err();
+        let err =
+            mission_update_doc_inner(&p.project(), &m.id, "---\nbogus: 1\n---\n", state.revision)
+                .unwrap_err();
         assert!(err.contains("bogus"));
-        assert_eq!(fs::read_to_string(p.mission_dir(&m.id).join("mission.md")).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(p.mission_dir(&m.id).join("mission.md")).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -1643,7 +1895,9 @@ mod tests {
         fs::write(&doc_path, edited).unwrap();
 
         match mission_read_inner(&p.project(), &m.id).unwrap() {
-            MissionReadResult::Loaded { state, warnings, .. } => {
+            MissionReadResult::Loaded {
+                state, warnings, ..
+            } => {
                 assert_eq!(state.spec.title, "Hand Edited");
                 assert_eq!(state.spec.max_parallel, 8);
                 assert_eq!(state.revision, 2, "adoption is an audited revision bump");
@@ -1667,7 +1921,9 @@ mod tests {
         .unwrap();
 
         match mission_read_inner(&p.project(), &m.id).unwrap() {
-            MissionReadResult::Loaded { state, warnings, .. } => {
+            MissionReadResult::Loaded {
+                state, warnings, ..
+            } => {
                 assert_eq!(state.spec.title, "Good Spec", "last-good spec kept");
                 assert_eq!(state.revision, 1, "no adoption happened");
                 assert_eq!(warnings.len(), 1);
@@ -1685,9 +1941,15 @@ mod tests {
         fs::remove_file(p.mission_dir(&m.id).join("state.json")).unwrap();
 
         match mission_read_inner(&p.project(), &m.id).unwrap() {
-            MissionReadResult::Loaded { state, warnings, .. } => {
+            MissionReadResult::Loaded {
+                state, warnings, ..
+            } => {
                 assert_eq!(state.spec.title, "Crash Survivor");
-                assert!(warnings.iter().any(|w| w.contains("rebuilt")), "{:?}", warnings);
+                assert!(
+                    warnings.iter().any(|w| w.contains("rebuilt")),
+                    "{:?}",
+                    warnings
+                );
                 // The repaired file persists and lists cleanly afterwards.
                 assert!(p.mission_dir(&m.id).join("state.json").exists());
                 assert!(mission_list_inner(&p.project())
@@ -1743,12 +2005,12 @@ mod tests {
 
     #[test]
     fn dag_validator_catches_cycles_unknown_deps_and_self_deps() {
-    let keys = |k: &[&str]| k.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let deps = |d: &[&[&str]]| -> Vec<Vec<String>> {
-        d.iter()
-            .map(|row| row.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-            .collect()
-    };
+        let keys = |k: &[&str]| k.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let deps = |d: &[&[&str]]| -> Vec<Vec<String>> {
+            d.iter()
+                .map(|row| row.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+                .collect()
+        };
 
         validate_task_dag(&keys(&["a", "b"]), &deps(&[&[], &["a"]])).unwrap();
         validate_task_dag(&keys(&["a"]), &deps(&[&[]])).unwrap();
@@ -1790,7 +2052,13 @@ mod tests {
 
         assert_eq!(state.tasks.len(), 4);
         assert_eq!(state.revision, 2);
-        let by_title = |t: &str| state.tasks.iter().find(|x| x.title == format!("Task {}", t)).unwrap();
+        let by_title = |t: &str| {
+            state
+                .tasks
+                .iter()
+                .find(|x| x.title == format!("Task {}", t))
+                .unwrap()
+        };
         assert_eq!(by_title("setup").status, "ready");
         assert_eq!(by_title("fe").status, "pending");
         assert_eq!(by_title("be").status, "pending");
@@ -1813,10 +2081,7 @@ mod tests {
         let m = create_mission(&p, "Rejects");
 
         let cases: Vec<(Vec<TaskSpecInput>, &str)> = vec![
-            (
-                vec![task_input("a", &["ghost"])],
-                "unknown task 'ghost'",
-            ),
+            (vec![task_input("a", &["ghost"])], "unknown task 'ghost'"),
             (vec![task_input("a", &["a"])], "depends on itself"),
             (
                 vec![task_input("a", &["b"]), task_input("b", &["a"])],
@@ -1831,14 +2096,18 @@ mod tests {
         // Kind + fanout validation.
         let mut bad_kind = task_input("a", &[]);
         bad_kind.kind = "deploy".to_string();
-        assert!(mission_set_tasks_inner(&p.project(), &m.id, 1, vec![bad_kind])
-            .unwrap_err()
-            .contains("invalid kind"));
+        assert!(
+            mission_set_tasks_inner(&p.project(), &m.id, 1, vec![bad_kind])
+                .unwrap_err()
+                .contains("invalid kind")
+        );
         let mut bad_fanout = task_input("a", &[]);
         bad_fanout.fanout = 4;
-        assert!(mission_set_tasks_inner(&p.project(), &m.id, 1, vec![bad_fanout])
-            .unwrap_err()
-            .contains("fanout"));
+        assert!(
+            mission_set_tasks_inner(&p.project(), &m.id, 1, vec![bad_fanout])
+                .unwrap_err()
+                .contains("fanout")
+        );
 
         // Nothing above may have mutated the mission: still revision 1, no tasks.
         match mission_read_inner(&p.project(), &m.id).unwrap() {
@@ -1888,13 +2157,16 @@ mod tests {
 
         // Invalid transition from draft recorded as rejection, state unchanged.
         let m2 = create_mission(&p, "No Pause Yet");
-        let err =
-            mission_command_inner(&p.project(), &m2.id, 1, "bad", MissionCommand::Resume).unwrap_err();
+        let err = mission_command_inner(&p.project(), &m2.id, 1, "bad", MissionCommand::Resume)
+            .unwrap_err();
         assert!(err.contains("cannot resume"), "{}", err);
         match mission_read_inner(&p.project(), &m2.id).unwrap() {
             MissionReadResult::Loaded { state, .. } => {
                 assert_eq!(state.status, "draft");
-                assert_eq!(state.events.iter().filter(|e| e.kind == "resumed").count(), 0);
+                assert_eq!(
+                    state.events.iter().filter(|e| e.kind == "resumed").count(),
+                    0
+                );
             }
             other => panic!("expected loaded, got {:?}", other),
         }
@@ -1907,45 +2179,69 @@ mod tests {
 
         // First application flips to running at revision 2.
         let applied =
-            mission_command_inner(&p.project(), &m.id, 1, "req_start", MissionCommand::Start).unwrap();
+            mission_command_inner(&p.project(), &m.id, 1, "req_start", MissionCommand::Start)
+                .unwrap();
         assert_eq!(applied.status, "running");
         assert_eq!(applied.revision, 2);
 
-        // Replay with the SAME request_id returns the recorded outcome without mutating.
+        // A later transition changes the live state, but does not change the original result.
+        let paused =
+            mission_command_inner(&p.project(), &m.id, 2, "req_pause", MissionCommand::Pause)
+                .unwrap();
+        assert_eq!(paused.status, "paused");
         let replayed =
-            mission_command_inner(&p.project(), &m.id, 1, "req_start", MissionCommand::Start).unwrap();
-        assert_eq!(replayed.revision, 2, "no second revision bump");
+            mission_command_inner(&p.project(), &m.id, 1, "req_start", MissionCommand::Start)
+                .unwrap();
+        assert_eq!(replayed.status, "running");
+        assert_eq!(replayed.revision, 2, "replay returns the original result");
         match mission_read_inner(&p.project(), &m.id).unwrap() {
             MissionReadResult::Loaded { state, .. } => {
-                assert_eq!(state.revision, 2);
-                assert_eq!(state.events.iter().filter(|e| e.kind == "started").count(), 1);
+                assert_eq!(state.revision, 3);
+                assert_eq!(
+                    state.events.iter().filter(|e| e.kind == "started").count(),
+                    1
+                );
             }
             other => panic!("expected loaded, got {:?}", other),
         }
 
         // A rejected request replays its recorded error on repeat attempts.
-        let first_err = mission_command_inner(&p.project(), &m.id, 2, "req_bad", MissionCommand::Retry {
-            dispatch_id: "dsp_missing".to_string(),
-        })
+        let first_err = mission_command_inner(
+            &p.project(),
+            &m.id,
+            3,
+            "req_bad",
+            MissionCommand::Retry {
+                dispatch_id: "dsp_missing".to_string(),
+            },
+        )
         .unwrap_err();
         assert!(first_err.contains("Phase M3"), "{}", first_err);
-        let replay_err = mission_command_inner(&p.project(), &m.id, 2, "req_bad", MissionCommand::Retry {
-            dispatch_id: "dsp_missing".to_string(),
-        })
+        let replay_err = mission_command_inner(
+            &p.project(),
+            &m.id,
+            3,
+            "req_bad",
+            MissionCommand::Retry {
+                dispatch_id: "dsp_missing".to_string(),
+            },
+        )
         .unwrap_err();
         assert_eq!(first_err, replay_err);
 
         // A genuinely new request_id applies normally.
         let next =
-            mission_command_inner(&p.project(), &m.id, 2, "req_pause", MissionCommand::Pause).unwrap();
-        assert_eq!(next.status, "paused");
+            mission_command_inner(&p.project(), &m.id, 3, "req_cancel", MissionCommand::Cancel)
+                .unwrap();
+        assert_eq!(next.status, "cancelled");
     }
 
     #[test]
     fn empty_request_id_is_rejected_before_any_locking() {
         let p = TempProject::new();
         let m = create_mission(&p, "ReqId");
-        let err = mission_command_inner(&p.project(), &m.id, 1, "  ", MissionCommand::Start).unwrap_err();
+        let err =
+            mission_command_inner(&p.project(), &m.id, 1, "  ", MissionCommand::Start).unwrap_err();
         assert!(err.contains("request_id"), "{}", err);
     }
 
@@ -1960,8 +2256,14 @@ mod tests {
             _ => panic!("state must load"),
         };
         for n in 0..(EVENT_CAP + 20) {
-            record_event(&p.project(), &m.id, &mut state, "tick", serde_json::json!({ "n": n }))
-                .unwrap();
+            record_event(
+                &p.project(),
+                &m.id,
+                &mut state,
+                "tick",
+                serde_json::json!({ "n": n }),
+            )
+            .unwrap();
         }
         assert_eq!(state.events.len(), EVENT_CAP);
         assert_eq!(state.events.first().unwrap().seq, 21, "oldest 20 archived");

@@ -18,6 +18,7 @@ import type {
 interface MissionStoreState {
   missions: MissionSummary[];
   loadedProjectPath: string | null;
+  requestedProjectPath: string | null;
   loading: boolean;
   error: string | null;
 
@@ -57,6 +58,7 @@ let mutationSeq = 0;
 export const useMissionStore = create<MissionStoreState>((set, get) => ({
   missions: [],
   loadedProjectPath: null,
+  requestedProjectPath: null,
   loading: false,
   error: null,
 
@@ -72,6 +74,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   loadMissions: async (projectPath) => {
     const current = get();
     if (
+      (current.requestedProjectPath && current.requestedProjectPath !== projectPath) ||
       (current.loadedProjectPath && current.loadedProjectPath !== projectPath) ||
       (current.activeProjectPath && current.activeProjectPath !== projectPath)
     ) {
@@ -86,6 +89,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         activeLoading: false,
       });
     }
+    set({ requestedProjectPath: projectPath });
     const token = ++listSeq;
     set({ loading: true, error: null });
     try {
@@ -159,18 +163,40 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   },
 
   createMission: async (projectPath, input) => {
+    const activeToken = activeSeq;
+    ++listSeq;
     try {
       const summary = await invoke<MissionSummary>('mission_create', {
         projectPath,
         title: input.title,
         objective: input.objective,
+        acceptance: input.options?.acceptance ?? null,
         options: input.options ?? null,
       });
-      set((state) => ({ missions: [summary, ...state.missions], error: null }));
+      const current = get();
+      if (
+        activeToken !== activeSeq ||
+        (current.requestedProjectPath && current.requestedProjectPath !== projectPath) ||
+        (current.loadedProjectPath && current.loadedProjectPath !== projectPath) ||
+        (current.activeProjectPath && current.activeProjectPath !== projectPath)
+      ) {
+        return summary.id;
+      }
+      await get().loadMissions(projectPath, true);
+      if (
+        activeToken !== activeSeq ||
+        (get().requestedProjectPath && get().requestedProjectPath !== projectPath) ||
+        (get().loadedProjectPath && get().loadedProjectPath !== projectPath) ||
+        (get().activeProjectPath && get().activeProjectPath !== projectPath)
+      ) {
+        return summary.id;
+      }
       await get().openMission(projectPath, summary.id);
       return summary.id;
     } catch (err) {
-      set({ error: toErrorMessage(err) });
+      if (activeToken === activeSeq) {
+        set({ error: toErrorMessage(err) });
+      }
       throw err;
     }
   },

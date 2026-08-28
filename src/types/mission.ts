@@ -50,6 +50,7 @@ export interface CommandOutcome {
   applied: boolean;
   revision: number;
   error?: string;
+  state?: MissionState | null;
 }
 
 export interface MissionState {

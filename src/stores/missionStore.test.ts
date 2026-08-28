@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Capture every Tauri invoke so we can assert exactly which engine commands the
 // store calls - the projection-only rule means the store must never fabricate state.
-const invokeMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({})));
+const invokeMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<unknown>>(async (..._args: unknown[]) => ({})),
+);
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
@@ -70,6 +72,7 @@ beforeEach(() => {
   useMissionStore.setState({
     missions: [],
     loadedProjectPath: null,
+    requestedProjectPath: null,
     loading: false,
     error: null,
     activeId: null,
@@ -144,6 +147,7 @@ describe('missionStore projection (M1)', () => {
           warnings: [],
         };
       }
+      if (cmd === 'mission_list') return [summaryOf({ id: 'msn_new', title: 'New Mission' })];
       throw new Error(`unexpected command ${cmd}`);
     });
 
@@ -223,7 +227,8 @@ describe('missionStore projection (M1)', () => {
 
   it('ignores a save response after the selected mission changes', async () => {
     let resolveSave: ((state: MissionState) => void) | undefined;
-    invokeMock.mockImplementation(async (cmd: string) => {
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
       if (cmd === 'mission_update_doc') {
         return new Promise<MissionState>((resolve) => {
           resolveSave = resolve;
@@ -254,10 +259,11 @@ describe('missionStore projection (M1)', () => {
 
   it('invalidates an in-flight open when the mission is closed', async () => {
     let resolveRead: ((result: unknown) => void) | undefined;
-    invokeMock.mockImplementation(async (cmd: string) => {
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
       if (cmd === 'mission_read') {
-        return new Promise((resolve) => {
-          resolveRead = resolve;
+        return new Promise<unknown>((resolve) => {
+          resolveRead = (result) => resolve(result);
         });
       }
       return [];
@@ -275,6 +281,7 @@ describe('missionStore projection (M1)', () => {
   it('clears the active mission when loading a different project', async () => {
     useMissionStore.setState({
       loadedProjectPath: 'C:/old-project',
+      requestedProjectPath: 'C:/old-project',
       activeId: 'msn_a',
       activeProjectPath: 'C:/old-project',
       activeState: engineState,
@@ -287,5 +294,29 @@ describe('missionStore projection (M1)', () => {
     expect(useMissionStore.getState().activeId).toBeNull();
     expect(useMissionStore.getState().activeState).toBeNull();
     expect(useMissionStore.getState().activeProjectPath).toBeNull();
+  });
+
+  it('does not reopen a mission after creating in a switched workspace', async () => {
+    let resolveCreate: ((summary: MissionSummary) => void) | undefined;
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'mission_create') {
+        return new Promise<MissionSummary>((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
+      if (cmd === 'mission_list') return [];
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const pending = useMissionStore
+      .getState()
+      .createMission(PROJECT, { title: 'New Mission', objective: 'obj' });
+    await useMissionStore.getState().loadMissions('C:/other-project');
+    resolveCreate?.(summaryOf({ id: 'msn_new', title: 'New Mission' }));
+    await pending;
+
+    expect(useMissionStore.getState().requestedProjectPath).toBe('C:/other-project');
+    expect(useMissionStore.getState().activeId).toBeNull();
   });
 });
