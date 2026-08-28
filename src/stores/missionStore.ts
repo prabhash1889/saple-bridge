@@ -1,0 +1,186 @@
+import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
+import { toErrorMessage } from '../lib/errors';
+import type {
+  MissionCommand,
+  MissionCreateInput,
+  MissionReadResult,
+  MissionState,
+  MissionSummary,
+  TaskSpecInput,
+} from '../types/mission';
+
+// Missions room projection (Phase M1). React never writes mission state directly: every
+// mutation goes through the engine commands in src-tauri/src/missions.rs, and this store
+// only folds command results back into memory. Until `mission-event` lands (M3) the view
+// refreshes on focus and on watcher reloads (`saple-file-changed` with file "missions").
+
+interface MissionStoreState {
+  missions: MissionSummary[];
+  loadedProjectPath: string | null;
+  loading: boolean;
+  error: string | null;
+
+  activeId: string | null;
+  activeState: MissionState | null;
+  activeDoc: string | null;
+  // Non-fatal reconcile-on-read notes from the last load of the active mission.
+  activeWarnings: string[];
+  activeLoading: boolean;
+
+  loadMissions: (projectPath: string, force?: boolean) => Promise<void>;
+  openMission: (projectPath: string, id: string) => Promise<void>;
+  closeMission: () => void;
+  createMission: (projectPath: string, input: MissionCreateInput) => Promise<string>;
+  saveDoc: (projectPath: string, id: string, body: string, expectedRevision: number) => Promise<void>;
+  saveTasks: (
+    projectPath: string,
+    id: string,
+    expectedRevision: number,
+    tasks: TaskSpecInput[],
+  ) => Promise<void>;
+  runCommand: (projectPath: string, id: string, cmd: MissionCommand) => Promise<void>;
+}
+
+// Currency tokens so overlapping loads (rapid switches, watcher bursts, focus polls)
+// can never commit another mission's data into the current view.
+let listSeq = 0;
+let activeSeq = 0;
+
+export const useMissionStore = create<MissionStoreState>((set, get) => ({
+  missions: [],
+  loadedProjectPath: null,
+  loading: false,
+  error: null,
+
+  activeId: null,
+  activeState: null,
+  activeDoc: null,
+  activeWarnings: [],
+  activeLoading: false,
+
+  // Always re-fetch: the list read is cheap, focus polling relies on it, and the seq
+  // token below discards any response that loses a race against a newer request.
+  loadMissions: async (projectPath) => {
+    const token = ++listSeq;
+    set({ loading: true, error: null });
+    try {
+      const missions = await invoke<MissionSummary[]>('mission_list', { projectPath });
+      if (token !== listSeq) return;
+      set({ missions, loadedProjectPath: projectPath, loading: false, error: null });
+    } catch (err) {
+      if (token !== listSeq) return;
+      set({ error: toErrorMessage(err), loading: false });
+    }
+  },
+
+  openMission: async (projectPath, id) => {
+    const token = ++activeSeq;
+    set({ activeId: id, activeLoading: true, activeWarnings: [], error: null });
+    try {
+      const result = await invoke<MissionReadResult>('mission_read', { projectPath, id });
+      if (token !== activeSeq) return;
+      switch (result.status) {
+        case 'loaded':
+          set({
+            activeState: result.state,
+            activeDoc: result.doc,
+            activeWarnings: result.warnings,
+            activeLoading: false,
+          });
+          break;
+        case 'missing':
+          set({ activeState: null, activeDoc: null, activeLoading: false });
+          break;
+        case 'corrupt':
+          set({
+            activeState: null,
+            activeDoc: null,
+            activeLoading: false,
+            error: `${result.error} (preserved copy: ${result.backupPath})`,
+          });
+          break;
+        case 'locked':
+          set({
+            activeState: null,
+            activeDoc: null,
+            activeLoading: false,
+            error: 'Mission state is locked by another process; retry shortly.',
+          });
+          break;
+      }
+    } catch (err) {
+      if (token !== activeSeq) return;
+      set({ activeState: null, activeDoc: null, activeLoading: false, error: toErrorMessage(err) });
+    }
+  },
+
+  closeMission: () => set({ activeId: null, activeState: null, activeDoc: null, activeWarnings: [] }),
+
+  createMission: async (projectPath, input) => {
+    try {
+      const summary = await invoke<MissionSummary>('mission_create', {
+        projectPath,
+        title: input.title,
+        objective: input.objective,
+        options: input.options ?? null,
+      });
+      set((state) => ({ missions: [summary, ...state.missions], error: null }));
+      await get().openMission(projectPath, summary.id);
+      return summary.id;
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    }
+  },
+
+  saveDoc: async (projectPath, id, body, expectedRevision) => {
+    try {
+      const state = await invoke<MissionState>('mission_update_doc', {
+        projectPath,
+        id,
+        body,
+        expectedRevision,
+      });
+      set({ activeState: state, activeDoc: body, activeWarnings: [], error: null });
+      await get().loadMissions(projectPath, true);
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    }
+  },
+
+  saveTasks: async (projectPath, id, expectedRevision, tasks) => {
+    try {
+      const state = await invoke<MissionState>('mission_set_tasks', {
+        projectPath,
+        id,
+        expectedRevision,
+        tasks,
+      });
+      set({ activeState: state, error: null });
+      await get().loadMissions(projectPath, true);
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    }
+  },
+
+  runCommand: async (projectPath, id, cmd) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    try {
+      const state = await invoke<MissionState>('mission_command', {
+        projectPath,
+        id,
+        expectedRevision,
+        requestId: `ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        cmd,
+      });
+      set({ activeState: state, error: null });
+      await get().loadMissions(projectPath, true);
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    }
+  },
+}));
