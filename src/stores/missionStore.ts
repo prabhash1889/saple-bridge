@@ -7,16 +7,19 @@ import type {
   MissionReadResult,
   MissionState,
   MissionSummary,
+  ProviderAdapterDto,
+  TaskDispatchOutput,
   TaskSpecInput,
 } from '../types/mission';
 
-// Missions room projection (Phase M1). React never writes mission state directly: every
+// Missions room projection (Phase M1/M2). React never writes mission state directly: every
 // mutation goes through the engine commands in src-tauri/src/missions.rs, and this store
 // only folds command results back into memory. Until `mission-event` lands (M3) the view
 // refreshes on focus and on watcher reloads (`saple-file-changed` with file "missions").
 
 interface MissionStoreState {
   missions: MissionSummary[];
+  adapters: ProviderAdapterDto[];
   loadedProjectPath: string | null;
   requestedProjectPath: string | null;
   loading: boolean;
@@ -31,6 +34,7 @@ interface MissionStoreState {
   activeLoading: boolean;
 
   loadMissions: (projectPath: string, force?: boolean) => Promise<void>;
+  loadAdapters: () => Promise<void>;
   openMission: (projectPath: string, id: string) => Promise<void>;
   closeMission: () => void;
   createMission: (projectPath: string, input: MissionCreateInput) => Promise<string>;
@@ -46,6 +50,20 @@ interface MissionStoreState {
     expectedRevision: number,
     tasks: TaskSpecInput[],
   ) => Promise<void>;
+  dispatchTask: (
+    projectPath: string,
+    missionId: string,
+    taskId: string,
+    provider: string,
+    model?: string,
+  ) => Promise<TaskDispatchOutput>;
+  recordDispatchResult: (
+    projectPath: string,
+    missionId: string,
+    dispatchId: string,
+    rawOutput: string,
+    lastMessageContent?: string,
+  ) => Promise<MissionState>;
   runCommand: (projectPath: string, id: string, cmd: MissionCommand) => Promise<void>;
 }
 
@@ -57,6 +75,7 @@ let mutationSeq = 0;
 
 export const useMissionStore = create<MissionStoreState>((set, get) => ({
   missions: [],
+  adapters: [],
   loadedProjectPath: null,
   requestedProjectPath: null,
   loading: false,
@@ -273,6 +292,91 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         activeToken === activeSeq &&
         mutationToken === mutationSeq &&
         get().activeId === id &&
+        get().activeProjectPath === projectPath
+      ) {
+        set({ activeLoading: false, error: toErrorMessage(err) });
+      }
+      throw err;
+    }
+  },
+
+  loadAdapters: async () => {
+    try {
+      const adapters = await invoke<ProviderAdapterDto[]>('get_provider_adapters');
+      set({ adapters });
+    } catch (err) {
+      console.error('Failed to load provider adapters', err);
+    }
+  },
+
+  dispatchTask: async (projectPath, missionId, taskId, provider, model) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const activeToken = ++activeSeq;
+    const mutationToken = ++mutationSeq;
+    try {
+      const out = await invoke<TaskDispatchOutput>('mission_dispatch_task', {
+        projectPath,
+        missionId,
+        taskId,
+        provider,
+        model: model ?? null,
+        expectedRevision,
+      });
+      const current = get();
+      if (
+        activeToken !== activeSeq ||
+        mutationToken !== mutationSeq ||
+        current.activeId !== missionId ||
+        current.activeProjectPath !== projectPath
+      ) {
+        return out;
+      }
+      set({ activeState: out.state, activeLoading: false, error: null });
+      await get().loadMissions(projectPath, true);
+      return out;
+    } catch (err) {
+      if (
+        activeToken === activeSeq &&
+        mutationToken === mutationSeq &&
+        get().activeId === missionId &&
+        get().activeProjectPath === projectPath
+      ) {
+        set({ activeLoading: false, error: toErrorMessage(err) });
+      }
+      throw err;
+    }
+  },
+
+  recordDispatchResult: async (projectPath, missionId, dispatchId, rawOutput, lastMessageContent) => {
+    const expectedRevision = get().activeState?.revision ?? 0;
+    const activeToken = ++activeSeq;
+    const mutationToken = ++mutationSeq;
+    try {
+      const state = await invoke<MissionState>('mission_record_dispatch_result', {
+        projectPath,
+        missionId,
+        dispatchId,
+        rawOutput,
+        lastMessageContent: lastMessageContent ?? null,
+        expectedRevision,
+      });
+      const current = get();
+      if (
+        activeToken !== activeSeq ||
+        mutationToken !== mutationSeq ||
+        current.activeId !== missionId ||
+        current.activeProjectPath !== projectPath
+      ) {
+        return state;
+      }
+      set({ activeState: state, activeLoading: false, error: null });
+      await get().loadMissions(projectPath, true);
+      return state;
+    } catch (err) {
+      if (
+        activeToken === activeSeq &&
+        mutationToken === mutationSeq &&
+        get().activeId === missionId &&
         get().activeProjectPath === projectPath
       ) {
         set({ activeLoading: false, error: toErrorMessage(err) });

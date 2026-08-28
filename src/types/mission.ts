@@ -39,6 +39,60 @@ export interface MissionTask {
   gateId?: string | null;
 }
 
+export type MissionDispatchStatus =
+  | 'pending'
+  | 'starting'
+  | 'starting_unknown'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'stop_unknown'
+  | 'abandoned';
+
+export interface AgentResultDto {
+  text: string;
+  sessionId?: string | null;
+  costUsd?: number | null;
+  isError: boolean;
+  structured?: unknown | null;
+}
+
+export interface MissionDispatch {
+  id: string;
+  taskId: string;
+  attemptId: string;
+  provider: string;
+  model: string;
+  worktreePath?: string | null;
+  paneId?: string | null;
+  capabilityHash: string;
+  status: MissionDispatchStatus;
+  failureCount: number;
+  lastHeartbeatAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  terminationReason?: string | null;
+  outputLogPath?: string | null;
+  result?: AgentResultDto | null;
+}
+
+export interface TaskDispatchOutput {
+  state: MissionState;
+  dispatchId: string;
+  attemptId: string;
+  paneId: string;
+  promptFile: string;
+  capabilityToken: string;
+}
+
+export interface ProviderAdapterDto {
+  id: string;
+  isMissionEligible: boolean;
+  supportsMcp: boolean;
+  resultFormat: string;
+  testedVersionRange: [string, string];
+}
+
 export interface MissionEvent {
   seq: number;
   kind: string;
@@ -59,6 +113,7 @@ export interface MissionState {
   status: MissionStatus;
   spec: MissionSpec;
   tasks: MissionTask[];
+  dispatches: MissionDispatch[];
   events: MissionEvent[];
   idempotency: Record<string, CommandOutcome>;
   createdAt: string;

@@ -76,9 +76,11 @@ export const MissionsView: React.FC = () => {
   const setActiveView = useProjectStore((state) => state.setActiveView);
 
   const missions = useMissionStore((state) => state.missions);
+  const adapters = useMissionStore((state) => state.adapters);
   const loading = useMissionStore((state) => state.loading);
   const error = useMissionStore((state) => state.error);
   const loadMissions = useMissionStore((state) => state.loadMissions);
+  const loadAdapters = useMissionStore((state) => state.loadAdapters);
   const activeId = useMissionStore((state) => state.activeId);
   const activeState = useMissionStore((state) => state.activeState);
   const activeDoc = useMissionStore((state) => state.activeDoc);
@@ -91,10 +93,16 @@ export const MissionsView: React.FC = () => {
   const [taskDrafts, setTaskDrafts] = useState<TaskDraft[]>([]);
   const [tasksDirty, setTasksDirty] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [dispatchingTask, setDispatchingTask] = useState<string | null>(null);
+  const [selectedProviders, setSelectedProviders] = useState<Record<string, string>>({});
   const docBufferRef = useRef(docBuffer);
   const taskDraftsRef = useRef(taskDrafts);
   docBufferRef.current = docBuffer;
   taskDraftsRef.current = taskDrafts;
+
+  useEffect(() => {
+    void loadAdapters();
+  }, [loadAdapters]);
 
   useEffect(() => {
     if (currentProjectPath) void loadMissions(currentProjectPath);
@@ -228,6 +236,23 @@ export const MissionsView: React.FC = () => {
     );
     setTasksDirty(true);
   }, []);
+
+  const handleDispatchTask = async (taskId: string, provider: string, model?: string) => {
+    if (!currentProjectPath || !activeState) return;
+    setDispatchingTask(taskId);
+    try {
+      const out = await useMissionStore
+        .getState()
+        .dispatchTask(currentProjectPath, activeState.id, taskId, provider, model);
+      useNotificationStore
+        .getState()
+        .success(`Dispatched task with ${provider} (${out.attemptId})`);
+    } catch (err) {
+      useNotificationStore.getState().error(`Failed to dispatch: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDispatchingTask(null);
+    }
+  };
 
   const lifecycleActions = useMemo(
     () => (activeState ? (STATUS_ORDER[activeState.status] ?? []) : []),
@@ -417,83 +442,228 @@ export const MissionsView: React.FC = () => {
                       <th>Kind</th>
                       <th>Instructions</th>
                       <th>Depends on</th>
+                      <th>Status & Dispatch</th>
                       <th aria-label="Remove" />
                     </tr>
                   </thead>
                   <tbody>
-                    {taskDrafts.map((draft, index) => (
-                      <tr key={draft.key}>
-                        <td>
-                          <input
-                            className="missions-task-title"
-                            value={draft.title}
-                            onChange={(e) => updateDraft(index, { title: e.target.value })}
-                            placeholder="Task title"
-                            aria-label={`Task ${index + 1} title`}
-                          />
-                        </td>
-                        <td>
-                          <select
-                            value={draft.kind}
-                            onChange={(e) =>
-                              updateDraft(index, { kind: e.target.value as TaskKind })
-                            }
-                            aria-label={`Task ${index + 1} kind`}
-                          >
-                            {TASK_KINDS.map((kind) => (
-                              <option key={kind} value={kind}>
-                                {kind}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <input
-                            className="missions-task-spec"
-                            value={draft.spec}
-                            onChange={(e) => updateDraft(index, { spec: e.target.value })}
-                            placeholder="Full instructions handed to the worker"
-                            aria-label={`Task ${index + 1} instructions`}
-                          />
-                        </td>
-                        <td>
-                          <div className="missions-deps-cell">
-                            {taskDrafts
-                              .filter((other) => other.key !== draft.key)
-                              .map((other) => (
-                                <button
-                                  key={other.key}
-                                  className={`missions-dep-chip${draft.deps.includes(other.key) ? ' selected' : ''}`}
-                                  onClick={() => toggleDep(index, other.key)}
-                                  title={
-                                    draft.deps.includes(other.key)
-                                      ? 'Remove dependency'
-                                      : 'Add dependency'
-                                  }
-                                >
-                                  {other.title || 'untitled'}
-                                </button>
+                    {taskDrafts.map((draft, index) => {
+                      const serverTask = activeState.tasks[index];
+                      const providerOptions = adapters.filter((a) => a.isMissionEligible);
+                      const currentProvider =
+                        selectedProviders[serverTask?.id || draft.key] ||
+                        activeState.spec.coordinator?.provider ||
+                        (providerOptions[0]?.id ?? 'codex');
+
+                      return (
+                        <tr key={draft.key}>
+                          <td>
+                            <input
+                              className="missions-task-title"
+                              value={draft.title}
+                              onChange={(e) => updateDraft(index, { title: e.target.value })}
+                              placeholder="Task title"
+                              aria-label={`Task ${index + 1} title`}
+                            />
+                          </td>
+                          <td>
+                            <select
+                              value={draft.kind}
+                              onChange={(e) =>
+                                updateDraft(index, { kind: e.target.value as TaskKind })
+                              }
+                              aria-label={`Task ${index + 1} kind`}
+                            >
+                              {TASK_KINDS.map((kind) => (
+                                <option key={kind} value={kind}>
+                                  {kind}
+                                </option>
                               ))}
-                          </div>
-                        </td>
-                        <td>
-                          <button
-                            onClick={() => {
-                              setTaskDrafts((prev) => prev.filter((_, i) => i !== index));
-                              setTasksDirty(true);
-                            }}
-                            title={`Remove task ${draft.title || index + 1}`}
-                            aria-label={`Remove task ${draft.title || index + 1}`}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                            </select>
+                          </td>
+                          <td>
+                            <input
+                              className="missions-task-spec"
+                              value={draft.spec}
+                              onChange={(e) => updateDraft(index, { spec: e.target.value })}
+                              placeholder="Full instructions handed to the worker"
+                              aria-label={`Task ${index + 1} instructions`}
+                            />
+                          </td>
+                          <td>
+                            <div className="missions-deps-cell">
+                              {taskDrafts
+                                .filter((other) => other.key !== draft.key)
+                                .map((other) => (
+                                  <button
+                                    key={other.key}
+                                    className={`missions-dep-chip${draft.deps.includes(other.key) ? ' selected' : ''}`}
+                                    onClick={() => toggleDep(index, other.key)}
+                                    title={
+                                      draft.deps.includes(other.key)
+                                        ? 'Remove dependency'
+                                        : 'Add dependency'
+                                    }
+                                  >
+                                    {other.title || 'untitled'}
+                                  </button>
+                                ))}
+                            </div>
+                          </td>
+                          <td>
+                            {serverTask ? (
+                              <div className="missions-task-actions">
+                                <span className={`task-status-chip ${serverTask.status}`}>
+                                  {serverTask.status}
+                                </span>
+                                {!tasksDirty && serverTask.id && (
+                                  <>
+                                    <select
+                                      className="missions-provider-select"
+                                      value={currentProvider}
+                                      onChange={(e) =>
+                                        setSelectedProviders((prev) => ({
+                                          ...prev,
+                                          [serverTask.id]: e.target.value,
+                                        }))
+                                      }
+                                      title="Dispatch provider"
+                                      aria-label={`Provider for task ${index + 1}`}
+                                    >
+                                      {providerOptions.length > 0 ? (
+                                        providerOptions.map((ad) => (
+                                          <option key={ad.id} value={ad.id}>
+                                            {ad.id}
+                                          </option>
+                                        ))
+                                      ) : (
+                                        <>
+                                          <option value="codex">codex</option>
+                                          <option value="claude">claude</option>
+                                          <option value="droid">droid</option>
+                                          <option value="gemini">gemini</option>
+                                          <option value="grok">grok</option>
+                                          <option value="opencode">opencode</option>
+                                        </>
+                                      )}
+                                    </select>
+                                    <button
+                                      className="missions-dispatch-btn"
+                                      disabled={
+                                        dispatchingTask === serverTask.id ||
+                                        (serverTask.status !== 'ready' &&
+                                          serverTask.status !== 'pending' &&
+                                          serverTask.status !== 'failed')
+                                      }
+                                      onClick={() => handleDispatchTask(serverTask.id, currentProvider)}
+                                      title="Dispatch worker for this task"
+                                    >
+                                      <Play size={10} />
+                                      <span>Dispatch</span>
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>
+                                Unsaved
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => {
+                                setTaskDrafts((prev) => prev.filter((_, i) => i !== index));
+                                setTasksDirty(true);
+                              }}
+                              title={`Remove task ${draft.title || index + 1}`}
+                              aria-label={`Remove task ${draft.title || index + 1}`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
             </section>
+
+            {activeState.dispatches && activeState.dispatches.length > 0 && (
+              <section className="missions-section">
+                <div className="missions-section-heading">
+                  <span>Dispatches & Results ({activeState.dispatches.length})</span>
+                </div>
+                <table className="missions-spec-table">
+                  <thead>
+                    <tr>
+                      <th>Attempt</th>
+                      <th>Task</th>
+                      <th>Provider / Model</th>
+                      <th>Status</th>
+                      <th>Started</th>
+                      <th>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeState.dispatches.map((dispatch) => {
+                      const associatedTask = activeState.tasks.find((t) => t.id === dispatch.taskId);
+                      return (
+                        <tr key={dispatch.id}>
+                          <td>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
+                              {dispatch.attemptId}
+                            </span>
+                          </td>
+                          <td>{associatedTask?.title || dispatch.taskId}</td>
+                          <td>
+                            <span>{dispatch.provider}</span>
+                            {dispatch.model && dispatch.model !== 'default' && (
+                              <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>
+                                ({dispatch.model})
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <span className={`mission-status-badge ${dispatch.status}`}>
+                              {dispatch.status}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                            {dispatch.startedAt
+                              ? new Date(dispatch.startedAt).toLocaleTimeString()
+                              : '-'}
+                          </td>
+                          <td>
+                            {dispatch.result ? (
+                              <div className="missions-result-viewer">
+                                <div>
+                                  {dispatch.result.text?.slice(0, 120)}
+                                  {dispatch.result.text && dispatch.result.text.length > 120 ? '…' : ''}
+                                </div>
+                                <div className="missions-result-meta">
+                                  {dispatch.result.costUsd != null && (
+                                    <span>Cost: ${dispatch.result.costUsd.toFixed(4)}</span>
+                                  )}
+                                  {dispatch.result.sessionId && (
+                                    <span>Session: {dispatch.result.sessionId.slice(0, 8)}</span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>
+                                -
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </section>
+            )}
           </>
         )}
       </div>

@@ -335,3 +335,62 @@
   max-width: 420px;
   color: var(--text-secondary);
 }
+
+/* Phase M2: Dispatch & Result Inspector */
+
+.missions-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.missions-provider-select {
+  background: var(--bg-surface-light);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 3px 6px;
+  font-size: var(--text-xs);
+}
+
+.missions-dispatch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-swarm);
+  color: var(--text-inverse, #fff);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.missions-dispatch-btn:hover {
+  opacity: 0.9;
+}
+
+.missions-dispatch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.missions-result-viewer {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg-surface-light);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.missions-result-meta {
+  display: flex;
+  gap: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
+

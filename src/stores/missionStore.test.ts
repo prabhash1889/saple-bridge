@@ -61,6 +61,7 @@ const engineState: MissionState = {
       gateId: null,
     },
   ],
+  dispatches: [],
   events: [{ seq: 1, kind: 'started', payload: { requestId: 'r1' }, at: '2026-08-26T00:00:01Z' }],
   idempotency: { r1: { applied: true, revision: 2 } },
   createdAt: '2026-08-26T00:00:00Z',
@@ -386,5 +387,167 @@ describe('missionStore projection (M1)', () => {
 
     expect(useMissionStore.getState().requestedProjectPath).toBe('C:/other-project');
     expect(useMissionStore.getState().activeId).toBeNull();
+  });
+
+  // --- Phase M2: Harness adapters and manual dispatching ------------------------
+
+  it('loadAdapters fetches eligible provider adapters from backend', async () => {
+    const mockAdapters = [
+      {
+        id: 'codex',
+        isMissionEligible: true,
+        supportsMcp: true,
+        resultFormat: 'jsonl_event',
+        testedVersionRange: ['0.1.0', '1.0.0'],
+      },
+      {
+        id: 'claude',
+        isMissionEligible: true,
+        supportsMcp: true,
+        resultFormat: 'final_json_line',
+        testedVersionRange: ['1.0.0', '2.0.0'],
+      },
+    ];
+    invokeMock.mockResolvedValue(mockAdapters);
+
+    await useMissionStore.getState().loadAdapters();
+
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'get_provider_adapters');
+    expect(call).toBeDefined();
+    expect(useMissionStore.getState().adapters).toEqual(mockAdapters);
+  });
+
+  it('dispatchTask invokes mission_dispatch_task and updates active state', async () => {
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: engineState,
+    });
+
+    const dispatchResult = {
+      state: {
+        ...engineState,
+        revision: 4,
+        tasks: [
+          { ...engineState.tasks[0], status: 'dispatched' as const },
+          engineState.tasks[1],
+        ],
+        dispatches: [
+          {
+            id: 'dsp_01',
+            taskId: 'task_1',
+            attemptId: 'att_01',
+            provider: 'codex',
+            model: 'gpt-5.2',
+            capabilityHash: 'sha256:abcd',
+            status: 'running' as const,
+            failureCount: 0,
+            startedAt: '2026-08-28T00:00:00Z',
+          },
+        ],
+      },
+      dispatchId: 'dsp_01',
+      attemptId: 'att_01',
+      paneId: 'pane_01',
+      promptFile: '.saple/missions/msn_a/prompts/att_01.md',
+      capabilityToken: 'secret_token_123',
+    };
+
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'mission_dispatch_task') return dispatchResult;
+      if (cmd === 'mission_list') return [summaryOf()];
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const out = await useMissionStore
+      .getState()
+      .dispatchTask(PROJECT, 'msn_a', 'task_1', 'codex', 'gpt-5.2');
+
+    expect(out).toEqual(dispatchResult);
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'mission_dispatch_task');
+    expect(call).toBeDefined();
+    expect(call![1]).toEqual({
+      projectPath: PROJECT,
+      missionId: 'msn_a',
+      taskId: 'task_1',
+      provider: 'codex',
+      model: 'gpt-5.2',
+      expectedRevision: 3,
+    });
+    expect(useMissionStore.getState().activeState?.revision).toBe(4);
+    expect(useMissionStore.getState().activeState?.tasks[0].status).toBe('dispatched');
+    expect(useMissionStore.getState().activeState?.dispatches).toHaveLength(1);
+  });
+
+  it('recordDispatchResult invokes mission_record_dispatch_result and settles task', async () => {
+    const runningState: MissionState = {
+      ...engineState,
+      revision: 4,
+      tasks: [
+        { ...engineState.tasks[0], status: 'dispatched' as const },
+        engineState.tasks[1],
+      ],
+      dispatches: [
+        {
+          id: 'dsp_01',
+          taskId: 'task_1',
+          attemptId: 'att_01',
+          provider: 'codex',
+          model: 'gpt-5.2',
+          capabilityHash: 'sha256:abcd',
+          status: 'running' as const,
+          failureCount: 0,
+        },
+      ],
+    };
+
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: runningState,
+    });
+
+    const settledState: MissionState = {
+      ...runningState,
+      revision: 5,
+      tasks: [
+        {
+          ...runningState.tasks[0],
+          status: 'completed' as const,
+          result: { text: 'Setup finished successfully', isError: false },
+        },
+        { ...runningState.tasks[1], status: 'ready' as const }, // promoted!
+      ],
+      dispatches: [
+        {
+          ...runningState.dispatches[0],
+          status: 'succeeded' as const,
+          result: { text: 'Setup finished successfully', isError: false },
+        },
+      ],
+    };
+
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'mission_record_dispatch_result') return settledState;
+      if (cmd === 'mission_list') return [summaryOf()];
+      throw new Error(`unexpected command ${cmd}`);
+    });
+
+    const result = await useMissionStore
+      .getState()
+      .recordDispatchResult(
+        PROJECT,
+        'msn_a',
+        'dsp_01',
+        '{"type":"turn.finished"}',
+        'Setup finished successfully',
+      );
+
+    expect(result.revision).toBe(5);
+    expect(useMissionStore.getState().activeState?.tasks[0].status).toBe('completed');
+    expect(useMissionStore.getState().activeState?.tasks[1].status).toBe('ready');
+    expect(useMissionStore.getState().activeState?.dispatches[0].status).toBe('succeeded');
   });
 });
