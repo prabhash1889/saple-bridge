@@ -21,8 +21,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 use crate::project_roots::{get_project_file_path, ProjectRootRegistry};
+
+pub mod preamble;
 
 /// Root folder for all missions inside a project's `.saple` directory.
 pub const MISSIONS_DIR: &str = ".saple/missions";
@@ -104,8 +107,7 @@ impl MissionSpec {
     }
 }
 
-/// One node of the mission task DAG. Statuses follow the plan's task machine; M1 only
-/// ever produces `pending` / `ready` (execution starts in M3).
+/// One node of the mission task DAG. Statuses follow the plan's task machine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MissionTask {
@@ -113,17 +115,61 @@ pub struct MissionTask {
     pub title: String,
     /// `implement | review | verify`
     pub kind: String,
-    /// Full instructions handed to the worker when this task dispatches (M3+).
+    /// Full instructions handed to the worker when this task dispatches.
     pub spec: String,
     /// IDs of tasks that must complete before this one becomes ready.
     pub deps: Vec<String>,
-    /// Best-of-N speculative fanout (M6). Validated 1..=3 here; >1 dispatches arrive in M6.
+    /// Best-of-N speculative fanout (M6). Validated 1..=3 here.
     pub fanout: u32,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_id: Option<String>,
+}
+
+/// One concrete worker dispatch attempt assignment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MissionDispatch {
+    pub id: String,
+    pub task_id: String,
+    pub attempt_id: String,
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    pub capability_hash: String,
+    /// `pending | starting | starting_unknown | running | succeeded | failed | stop_unknown | abandoned`
+    pub status: String,
+    #[serde(default)]
+    pub failure_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDispatchOutput {
+    pub state: Box<MissionState>,
+    pub dispatch_id: String,
+    pub attempt_id: String,
+    pub pane_id: String,
+    pub prompt_file: String,
+    pub capability_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +210,8 @@ pub struct MissionState {
     pub spec: MissionSpec,
     #[serde(default)]
     pub tasks: Vec<MissionTask>,
+    #[serde(default)]
+    pub dispatches: Vec<MissionDispatch>,
     #[serde(default)]
     pub events: Vec<MissionEvent>,
     /// `request_id` -> recorded outcome, pruned to [`IDEMPOTENCY_CAP`] entries.
@@ -899,6 +947,7 @@ pub(crate) fn mission_create_inner(
         status: "draft".to_string(),
         spec: spec.clone(),
         tasks: Vec::new(),
+        dispatches: Vec::new(),
         events: Vec::new(),
         idempotency: BTreeMap::new(),
         created_at: now.clone(),
@@ -1085,6 +1134,7 @@ fn rebuild_missing_state(project_path: &str, id: &str, doc: &str) -> Result<Miss
         status: "draft".to_string(),
         spec: parsed.spec,
         tasks: Vec::new(),
+        dispatches: Vec::new(),
         events: Vec::new(),
         idempotency: BTreeMap::new(),
         created_at: now.clone(),
@@ -1423,6 +1473,266 @@ pub(crate) fn mission_command_inner(
     })?
 }
 
+pub(crate) fn mission_dispatch_task_inner(
+    project_path: &str,
+    mission_id: &str,
+    task_id: &str,
+    provider: &str,
+    model: Option<String>,
+    expected_revision: u64,
+) -> Result<TaskDispatchOutput, String> {
+    if !crate::providers::is_mission_eligible(provider) {
+        return Err(format!(
+            "Provider '{}' is not eligible for mission dispatches",
+            provider
+        ));
+    }
+
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        let task_idx = state
+            .tasks
+            .iter()
+            .position(|t| t.id == task_id)
+            .ok_or_else(|| format!("Task '{}' not found in mission '{}'", task_id, mission_id))?;
+
+        let task = &state.tasks[task_idx];
+        if task.status != "ready" && task.status != "pending" && task.status != "failed" {
+            return Err(format!(
+                "Cannot dispatch task '{}' in status '{}'",
+                task_id, task.status
+            ));
+        }
+
+        let dispatch_id = new_id("dsp");
+        let attempt_id = new_id("att");
+        let pane_id = format!("pane_{}", &attempt_id["att_".len()..]);
+
+        let capability_token = format!(
+            "{:x}{:x}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let mut hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut hasher, capability_token.as_bytes());
+        let capability_hash = format!("sha256:{:x}", sha2::Digest::finalize(hasher));
+
+        let ad = crate::providers::adapter(provider);
+        let supports_mcp = ad.map(|a| a.supports_mcp).unwrap_or(false);
+
+        let mut upstream_summaries = Vec::new();
+        for dep_id in &task.deps {
+            if let Some(dep_task) = state.tasks.iter().find(|t| t.id == *dep_id) {
+                if let Some(res) = &dep_task.result {
+                    let summary_str = res
+                        .get("summary")
+                        .or_else(|| res.get("text"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if !summary_str.is_empty() {
+                        upstream_summaries.push((dep_task.title.clone(), summary_str.to_string()));
+                    }
+                }
+            }
+        }
+
+        let dir = mission_dir(project_path, mission_id)?;
+        let artifacts_dir = dir.join("artifacts");
+        let mut artifact_paths = Vec::new();
+        if artifacts_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&artifacts_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let p = entry.path();
+                    if p.is_file() {
+                        artifact_paths.push(p);
+                    }
+                }
+            }
+        }
+
+        let preamble_input = preamble::PreambleInput {
+            mission_id: mission_id.to_string(),
+            task_id: task_id.to_string(),
+            dispatch_id: dispatch_id.clone(),
+            attempt_id: attempt_id.clone(),
+            capability_token: capability_token.clone(),
+            supports_mcp,
+            worktree_branch: None,
+            worktree_path: None,
+            task_title: task.title.clone(),
+            task_kind: task.kind.clone(),
+            task_spec: task.spec.clone(),
+            mission_doc_path: doc_file_path(project_path, mission_id)?,
+            artifact_paths,
+            upstream_summaries,
+        };
+
+        let preamble_content = preamble::generate_preamble(&preamble_input);
+        preamble::write_preamble_file(
+            project_path,
+            mission_id,
+            &attempt_id,
+            &preamble_content,
+        )?;
+
+        let now = crate::project::now_iso();
+        let dispatch = MissionDispatch {
+            id: dispatch_id.clone(),
+            task_id: task_id.to_string(),
+            attempt_id: attempt_id.clone(),
+            provider: provider.to_string(),
+            model: model.unwrap_or_else(|| "default".to_string()),
+            worktree_path: None,
+            pane_id: Some(pane_id.clone()),
+            capability_hash,
+            status: "running".to_string(),
+            failure_count: 0,
+            last_heartbeat_at: Some(now.clone()),
+            started_at: Some(now),
+            finished_at: None,
+            termination_reason: None,
+            output_log_path: Some(format!(
+                ".saple/missions/{}/logs/{}.log",
+                mission_id, attempt_id
+            )),
+            result: None,
+        };
+
+        state.tasks[task_idx].status = "dispatched".to_string();
+        state.dispatches.push(dispatch);
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        record_event(
+            project_path,
+            mission_id,
+            &mut state,
+            "task_dispatched",
+            serde_json::json!({
+                "taskId": task_id,
+                "dispatchId": dispatch_id,
+                "attemptId": attempt_id,
+                "provider": provider,
+            }),
+        )?;
+
+        persist_state(project_path, mission_id, &state)?;
+
+        let rel_prompt_file = format!(".saple/missions/{}/prompts/{}.md", mission_id, attempt_id);
+
+        Ok(TaskDispatchOutput {
+            state: Box::new(state),
+            dispatch_id,
+            attempt_id,
+            pane_id,
+            prompt_file: rel_prompt_file,
+            capability_token,
+        })
+    })?
+}
+
+pub(crate) fn mission_record_dispatch_result_inner(
+    project_path: &str,
+    mission_id: &str,
+    dispatch_id: &str,
+    raw_output: &str,
+    last_message_content: Option<String>,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        let dispatch_idx = state
+            .dispatches
+            .iter()
+            .position(|d| d.id == dispatch_id)
+            .ok_or_else(|| format!("Dispatch '{}' not found in mission '{}'", dispatch_id, mission_id))?;
+
+        let task_id = state.dispatches[dispatch_idx].task_id.clone();
+        let provider = state.dispatches[dispatch_idx].provider.clone();
+
+        let parsed = crate::providers::parse_provider_result(
+            &provider,
+            raw_output,
+            last_message_content.as_deref(),
+        )?;
+
+        let result_val = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+        let now = crate::project::now_iso();
+
+        if !parsed.is_error {
+            state.dispatches[dispatch_idx].status = "succeeded".to_string();
+            state.dispatches[dispatch_idx].finished_at = Some(now.clone());
+            state.dispatches[dispatch_idx].result = Some(result_val.clone());
+
+            if let Some(task_idx) = state.tasks.iter().position(|t| t.id == task_id) {
+                state.tasks[task_idx].status = "completed".to_string();
+                state.tasks[task_idx].result = Some(result_val);
+            }
+
+            let completed_ids: std::collections::HashSet<String> = state
+                .tasks
+                .iter()
+                .filter(|t| t.status == "completed")
+                .map(|t| t.id.clone())
+                .collect();
+
+            for task in &mut state.tasks {
+                if task.status == "pending" && task.deps.iter().all(|dep| completed_ids.contains(dep)) {
+                    task.status = "ready".to_string();
+                }
+            }
+
+            record_event(
+                project_path,
+                mission_id,
+                &mut state,
+                "dispatch_settled",
+                serde_json::json!({
+                    "dispatchId": dispatch_id,
+                    "taskId": task_id,
+                    "status": "succeeded",
+                }),
+            )?;
+        } else {
+            state.dispatches[dispatch_idx].status = "failed".to_string();
+            state.dispatches[dispatch_idx].finished_at = Some(now.clone());
+            state.dispatches[dispatch_idx].failure_count += 1;
+            state.dispatches[dispatch_idx].result = Some(result_val.clone());
+
+            if let Some(task_idx) = state.tasks.iter().position(|t| t.id == task_id) {
+                state.tasks[task_idx].status = "failed".to_string();
+                state.tasks[task_idx].result = Some(result_val);
+            }
+
+            record_event(
+                project_path,
+                mission_id,
+                &mut state,
+                "dispatch_failed",
+                serde_json::json!({
+                    "dispatchId": dispatch_id,
+                    "taskId": task_id,
+                    "status": "failed",
+                }),
+            )?;
+        }
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
 // --- Tauri commands -----------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1531,6 +1841,62 @@ pub async fn mission_command(
     ensure_missions_enabled(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         mission_command_inner(&project_path, &id, expected_revision, &request_id, cmd)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_dispatch_task(
+    project_path: String,
+    mission_id: String,
+    task_id: String,
+    provider: String,
+    model: Option<String>,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<TaskDispatchOutput, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_dispatch_task_inner(
+            &project_path,
+            &mission_id,
+            &task_id,
+            &provider,
+            model,
+            expected_revision,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_record_dispatch_result(
+    project_path: String,
+    mission_id: String,
+    dispatch_id: String,
+    raw_output: String,
+    last_message_content: Option<String>,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_record_dispatch_result_inner(
+            &project_path,
+            &mission_id,
+            &dispatch_id,
+            &raw_output,
+            last_message_content,
+            expected_revision,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2309,5 +2675,162 @@ mod tests {
         let log = fs::read_to_string(p.mission_dir(&m.id).join("events.log")).unwrap();
         assert_eq!(log.lines().count(), 20);
         assert!(log.lines().next().unwrap().contains("\"seq\":1"));
+    }
+
+    // --- Phase M2: Dispatching & Result Recording --------------------------------------------------
+
+    #[test]
+    fn manual_dispatch_creates_attempt_preamble_and_running_dispatch() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "DispatchTest");
+        let initial_state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![
+                TaskSpecInput {
+                    key: Some("t1".to_string()),
+                    title: "Task 1".to_string(),
+                    kind: "implement".to_string(),
+                    spec: "Write authentication service".to_string(),
+                    deps: Vec::new(),
+                    fanout: 1,
+                },
+                TaskSpecInput {
+                    key: Some("t2".to_string()),
+                    title: "Task 2".to_string(),
+                    kind: "verify".to_string(),
+                    spec: "Run auth tests".to_string(),
+                    deps: vec!["t1".to_string()],
+                    fanout: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+        let task1_id = initial_state.tasks[0].id.clone();
+        let task2_id = initial_state.tasks[1].id.clone();
+        assert_eq!(initial_state.tasks[0].status, "ready");
+        assert_eq!(initial_state.tasks[1].status, "pending");
+
+        let dispatch_output = mission_dispatch_task_inner(
+            &p.project(),
+            &m.id,
+            &task1_id,
+            "codex",
+            Some("gpt-5.2".to_string()),
+            2,
+        )
+        .unwrap();
+
+        assert!(dispatch_output.dispatch_id.starts_with("dsp_"));
+        assert!(dispatch_output.attempt_id.starts_with("att_"));
+        assert!(dispatch_output.pane_id.starts_with("pane_"));
+        assert!(!dispatch_output.capability_token.is_empty());
+
+        let state = dispatch_output.state;
+        assert_eq!(state.revision, 3);
+        assert_eq!(state.tasks[0].status, "dispatched");
+        assert_eq!(state.dispatches.len(), 1);
+
+        let d = &state.dispatches[0];
+        assert_eq!(d.id, dispatch_output.dispatch_id);
+        assert_eq!(d.task_id, task1_id);
+        assert_eq!(d.provider, "codex");
+        assert_eq!(d.model, "gpt-5.2");
+        assert_eq!(d.status, "running");
+        assert!(d.capability_hash.starts_with("sha256:"));
+
+        // Check that prompt file was written to disk
+        let prompt_path = p.path.join(&dispatch_output.prompt_file);
+        assert!(prompt_path.exists());
+        let prompt_body = fs::read_to_string(prompt_path).unwrap();
+        assert!(prompt_body.contains("Write authentication service"));
+        assert!(prompt_body.contains(&dispatch_output.dispatch_id));
+
+        // Now settle dispatch 1 with codex result
+        let fixture = include_str!("../fixtures/codex_jsonl.jsonl");
+        let settled_state = mission_record_dispatch_result_inner(
+            &p.project(),
+            &m.id,
+            &dispatch_output.dispatch_id,
+            fixture,
+            Some("Auth service is done and tested.".to_string()),
+            3,
+        )
+        .unwrap();
+
+        assert_eq!(settled_state.revision, 4);
+        assert_eq!(settled_state.dispatches[0].status, "succeeded");
+        assert_eq!(settled_state.tasks[0].status, "completed");
+        // Task 2 was promoted from pending to ready!
+        assert_eq!(settled_state.tasks[1].status, "ready");
+        assert_eq!(settled_state.tasks[1].id, task2_id);
+    }
+
+    #[test]
+    fn dispatch_rejects_ineligible_provider() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "Ineligible");
+        let initial_state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Task 1".to_string(),
+                kind: "implement".to_string(),
+                spec: "Do something".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let task1_id = initial_state.tasks[0].id.clone();
+        let err = mission_dispatch_task_inner(
+            &p.project(),
+            &m.id,
+            &task1_id,
+            "cursor",
+            None,
+            2,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("not eligible"), "{}", err);
+    }
+
+    #[test]
+    fn dispatch_revision_conflict_fails_cleanly() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "Conflict");
+        let initial_state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Task 1".to_string(),
+                kind: "implement".to_string(),
+                spec: "Do something".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let task1_id = initial_state.tasks[0].id.clone();
+        let err = mission_dispatch_task_inner(
+            &p.project(),
+            &m.id,
+            &task1_id,
+            "claude",
+            None,
+            999, // wrong revision
+        )
+        .unwrap_err();
+
+        assert!(err.contains("Revision conflict"), "{}", err);
     }
 }

@@ -102,6 +102,8 @@ export const IPC_COMMANDS = [
   'mission_update_doc',
   'mission_set_tasks',
   'mission_command',
+  'mission_dispatch_task',
+  'mission_record_dispatch_result',
   // filesystem helpers
   'list_project_files',
   'read_text_file',
@@ -117,6 +119,7 @@ export const IPC_COMMANDS = [
   'run_diagnostics',
   'check_provider_cli',
   'check_provider_signin',
+  'get_provider_adapters',
   'collect_diagnostics',
   // watchers
   'watch_project_files',
