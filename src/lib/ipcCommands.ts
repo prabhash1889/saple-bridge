@@ -96,7 +96,6 @@ export const IPC_COMMANDS = [
   'write_handoff_file',
   'validate_dependency_graph',
   'run_acceptance_command',
-  // missions (Phase M1: artifact model + CRUD; no execution yet)
   'mission_create',
   'mission_list',
   'mission_read',

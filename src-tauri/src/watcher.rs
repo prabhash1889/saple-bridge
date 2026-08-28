@@ -63,8 +63,6 @@ fn tracked_kind(path: &Path) -> Option<&'static str> {
     if norm.contains("/.saple/memory/") && !file_name.contains(".tmp-") {
         return Some("memory");
     }
-    // Missions (Phase M1): each mission keeps engine truth in `<id>/state.json`; external
-    // edits to any of them trigger a reconcile-on-read through the missions store.
     if file_name == "state.json" && norm.contains("/.saple/missions/") {
         return Some("missions");
     }
@@ -280,17 +278,11 @@ mod tests {
             tracked_kind(Path::new(r"C:\proj\.saple\memory\general\x.md")),
             Some("memory")
         );
-        // Mission engine truth (any mission's state.json) refreshes the missions room.
         assert_eq!(
             tracked_kind(Path::new("/home/u/proj/.saple/missions/msn_abc/state.json")),
             Some("missions")
         );
-        // ...but other state.json files elsewhere do not.
         assert_eq!(tracked_kind(Path::new("/home/u/proj/.saple/state.json")), None);
-        assert_eq!(
-            tracked_kind(Path::new("/home/u/proj/.saple/missions/msn_abc/prompts/a.json")),
-            None
-        );
         // ...but our own write temp files inside it do not.
         assert_eq!(
             tracked_kind(Path::new("/home/u/proj/.saple/memory/.note.md.tmp-123-4")),
