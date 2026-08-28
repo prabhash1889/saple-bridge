@@ -31,8 +31,7 @@ pub struct WorkspaceConfig {
     /// `default` keeps configs written before this field existed deserializable.
     #[serde(default)]
     pub verification_presets: Vec<String>,
-    /// Feature flag for the Missions orchestration room (default off). Gates the room and
-    /// all mission Tauri commands once Phase M1 ships; until then nothing consumes it.
+    /// Feature flag for the Missions orchestration room and its Tauri commands (default off).
     /// Default-off keeps configs written before this field existed deserializable.
     #[serde(default)]
     pub missions_enabled: bool,
