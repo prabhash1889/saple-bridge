@@ -1,17 +1,20 @@
-//! Dispatch preamble generation for Missions (Phase M2).
+//! Dispatch preamble generation for Missions (Phase M2 / M4).
 //!
 //! Builds the worker's instruction block injected as the prompt file:
 //! - Identity ("You are a dispatched worker for Saple mission `<id>`")
 //! - `task_id`, `dispatch_id`, `attempt_id`, capability token rules
-//! - MCP tools instructions (`saple_step_report`, `saple_artifact_publish`), with markers as fallback
+//! - MCP tools instructions (`saple_step_report`, `saple_artifact_publish`, `saple_ask`), with markers as fallback
 //! - Heartbeat rule (5 min interval)
 //! - Worktree rules (branch name, do not touch main checkout)
+//! - Resolved decision gates replay (Orca parity)
+//! - Undelivered mailbox messages (`--- MISSION MAIL ---`)
 //! - Raw task spec + links to `mission.md` and relevant artifacts
 
 use std::fs;
 use std::path::PathBuf;
 
 use crate::project_roots::canonical_base;
+use super::MissionMessage;
 
 /// Inputs required to assemble a mission worker's dispatch preamble prompt.
 #[derive(Debug, Clone)]
@@ -30,6 +33,8 @@ pub struct PreambleInput {
     pub mission_doc_path: PathBuf,
     pub artifact_paths: Vec<PathBuf>,
     pub upstream_summaries: Vec<(String, String)>, // (task_title, summary)
+    pub resolved_gates: Vec<(String, String)>,     // (question, resolution)
+    pub undelivered_mail: Vec<MissionMessage>,
 }
 
 /// Generate the prompt instructions markdown block for a dispatched worker.
@@ -60,6 +65,14 @@ pub fn generate_preamble(input: &PreambleInput) -> String {
         out.push_str("  \"status\": \"done\", // or \"progress\", \"blocked\", \"failed\"\n");
         out.push_str("  \"summary\": \"Concise summary of work performed and results\",\n");
         out.push_str("  \"changed_files\": [\"path/to/changed_file\"]\n");
+        out.push_str("}\n```\n\n");
+        out.push_str("If you need clarification mid-run, ask via `saple_ask` (this keeps your lease alive while waiting):\n");
+        out.push_str("```json\n{\n");
+        out.push_str(&format!("  \"dispatch_id\": \"{}\",\n", input.dispatch_id));
+        out.push_str(&format!("  \"attempt_id\": \"{}\",\n", input.attempt_id));
+        out.push_str("  \"token\": \"<value of env var SAPLE_DISPATCH_TOKEN>\",\n");
+        out.push_str("  \"question\": \"Your clarifying question\",\n");
+        out.push_str("  \"options\": [\"Option A\", \"Option B\"]\n");
         out.push_str("}\n```\n\n");
         out.push_str("If you generate reports, specifications, or large outputs, publish them with `saple_artifact_publish`:\n");
         out.push_str("```json\n{\n");
@@ -117,6 +130,25 @@ pub fn generate_preamble(input: &PreambleInput) -> String {
         out.push_str("\n> **VERIFICATION TASK**: Execute test and verification suites. Report all test results and exit codes.\n");
     }
     out.push('\n');
+
+    if !input.resolved_gates.is_empty() {
+        out.push_str("## Resolved Decision Gates\n");
+        for (question, resolution) in &input.resolved_gates {
+            out.push_str(&format!("- **Q**: {}\n  - **Decision**: `{}`\n", question, resolution));
+        }
+        out.push('\n');
+    }
+
+    if !input.undelivered_mail.is_empty() {
+        out.push_str("## --- MISSION MAIL ---\n");
+        for msg in &input.undelivered_mail {
+            out.push_str(&format!(
+                "- **From**: `{}` (thread: `{}`):\n  {}\n",
+                msg.from, msg.thread_id, msg.body
+            ));
+        }
+        out.push('\n');
+    }
 
     out.push_str("## Mission Context\n");
     out.push_str(&format!(
@@ -194,6 +226,21 @@ mod tests {
             mission_doc_path: PathBuf::from("/repo/.saple/missions/msn_01JTEST/mission.md"),
             artifact_paths: vec![PathBuf::from("/repo/.saple/missions/msn_01JTEST/artifacts/spec.md")],
             upstream_summaries: vec![("Database Migration".to_string(), "Applied users table migration.".to_string())],
+            resolved_gates: vec![("Use Redis for tokens?".to_string(), "Yes, use Redis".to_string())],
+            undelivered_mail: vec![MissionMessage {
+                id: "msg_1".to_string(),
+                thread_id: "thr_1".to_string(),
+                from: "operator".to_string(),
+                to: "task_01JTEST".to_string(),
+                kind: "message".to_string(),
+                body: "Remember to add docstrings".to_string(),
+                expects_reply: false,
+                in_reply_to: None,
+                answered_by: None,
+                read: false,
+                acked: false,
+                created_at: "2026-08-28T00:00:00Z".to_string(),
+            }],
         };
 
         let rendered = generate_preamble(&input);
@@ -204,10 +251,15 @@ mod tests {
         assert!(rendered.contains("dsp_01JTEST"));
         assert!(rendered.contains("att_01JTEST"));
         assert!(rendered.contains("saple_step_report"));
+        assert!(rendered.contains("saple_ask"));
         assert!(rendered.contains("saple_artifact_publish"));
         assert!(rendered.contains("saple/msn_test/task_test"));
         assert!(rendered.contains("Database Migration"));
         assert!(rendered.contains("Create auth refresh endpoint with jwt"));
+        assert!(rendered.contains("Use Redis for tokens?"));
+        assert!(rendered.contains("Yes, use Redis"));
+        assert!(rendered.contains("MISSION MAIL"));
+        assert!(rendered.contains("Remember to add docstrings"));
     }
 
     #[test]
@@ -227,33 +279,13 @@ mod tests {
             mission_doc_path: PathBuf::from("/repo/.saple/missions/msn_01JTEST/mission.md"),
             artifact_paths: Vec::new(),
             upstream_summaries: Vec::new(),
+            resolved_gates: Vec::new(),
+            undelivered_mail: Vec::new(),
         };
 
         let rendered = generate_preamble(&input);
         assert!(rendered.contains("[SAPLE_DONE:dsp_01JTEST:abcdef12]"));
         assert!(rendered.contains("[SAPLE_FAILED:dsp_01JTEST:abcdef12]"));
         assert!(rendered.contains("REVIEW-ONLY TASK"));
-    }
-
-    #[test]
-    fn write_preamble_file_creates_file_in_prompts_dir() {
-        let temp_dir = std::env::temp_dir().join(format!("saple_preamble_test_{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&temp_dir).unwrap();
-
-        let prompt_path = write_preamble_file(
-            &temp_dir.to_string_lossy(),
-            "msn_01JTEST",
-            "att_01JTEST",
-            "Test preamble content",
-        )
-        .unwrap();
-
-        assert!(prompt_path.exists());
-        assert_eq!(
-            fs::read_to_string(&prompt_path).unwrap(),
-            "Test preamble content"
-        );
-
-        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

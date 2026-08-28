@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use super::{
-    doc_file_path, mission_dir, new_id, preamble, record_event, MissionDispatch, MissionState, PoolEntry,
+    doc_file_path, gates, mailbox, mission_dir, new_id, preamble, record_event, MissionDispatch, MissionState, PoolEntry,
 };
 
 pub const MAX_RETRIES: u32 = 2; // Total 3 attempts per task before circuit breaker trips
@@ -135,8 +135,7 @@ pub fn prepare_dispatch_launch(
     let retry_of = state
         .dispatches
         .iter()
-        .filter(|d| d.task_id == task_id && (d.status == "failed" || d.status == "stop_unknown" || d.status == "starting_unknown" || d.status == "abandoned"))
-        .last()
+        .rfind(|d| d.task_id == task_id && (d.status == "failed" || d.status == "stop_unknown" || d.status == "starting_unknown" || d.status == "abandoned"))
         .map(|d| d.id.clone());
 
     let failure_count = state
@@ -196,6 +195,9 @@ pub fn prepare_dispatch_launch(
         }
     }
 
+    let resolved_gates = gates::get_resolved_gates_for_task(state, task_id);
+    let undelivered_mail = mailbox::get_undelivered_mail_for_task(state, task_id);
+
     let preamble_input = preamble::PreambleInput {
         mission_id: mission_id.to_string(),
         task_id: task_id.to_string(),
@@ -211,6 +213,8 @@ pub fn prepare_dispatch_launch(
         mission_doc_path: doc_file_path(project_path, mission_id)?,
         artifact_paths,
         upstream_summaries,
+        resolved_gates,
+        undelivered_mail,
     };
 
     let preamble_content = preamble::generate_preamble(&preamble_input);
@@ -264,6 +268,7 @@ pub fn prepare_dispatch_launch(
 }
 
 /// Finalize dispatch transition to `running` once the PTY process has spawned.
+#[allow(dead_code)]
 pub fn finalize_dispatch_running(
     state: &mut MissionState,
     project_path: &str,
@@ -329,6 +334,9 @@ pub fn handle_dispatch_failure(
             release_pool_session(state, session_id);
         }
     }
+
+    // Sweep any unanswered messages expecting reply for this task
+    let _ = mailbox::sweep_stalled_receivers(state, project_path, mission_id, &task_id);
 
     let is_operator_close = termination_reason.as_deref() == Some("operator_close");
 

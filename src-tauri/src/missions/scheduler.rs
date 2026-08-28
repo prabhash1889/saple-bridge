@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
-use super::{record_event, MissionState};
+use super::{liveness, record_event, MissionState};
 
 /// Outcome of running a single scheduler tick over a mission's state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -253,6 +253,14 @@ pub fn scheduler_tick(
     mission_id: &str,
     per_provider_caps: &HashMap<String, usize>,
 ) -> Result<SchedulerTickOutcome, String> {
+    let _ = liveness::evaluate_dispatch_leases(
+        state,
+        project_path,
+        mission_id,
+        &crate::project::now_iso(),
+        liveness::DEFAULT_LEASE_DURATION_SECS,
+    );
+
     let promoted = promote_ready_tasks(state, project_path, mission_id)?;
     let blocked = reblock_tasks_with_pending_gates(state, project_path, mission_id)?;
     let deadlocked = propagate_deadlocks(state, project_path, mission_id)?;

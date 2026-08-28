@@ -24,8 +24,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::project_roots::{get_project_file_path, ProjectRootRegistry};
 
+pub mod ask_reply;
+pub mod gates;
+pub mod liveness;
+pub mod mailbox;
 pub mod preamble;
 pub mod scheduler;
+pub mod settlement;
 pub mod supervisor;
 
 /// Root folder for all missions inside a project's `.saple` directory.
@@ -232,6 +237,20 @@ pub struct TaskDispatchOutput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SettlementOutcome {
+    pub state: Box<MissionState>,
+    pub result: settlement::SettlementResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskOutcome {
+    pub state: Box<MissionState>,
+    pub output: ask_reply::AskOutput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MissionEvent {
     pub seq: u64,
     pub kind: String,
@@ -314,8 +333,22 @@ pub struct TaskSpecInput {
     pub fanout: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactPublishInput {
+    pub dispatch_id: String,
+    #[serde(default = "default_artifact_kind")]
+    pub kind: String,
+    pub content: String,
+    pub label: String,
+}
+
 fn default_task_kind() -> String {
     "implement".to_string()
+}
+
+fn default_artifact_kind() -> String {
+    "report".to_string()
 }
 
 const ULID_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -1522,10 +1555,7 @@ pub(crate) fn mission_command_inner(
             MissionCommand::ResolveGate {
                 gate_id,
                 resolution,
-            } => Err(format!(
-                "unknown gate '{}' (gates arrive with Phase M4; resolution '{}' was not applied)",
-                gate_id, resolution
-            )),
+            } => gates::resolve_gate(&mut state, project_path, id, &gate_id, &resolution, "human"),
         };
 
         let outcome = match apply_result {
@@ -1769,6 +1799,251 @@ pub(crate) fn mission_recover_inner(
     Ok(summaries)
 }
 
+pub(crate) fn mission_settle_report_inner(
+    project_path: &str,
+    mission_id: &str,
+    report: settlement::StepReport,
+    expected_revision: u64,
+) -> Result<SettlementOutcome, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        let result = settlement::settle_step_report(&mut state, project_path, mission_id, &report)?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+
+        Ok(SettlementOutcome {
+            state: Box::new(state),
+            result,
+        })
+    })?
+}
+
+pub(crate) fn mission_request_gate_inner(
+    project_path: &str,
+    mission_id: &str,
+    input: gates::GateRequestInput,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        gates::request_gate(
+            &mut state,
+            project_path,
+            mission_id,
+            &input.dispatch_id,
+            input.question,
+            input.options,
+        )?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
+pub(crate) fn mission_resolve_gate_inner(
+    project_path: &str,
+    mission_id: &str,
+    gate_id: &str,
+    resolution: &str,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        gates::resolve_gate(
+            &mut state,
+            project_path,
+            mission_id,
+            gate_id,
+            resolution,
+            "human",
+        )?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
+pub(crate) fn mission_publish_artifact_inner(
+    project_path: &str,
+    mission_id: &str,
+    input: ArtifactPublishInput,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        let dispatch = state
+            .dispatches
+            .iter()
+            .find(|d| d.id == input.dispatch_id)
+            .ok_or_else(|| format!("Dispatch '{}' not found", input.dispatch_id))?;
+
+        let task_id = dispatch.task_id.clone();
+        let slug: String = input
+            .label
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        let slug = slug.trim_matches('-');
+        let slug = if slug.is_empty() { "artifact" } else { slug };
+
+        let m_dir = mission_dir(project_path, mission_id)?;
+        let artifact_dir = m_dir.join("artifacts").join(slug);
+        fs::create_dir_all(&artifact_dir)
+            .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
+        let file_path = artifact_dir.join("index.md");
+        fs::write(&file_path, &input.content)
+            .map_err(|e| format!("Failed to write artifact: {}", e))?;
+
+        let rel_path = format!("artifacts/{}/index.md", slug);
+        record_event(
+            project_path,
+            mission_id,
+            &mut state,
+            "artifact_published",
+            serde_json::json!({
+                "dispatchId": input.dispatch_id,
+                "taskId": task_id,
+                "kind": input.kind,
+                "label": input.label,
+                "path": rel_path,
+            }),
+        )?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
+pub(crate) fn mission_ask_inner(
+    project_path: &str,
+    mission_id: &str,
+    input: ask_reply::AskInput,
+    expected_revision: u64,
+) -> Result<AskOutcome, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        let output = ask_reply::ask_question(&mut state, project_path, mission_id, input)?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(AskOutcome {
+            state: Box::new(state),
+            output,
+        })
+    })?
+}
+
+pub(crate) fn mission_reply_inner(
+    project_path: &str,
+    mission_id: &str,
+    thread_id: &str,
+    body: &str,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        ask_reply::reply_question(&mut state, project_path, mission_id, thread_id, body, "operator")?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
+pub(crate) fn mission_send_message_inner(
+    project_path: &str,
+    mission_id: &str,
+    input: mailbox::SendMessageInput,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        mailbox::send_message(&mut state, project_path, mission_id, input)?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
+pub(crate) fn mission_inbox_fetch_inner(
+    project_path: &str,
+    mission_id: &str,
+    recipient: &str,
+) -> Result<Vec<MissionMessage>, String> {
+    let state = require_state(project_path, mission_id)?;
+    Ok(mailbox::inbox_fetch(&state, recipient))
+}
+
+pub(crate) fn mission_inbox_ack_inner(
+    project_path: &str,
+    mission_id: &str,
+    message_ids: Vec<String>,
+    expected_revision: u64,
+) -> Result<MissionState, String> {
+    let state_path = state_file_path(project_path, mission_id)?;
+    crate::fs_lock::with_path_lock(&state_path, || {
+        let mut state = require_state(project_path, mission_id)?;
+        if state.revision != expected_revision {
+            return Err(revision_conflict(mission_id, state.revision, expected_revision));
+        }
+
+        mailbox::inbox_ack(&mut state, project_path, mission_id, &message_ids)?;
+
+        state.revision += 1;
+        state.updated_at = crate::project::now_iso();
+        persist_state(project_path, mission_id, &state)?;
+        Ok(state)
+    })?
+}
+
 // --- Tauri commands -----------------------------------------------------------------------------
 
 #[tauri::command]
@@ -1971,6 +2246,183 @@ pub async fn mission_recover(
     };
     tauri::async_runtime::spawn_blocking(move || {
         mission_recover_inner(&project_path, &live_pane_ids)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_settle_report(
+    project_path: String,
+    mission_id: String,
+    report: settlement::StepReport,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<SettlementOutcome, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_settle_report_inner(&project_path, &mission_id, report, expected_revision)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_request_gate(
+    project_path: String,
+    mission_id: String,
+    input: gates::GateRequestInput,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_request_gate_inner(&project_path, &mission_id, input, expected_revision)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_resolve_gate(
+    project_path: String,
+    mission_id: String,
+    gate_id: String,
+    resolution: String,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_resolve_gate_inner(&project_path, &mission_id, &gate_id, &resolution, expected_revision)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_publish_artifact(
+    project_path: String,
+    mission_id: String,
+    input: ArtifactPublishInput,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_publish_artifact_inner(
+            &project_path,
+            &mission_id,
+            input,
+            expected_revision,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_ask(
+    project_path: String,
+    mission_id: String,
+    input: ask_reply::AskInput,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<AskOutcome, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_ask_inner(&project_path, &mission_id, input, expected_revision)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_reply(
+    project_path: String,
+    mission_id: String,
+    thread_id: String,
+    body: String,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_reply_inner(&project_path, &mission_id, &thread_id, &body, expected_revision)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_send_message(
+    project_path: String,
+    mission_id: String,
+    input: mailbox::SendMessageInput,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_send_message_inner(&project_path, &mission_id, input, expected_revision)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_inbox_fetch(
+    project_path: String,
+    mission_id: String,
+    recipient: String,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<MissionMessage>, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_inbox_fetch_inner(&project_path, &mission_id, &recipient)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_inbox_ack(
+    project_path: String,
+    mission_id: String,
+    message_ids: Vec<String>,
+    expected_revision: u64,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<MissionState, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        mission_inbox_ack_inner(&project_path, &mission_id, message_ids, expected_revision)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -3081,5 +3533,226 @@ mod tests {
             }
             other => panic!("expected loaded mission, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn step_report_settles_and_promotes_dependents_transactionally() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "SettlementTest");
+
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![
+                TaskSpecInput {
+                    key: Some("t1".to_string()),
+                    title: "Task 1".to_string(),
+                    kind: "implement".to_string(),
+                    spec: "Do something".to_string(),
+                    deps: Vec::new(),
+                    fanout: 1,
+                },
+                TaskSpecInput {
+                    key: Some("t2".to_string()),
+                    title: "Task 2".to_string(),
+                    kind: "implement".to_string(),
+                    spec: "Do second thing".to_string(),
+                    deps: vec!["t1".to_string()],
+                    fanout: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let dsp = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 2).unwrap();
+
+        // 1. Submit step report done with correct token
+        let report = settlement::StepReport {
+            dispatch_id: dsp.dispatch_id.clone(),
+            attempt_id: dsp.attempt_id.clone(),
+            token: dsp.capability_token.clone(),
+            pane_id: Some(dsp.pane_id.clone()),
+            status: "done".to_string(),
+            summary: "Task 1 implemented successfully".to_string(),
+            changed_files: Some(vec!["src/main.rs".to_string()]),
+            tests: Some(vec!["cargo test".to_string()]),
+        };
+
+        let outcome = mission_settle_report_inner(&p.project(), &m.id, report, 3).unwrap();
+        assert_eq!(
+            outcome.result,
+            settlement::SettlementResult::Settled {
+                task_id: t1_id,
+                status: "succeeded".to_string(),
+            }
+        );
+        assert_eq!(outcome.state.tasks[0].status, "completed");
+        // Dependent task 2 is promoted!
+        assert_eq!(outcome.state.tasks[1].status, "ready");
+    }
+
+    #[test]
+    fn worker_gate_request_and_resolution_flow() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "GateTest");
+
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Database Migration".to_string(),
+                kind: "implement".to_string(),
+                spec: "Run schema migration".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let dsp = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 2).unwrap();
+
+        // 1. Worker requests decision gate
+        let gated_state = mission_request_gate_inner(
+            &p.project(),
+            &m.id,
+            gates::GateRequestInput {
+                dispatch_id: dsp.dispatch_id.clone(),
+                question: "Approve dropping legacy column?".to_string(),
+                options: vec!["approve".to_string(), "reject".to_string()],
+            },
+            3,
+        )
+        .unwrap();
+
+        assert_eq!(gated_state.tasks[0].status, "blocked");
+        assert_eq!(gated_state.gates.len(), 1);
+        let gate_id = gated_state.gates[0].id.clone();
+
+        // 2. Human resolves gate
+        let resolved_state = mission_resolve_gate_inner(
+            &p.project(),
+            &m.id,
+            &gate_id,
+            "approve",
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(resolved_state.gates[0].status, "resolved");
+        assert_eq!(resolved_state.gates[0].resolution, Some("approve".to_string()));
+        assert_eq!(resolved_state.tasks[0].status, "ready");
+    }
+
+    #[test]
+    fn mailbox_and_ask_reply_end_to_end() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "MailboxTest");
+
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Task 1".to_string(),
+                kind: "implement".to_string(),
+                spec: "Do something".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let dsp = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 2).unwrap();
+
+        // 1. Worker asks question
+        let ask_res = mission_ask_inner(
+            &p.project(),
+            &m.id,
+            ask_reply::AskInput {
+                dispatch_id: dsp.dispatch_id.clone(),
+                attempt_id: dsp.attempt_id.clone(),
+                token: dsp.capability_token.clone(),
+                pane_id: Some(dsp.pane_id.clone()),
+                question: "Which database port?".to_string(),
+                options: None,
+                timeout_ms: None,
+            },
+            3,
+        )
+        .unwrap();
+
+        assert_eq!(ask_res.state.messages.len(), 1);
+        assert!(ask_res.state.messages[0].expects_reply);
+
+        // 2. Operator replies
+        let replied_state = mission_reply_inner(
+            &p.project(),
+            &m.id,
+            &ask_res.output.thread_id,
+            "Use port 5432",
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(replied_state.messages.len(), 2);
+        assert_eq!(replied_state.messages[0].answered_by, Some(replied_state.messages[1].id.clone()));
+
+        // 3. Worker fetches inbox
+        let inbox = mission_inbox_fetch_inner(&p.project(), &m.id, &format!("task_{}", t1_id)).unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].body, "Use port 5432");
+
+        // 4. Worker acks inbox
+        let acked_state = mission_inbox_ack_inner(&p.project(), &m.id, vec![inbox[0].id.clone()], 5).unwrap();
+        assert!(acked_state.messages[1].acked);
+    }
+
+    #[test]
+    fn artifact_publishing_writes_to_disk_and_logs_event() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "ArtifactTest");
+
+        let state = mission_set_tasks_inner(
+            &p.project(),
+            &m.id,
+            1,
+            vec![TaskSpecInput {
+                key: Some("t1".to_string()),
+                title: "Task 1".to_string(),
+                kind: "implement".to_string(),
+                spec: "Do something".to_string(),
+                deps: Vec::new(),
+                fanout: 1,
+            }],
+        )
+        .unwrap();
+
+        let t1_id = state.tasks[0].id.clone();
+        let dsp = mission_dispatch_task_inner(&p.project(), &m.id, &t1_id, "codex", None, 2).unwrap();
+
+        let published = mission_publish_artifact_inner(
+            &p.project(),
+            &m.id,
+            ArtifactPublishInput {
+                dispatch_id: dsp.dispatch_id,
+                kind: "report".to_string(),
+                content: "# Final Architecture\n\nDetailed breakdown of components.".to_string(),
+                label: "Architecture Summary".to_string(),
+            },
+            3,
+        )
+        .unwrap();
+
+        assert!(published.events.iter().any(|e| e.kind == "artifact_published"));
+        let artifact_file = p.path.join(".saple/missions").join(&m.id).join("artifacts/architecture-summary/index.md");
+        assert!(artifact_file.exists());
+        assert!(fs::read_to_string(&artifact_file).unwrap().contains("Detailed breakdown"));
     }
 }
