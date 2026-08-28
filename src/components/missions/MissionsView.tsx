@@ -1,16 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Database,
   Flag,
   FolderOpen,
   ListChecks,
   Pause,
   Play,
   Plus,
+  RefreshCw,
   RotateCw,
   Save,
   Square,
   Trash2,
+  XCircle,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../stores/projectStore';
@@ -18,9 +21,9 @@ import { useMissionStore } from '../../stores/missionStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import type { MissionState, MissionSummary, TaskKind, TaskSpecInput } from '../../types/mission';
 
-// Missions room, minimal v1 (Phase M1): mission list + detail + mission.md editor +
-// task table with a deps picker. No DAG rendering and no execution yet - dispatch
-// arrives with M3; this room only plans.
+// Missions room projection (Phase M1/M2/M3). React never writes mission state directly: every
+// mutation goes through the engine commands in src-tauri/src/missions.rs, and this store
+// only folds command results back into memory.
 
 interface TaskDraft {
   key: string;
@@ -86,6 +89,9 @@ export const MissionsView: React.FC = () => {
   const activeDoc = useMissionStore((state) => state.activeDoc);
   const activeWarnings = useMissionStore((state) => state.activeWarnings);
   const openMission = useMissionStore((state) => state.openMission);
+  const retryDispatch = useMissionStore((state) => state.retryDispatch);
+  const abandonDispatch = useMissionStore((state) => state.abandonDispatch);
+  const tickMission = useMissionStore((state) => state.tick);
 
   // Doc editor buffer. Kept local so typing never touches the engine until Save.
   const [docBuffer, setDocBuffer] = useState('');
@@ -108,7 +114,7 @@ export const MissionsView: React.FC = () => {
     if (currentProjectPath) void loadMissions(currentProjectPath);
   }, [currentProjectPath, loadMissions]);
 
-  // Poll on focus until mission-event streaming lands in M3.
+  // Focus polling / refresh
   useEffect(() => {
     if (!currentProjectPath) return;
     const onFocus = () => {
@@ -120,18 +126,16 @@ export const MissionsView: React.FC = () => {
     return () => window.removeEventListener('focus', onFocus);
   }, [currentProjectPath, loadMissions, openMission]);
 
-  // Reset local buffers on mission switch. Runs strictly on identity change so a
-  // lifecycle command (which replaces activeState) cannot wipe unsaved edits.
+  // Reset local buffers on mission switch.
   useEffect(() => {
     setDocBuffer(activeDoc ?? '');
     setDocDirty(false);
     setTaskDrafts(activeState ? draftsFromTasks(activeState.tasks) : []);
     setTasksDirty(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberate: sync only when the selected mission changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  // Follow engine truth while the operator has no unsaved local edits (e.g. after an
-  // external frontmatter edit was reconciled or another save landed).
+  // Follow engine truth while the operator has no unsaved local edits
   useEffect(() => {
     if (!docDirty) setDocBuffer(activeDoc ?? '');
   }, [activeDoc, docDirty]);
@@ -254,6 +258,36 @@ export const MissionsView: React.FC = () => {
     }
   };
 
+  const handleTick = async () => {
+    if (!currentProjectPath || !activeId) return;
+    try {
+      await tickMission(currentProjectPath, activeId);
+      useNotificationStore.getState().success('Scheduler tick executed');
+    } catch (err) {
+      useNotificationStore.getState().error(`Tick failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleRetryDispatch = async (dispatchId: string) => {
+    if (!currentProjectPath || !activeId) return;
+    try {
+      await retryDispatch(currentProjectPath, activeId, dispatchId);
+      useNotificationStore.getState().success('Dispatch marked for retry');
+    } catch (err) {
+      useNotificationStore.getState().error(`Retry failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleAbandonDispatch = async (dispatchId: string) => {
+    if (!currentProjectPath || !activeId) return;
+    try {
+      await abandonDispatch(currentProjectPath, activeId, dispatchId);
+      useNotificationStore.getState().success('Dispatch abandoned');
+    } catch (err) {
+      useNotificationStore.getState().error(`Abandon failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const lifecycleActions = useMemo(
     () => (activeState ? (STATUS_ORDER[activeState.status] ?? []) : []),
     [activeState],
@@ -358,6 +392,12 @@ export const MissionsView: React.FC = () => {
                   <span>{label}</span>
                 </button>
               ))}
+              {activeState.status === 'running' && (
+                <button onClick={handleTick} title="Run scheduler tick" aria-label="Run scheduler tick">
+                  <RefreshCw size={13} />
+                  <span>Tick</span>
+                </button>
+              )}
               <button
                 onClick={() => currentProjectPath && void loadMissions(currentProjectPath, true)}
                 title="Reload from disk"
@@ -590,6 +630,45 @@ export const MissionsView: React.FC = () => {
               )}
             </section>
 
+            {activeState.pool && activeState.pool.length > 0 && (
+              <section className="missions-section">
+                <div className="missions-section-heading">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Database size={13} />
+                    <span>Session Pool ({activeState.pool.length})</span>
+                  </span>
+                </div>
+                <table className="missions-spec-table">
+                  <thead>
+                    <tr>
+                      <th>Provider</th>
+                      <th>Model</th>
+                      <th>Session ID</th>
+                      <th>State</th>
+                      <th>Reuses</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeState.pool.map((entry, i) => (
+                      <tr key={`${entry.key}_${i}`}>
+                        <td>{entry.provider}</td>
+                        <td>{entry.model}</td>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
+                          {entry.sessionId}
+                        </td>
+                        <td>
+                          <span className={`mission-status-badge ${entry.state}`}>
+                            {entry.state}
+                          </span>
+                        </td>
+                        <td>{entry.reusedCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
+
             {activeState.dispatches && activeState.dispatches.length > 0 && (
               <section className="missions-section">
                 <div className="missions-section-heading">
@@ -603,18 +682,28 @@ export const MissionsView: React.FC = () => {
                       <th>Provider / Model</th>
                       <th>Status</th>
                       <th>Started</th>
-                      <th>Result</th>
+                      <th>Result & Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {activeState.dispatches.map((dispatch) => {
                       const associatedTask = activeState.tasks.find((t) => t.id === dispatch.taskId);
+                      const isUnknownOrFailed =
+                        dispatch.status === 'failed' ||
+                        dispatch.status === 'stop_unknown' ||
+                        dispatch.status === 'starting_unknown';
+
                       return (
                         <tr key={dispatch.id}>
                           <td>
                             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
                               {dispatch.attemptId}
                             </span>
+                            {dispatch.retryOf && (
+                              <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: '10px' }}>
+                                retry of {dispatch.retryOf.slice(0, 8)}
+                              </span>
+                            )}
                           </td>
                           <td>{associatedTask?.title || dispatch.taskId}</td>
                           <td>
@@ -629,6 +718,11 @@ export const MissionsView: React.FC = () => {
                             <span className={`mission-status-badge ${dispatch.status}`}>
                               {dispatch.status}
                             </span>
+                            {dispatch.terminationReason && (
+                              <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: '10px' }}>
+                                {dispatch.terminationReason}
+                              </span>
+                            )}
                           </td>
                           <td style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                             {dispatch.startedAt
@@ -650,6 +744,25 @@ export const MissionsView: React.FC = () => {
                                     <span>Session: {dispatch.result.sessionId.slice(0, 8)}</span>
                                   )}
                                 </div>
+                              </div>
+                            ) : isUnknownOrFailed ? (
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <button
+                                  className="missions-dispatch-btn"
+                                  onClick={() => handleRetryDispatch(dispatch.id)}
+                                  title="Retry dispatch"
+                                >
+                                  <RotateCw size={10} />
+                                  <span>Retry</span>
+                                </button>
+                                <button
+                                  className="missions-dispatch-btn"
+                                  onClick={() => handleAbandonDispatch(dispatch.id)}
+                                  title="Abandon dispatch"
+                                >
+                                  <XCircle size={10} />
+                                  <span>Abandon</span>
+                                </button>
                               </div>
                             ) : (
                               <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>

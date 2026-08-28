@@ -12,10 +12,9 @@ import type {
   TaskSpecInput,
 } from '../types/mission';
 
-// Missions room projection (Phase M1/M2). React never writes mission state directly: every
+// Missions room projection (Phase M1/M2/M3). React never writes mission state directly: every
 // mutation goes through the engine commands in src-tauri/src/missions.rs, and this store
-// only folds command results back into memory. Until `mission-event` lands (M3) the view
-// refreshes on focus and on watcher reloads (`saple-file-changed` with file "missions").
+// only folds command results back into memory.
 
 interface MissionStoreState {
   missions: MissionSummary[];
@@ -65,6 +64,10 @@ interface MissionStoreState {
     lastMessageContent?: string,
   ) => Promise<MissionState>;
   runCommand: (projectPath: string, id: string, cmd: MissionCommand) => Promise<void>;
+  tick: (projectPath: string, missionId: string) => Promise<MissionState>;
+  recover: (projectPath: string) => Promise<MissionSummary[]>;
+  retryDispatch: (projectPath: string, missionId: string, dispatchId: string) => Promise<void>;
+  abandonDispatch: (projectPath: string, missionId: string, dispatchId: string) => Promise<void>;
 }
 
 // Currency tokens so overlapping loads (rapid switches, watcher bursts, focus polls)
@@ -418,5 +421,58 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
       }
       throw err;
     }
+  },
+
+  tick: async (projectPath, missionId) => {
+    const activeToken = ++activeSeq;
+    const mutationToken = ++mutationSeq;
+    try {
+      const state = await invoke<MissionState>('mission_tick', { projectPath, missionId });
+      const current = get();
+      if (
+        activeToken !== activeSeq ||
+        mutationToken !== mutationSeq ||
+        current.activeId !== missionId ||
+        current.activeProjectPath !== projectPath
+      ) {
+        return state;
+      }
+      set({ activeState: state, activeLoading: false, error: null });
+      await get().loadMissions(projectPath, true);
+      return state;
+    } catch (err) {
+      if (
+        activeToken === activeSeq &&
+        mutationToken === mutationSeq &&
+        get().activeId === missionId &&
+        get().activeProjectPath === projectPath
+      ) {
+        set({ activeLoading: false, error: toErrorMessage(err) });
+      }
+      throw err;
+    }
+  },
+
+  recover: async (projectPath) => {
+    try {
+      const summaries = await invoke<MissionSummary[]>('mission_recover', { projectPath });
+      set({ missions: summaries, loadedProjectPath: projectPath });
+      const activeId = get().activeId;
+      if (activeId) {
+        await get().openMission(projectPath, activeId);
+      }
+      return summaries;
+    } catch (err) {
+      set({ error: toErrorMessage(err) });
+      throw err;
+    }
+  },
+
+  retryDispatch: async (projectPath, missionId, dispatchId) => {
+    return get().runCommand(projectPath, missionId, { type: 'retry', dispatchId });
+  },
+
+  abandonDispatch: async (projectPath, missionId, dispatchId) => {
+    return get().runCommand(projectPath, missionId, { type: 'abandon', dispatchId });
   },
 }));

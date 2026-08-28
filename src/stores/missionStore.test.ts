@@ -550,4 +550,116 @@ describe('missionStore projection (M1)', () => {
     expect(useMissionStore.getState().activeState?.tasks[1].status).toBe('ready');
     expect(useMissionStore.getState().activeState?.dispatches[0].status).toBe('succeeded');
   });
+
+  describe('Phase M3 - Scheduler, recovery, and pooling actions', () => {
+    it('tick invokes mission_tick and updates activeState', async () => {
+      const tickedState: MissionState = {
+        ...engineState,
+        revision: 4,
+        tasks: [
+          { ...engineState.tasks[0], status: 'completed' },
+          { ...engineState.tasks[1], status: 'ready' },
+        ],
+      };
+
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_tick') return tickedState;
+        if (cmd === 'mission_list') return [summaryOf()];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      const res = await useMissionStore.getState().tick(PROJECT, 'msn_a');
+      expect(res.revision).toBe(4);
+      expect(useMissionStore.getState().activeState?.tasks[1].status).toBe('ready');
+    });
+
+    it('recover invokes mission_recover and refreshes mission list', async () => {
+      const summaries = [summaryOf({ id: 'msn_a', title: 'Recovered Mission' })];
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_recover') return summaries;
+        if (cmd === 'mission_read') {
+          return { status: 'loaded', state: engineState, doc: '', warnings: [] };
+        }
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      useMissionStore.setState({ activeId: 'msn_a', activeProjectPath: PROJECT });
+      const res = await useMissionStore.getState().recover(PROJECT);
+      expect(res).toEqual(summaries);
+      expect(useMissionStore.getState().missions).toEqual(summaries);
+    });
+
+    it('retryDispatch and abandonDispatch send proper mission_command payloads', async () => {
+      useMissionStore.setState({
+        activeId: 'msn_a',
+        activeProjectPath: PROJECT,
+        activeState: engineState,
+      });
+
+      invokeMock.mockImplementation(async (...args: unknown[]) => {
+        const cmd = args[0] as string;
+        if (cmd === 'mission_command') return { ...engineState, revision: 4 };
+        if (cmd === 'mission_list') return [summaryOf()];
+        throw new Error(`unexpected command ${cmd}`);
+      });
+
+      await useMissionStore.getState().retryDispatch(PROJECT, 'msn_a', 'dsp_01');
+      const retryCall = invokeMock.mock.calls.find((c) => c[0] === 'mission_command');
+      expect((retryCall?.[1] as { cmd: { type: string; dispatchId: string } }).cmd).toEqual({
+        type: 'retry',
+        dispatchId: 'dsp_01',
+      });
+
+      await useMissionStore.getState().abandonDispatch(PROJECT, 'msn_a', 'dsp_01');
+      const abandonCall = invokeMock.mock.calls.filter((c) => c[0] === 'mission_command')[1];
+      expect((abandonCall?.[1] as { cmd: { type: string; dispatchId: string } }).cmd).toEqual({
+        type: 'abandon',
+        dispatchId: 'dsp_01',
+      });
+    });
+
+    it('session pool and unknown dispatch states round-trip through state', () => {
+      const poolState: MissionState = {
+        ...engineState,
+        pool: [
+          {
+            key: 'codex:gpt-5.2:shared',
+            provider: 'codex',
+            model: 'gpt-5.2',
+            sessionId: 'sess_123',
+            state: 'idle',
+            lastTaskId: 'task_1',
+            reusedCount: 1,
+          },
+        ],
+        dispatches: [
+          {
+            id: 'dsp_unk',
+            taskId: 'task_1',
+            attemptId: 'att_unk',
+            provider: 'codex',
+            model: 'gpt-5.2',
+            capabilityHash: 'sha256:123',
+            status: 'stop_unknown',
+            failureCount: 1,
+            terminationReason: 'orphaned_on_restart',
+          },
+        ],
+      };
+
+      useMissionStore.setState({ activeState: poolState });
+      const current = useMissionStore.getState().activeState;
+      expect(current?.pool?.[0].state).toBe('idle');
+      expect(current?.pool?.[0].reusedCount).toBe(1);
+      expect(current?.dispatches[0].status).toBe('stop_unknown');
+    });
+  });
 });
