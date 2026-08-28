@@ -22,6 +22,7 @@ import {
   ArrowDown,
   Globe,
   PanelRight,
+  Flag,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useBrowserStore } from '../../stores/browserStore';
@@ -32,6 +33,7 @@ import { useSwarmStore } from '../../stores/swarmStore';
 import { useTerminalStore, AiProvider } from '../../stores/terminalStore';
 import { useTerminalFontStore, TERMINAL_FONT_OPTIONS } from '../../stores/terminalFontStore';
 import bridgeMark from '../../assets/logo/saple-bridge-mark.png';
+import { isMissionsEnabled } from '../../lib/featureFlags';
 
 interface SidebarProps {
   onOpenPalette?: () => void;
@@ -77,18 +79,20 @@ const primaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementT
 ];
 
 const secondaryNavItems: Array<{ id: ViewType; label: string; icon: React.ElementType; accent: string }> = [
+  { id: 'missions', label: 'Missions', icon: Flag, accent: 'missions' },
   { id: 'editor', label: 'Files', icon: FileCode, accent: 'editor' },
   { id: 'activity', label: 'Activity', icon: Activity, accent: 'activity' },
   { id: 'settings', label: 'Settings', icon: Settings, accent: 'settings' },
 ];
 
-const workspaceRooms: ViewType[] = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor', 'activity'];
+const workspaceRooms: ViewType[] = ['terminals', 'kanban', 'memory', 'swarm', 'missions', 'review', 'editor', 'activity'];
 
 export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
   const activeView = useProjectStore((state) => state.activeView);
   const setActiveView = useProjectStore((state) => state.setActiveView);
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const currentWorkspaceId = useProjectStore((state) => state.currentWorkspaceId);
+  const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
   const openWorkspaces = useProjectStore((state) => state.openWorkspaces);
   const addWorkspace = useProjectStore((state) => state.addWorkspace);
   const openWorkspaceInstance = useProjectStore((state) => state.openWorkspaceInstance);
@@ -645,7 +649,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenPalette }) => {
       )}
 
       <nav className="room-nav room-nav-secondary" aria-label="Workspace tools">
-        {secondaryNavItems.map((item) => {
+        {secondaryNavItems.filter((item) => item.id !== 'missions' || isMissionsEnabled(workspaceConfig)).map((item) => {
           const Icon = item.icon;
           const disabled = workspaceRooms.includes(item.id) && !currentProjectPath;
           const active = activeView === item.id;

@@ -28,4 +28,10 @@ export const workspaceEntries: Array<{
     description: 'Inspect files and shape workspace context.',
     hint: 'Alt+7',
   },
+  {
+    id: 'missions',
+    title: 'Saple Missions',
+    description: 'Plan multi-agent missions with durable markdown and task graphs.',
+    hint: 'Alt+9',
+  },
 ];

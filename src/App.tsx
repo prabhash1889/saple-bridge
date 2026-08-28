@@ -25,6 +25,8 @@ import { useThemeStore, resolveTheme } from './stores/themeStore';
 import { startJuneDispatcher } from './lib/juneDispatcher';
 import { startTerminalSwarmBridge } from './lib/terminalSwarmBridge';
 import { recordFailure } from './lib/failureTracking';
+import { isMissionsEnabled } from './lib/featureFlags';
+import { useMissionStore } from './stores/missionStore';
 
 const TerminalGrid = lazy(() => import('./components/terminal/TerminalGrid').then((module) => ({ default: module.TerminalGrid })));
 const KanbanBoard = lazy(() => import('./components/kanban/KanbanBoard').then((module) => ({ default: module.KanbanBoard })));
@@ -36,6 +38,7 @@ const EditorPanel = lazy(() => import('./components/editor/EditorPanel').then((m
 const CommandPalette = lazy(() => import('./components/common/CommandPalette').then((module) => ({ default: module.CommandPalette })));
 const PreviewPanel = lazy(() => import('./components/preview/PreviewPanel').then((module) => ({ default: module.PreviewPanel })));
 const ActivityDashboard = lazy(() => import('./components/activity/ActivityDashboard').then((module) => ({ default: module.ActivityDashboard })));
+const MissionsView = lazy(() => import('./components/missions/MissionsView').then((module) => ({ default: module.MissionsView })));
 
 // Heavy, stateful views are kept mounted once first visited and toggled with CSS
 // visibility, so switching back is instant (no remount, no xterm dispose/replay).
@@ -46,6 +49,7 @@ function App() {
   const activeView = useProjectStore((state) => state.activeView);
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);
   const currentWorkspaceId = useProjectStore((state) => state.currentWorkspaceId);
+  const workspaceConfig = useProjectStore((state) => state.workspaceConfig);
   const refreshWorkspace = useProjectStore((state) => state.refreshWorkspace);
   const loadTasks = useKanbanStore((state) => state.loadTasks);
   const loadSwarmState = useSwarmStore((state) => state.loadSwarmState);
@@ -188,6 +192,11 @@ function App() {
       else if (file === 'swarm') void useSwarmStore.getState().loadSwarmState(projectPath, true);
       else if (file === 'sessions') void useAgentSessionStore.getState().loadSessions(projectPath, true);
       else if (file === 'memory') void useMemoryStore.getState().loadGraph(projectPath);
+      else if (file === 'missions') {
+        void useMissionStore.getState().loadMissions(projectPath, true);
+        const missionId = useMissionStore.getState().activeId;
+        if (missionId) void useMissionStore.getState().openMission(projectPath, missionId);
+      }
     }).then((fn) => {
       unlisten = fn;
     });
@@ -248,8 +257,9 @@ function App() {
         const index = parseInt(e.key, 10) - 1;
         const view = ROOM_ORDER[index];
         if (view) {
-          const requiresProject = ['terminals', 'kanban', 'memory', 'swarm', 'review', 'editor'].includes(view);
-          if (!requiresProject || currentProjectPath) {
+          const requiresProject = ['terminals', 'kanban', 'memory', 'swarm', 'missions', 'review', 'editor'].includes(view);
+          const enabled = view !== 'missions' || isMissionsEnabled(useProjectStore.getState().workspaceConfig);
+          if ((!requiresProject || currentProjectPath) && enabled) {
             e.preventDefault();
             useProjectStore.getState().setActiveView(view);
           }
@@ -309,6 +319,8 @@ function App() {
         return <ProjectSettings />;
       case 'activity':
         return <ActivityDashboard />;
+      case 'missions':
+        return isMissionsEnabled(workspaceConfig) ? <MissionsView /> : <ProjectDashboard />;
       case 'dashboard':
       default:
         return <ProjectDashboard />;

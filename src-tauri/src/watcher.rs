@@ -39,7 +39,7 @@ impl WatcherState {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FileChangedPayload {
-    /// Which store to reload: "tasks" | "swarm" | "sessions" | "memory".
+    /// Which store to reload: "tasks" | "swarm" | "sessions" | "memory" | "missions".
     file: String,
     project_path: String,
 }
@@ -62,6 +62,9 @@ fn tracked_kind(path: &Path) -> Option<&'static str> {
     let file_name = norm.rsplit('/').next().unwrap_or("");
     if norm.contains("/.saple/memory/") && !file_name.contains(".tmp-") {
         return Some("memory");
+    }
+    if file_name == "state.json" && norm.contains("/.saple/missions/") {
+        return Some("missions");
     }
     TRACKED
         .iter()
@@ -275,6 +278,11 @@ mod tests {
             tracked_kind(Path::new(r"C:\proj\.saple\memory\general\x.md")),
             Some("memory")
         );
+        assert_eq!(
+            tracked_kind(Path::new("/home/u/proj/.saple/missions/msn_abc/state.json")),
+            Some("missions")
+        );
+        assert_eq!(tracked_kind(Path::new("/home/u/proj/.saple/state.json")), None);
         // ...but our own write temp files inside it do not.
         assert_eq!(
             tracked_kind(Path::new("/home/u/proj/.saple/memory/.note.md.tmp-123-4")),

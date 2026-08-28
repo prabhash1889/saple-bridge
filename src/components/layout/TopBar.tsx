@@ -10,6 +10,7 @@ const roomMeta: Record<ViewType, { title: string; context: string }> = {
   kanban: { title: 'Tasks', context: 'Plan, launch, and track agent-ready work.' },
   memory: { title: 'Memory', context: 'Local markdown graph and MCP-ready project knowledge.' },
   swarm: { title: 'Swarm Room', context: 'Coordinate multi-agent missions and handoffs.' },
+  missions: { title: 'Missions', context: 'Plan multi-agent missions with durable context.' },
   review: { title: 'Review Room', context: 'Human gate for diffs, test output, notes, and decisions.' },
   activity: { title: 'Agent Activity', context: 'Per-agent session history, durations, and outcomes.' },
   editor: { title: 'Files', context: 'Inspect, read, edit workspace files, or open them in external editors.' },

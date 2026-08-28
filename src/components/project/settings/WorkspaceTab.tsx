@@ -20,6 +20,9 @@ export const WorkspaceTab: React.FC = () => {
   // UI; 0 disables alerting. Alert-only: Bridge never stops a slow agent on its own.
   const [hungAlertMinutes, setHungAlertMinutes] = useState(20);
   const [enableEditMode, setEnableEditMode] = useState(true);
+  // Missions orchestration room flag (default off). Persists to .saple/config.json and gates
+  // the room and its commands.
+  const [missionsEnabled, setMissionsEnabled] = useState(false);
   const [verificationPresets, setVerificationPresets] = useState('');
   const [wsSaveStatus, setWsSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -72,6 +75,7 @@ export const WorkspaceTab: React.FC = () => {
       setDefaultProvider(workspaceConfig.defaultProvider);
       setMaxAgents(workspaceConfig.maxParallelAgents);
       setEnableEditMode(workspaceConfig.enableEditMode ?? true);
+      setMissionsEnabled(workspaceConfig.missionsEnabled ?? false);
       setVerificationPresets((workspaceConfig.verificationPresets ?? []).join('\n'));
     }
   }, [workspaceConfig]);
@@ -90,6 +94,7 @@ export const WorkspaceTab: React.FC = () => {
       defaultProvider,
       maxParallelAgents: maxAgents,
       enableEditMode,
+      missionsEnabled,
       verificationPresets: verificationPresets
         .split('\n')
         .map((p) => p.trim())
@@ -224,6 +229,20 @@ export const WorkspaceTab: React.FC = () => {
             <label htmlFor="enableEditMode" className="settings-checkbox-label">
               Enable File Editing (allows modifying files via file browser)
             </label>
+          </div>
+          <div className="settings-checkbox-row input-group checkbox-group">
+            <input
+              type="checkbox"
+              id="missionsEnabled"
+              checked={missionsEnabled}
+              onChange={e => setMissionsEnabled(e.target.checked)} className="settings-checkbox"
+            />
+            <label htmlFor="missionsEnabled" className="settings-checkbox-label">
+              Enable Missions (multi-agent orchestration room)
+            </label>
+            <span className="input-hint">
+              Shows the Missions room and enables mission planning commands for this workspace.
+            </span>
           </div>
           <div className="form-actions">
             <button onClick={handleWsSave} className="primary">
