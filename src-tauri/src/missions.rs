@@ -963,30 +963,16 @@ pub(crate) fn mission_list_inner(project_path: &str) -> Result<Vec<MissionSummar
         if validate_mission_id(&id).is_err() {
             continue;
         }
-        match load_state(project_path, &id)? {
-            LoadedState::Ok(state) => summaries.push(summary_of(&state)),
-            LoadedState::Missing => {
-                // A crash can leave mission.md without state.json. Keep the mission visible so
-                // the user can open it; mission_read then rebuilds engine truth from the doc.
-                let doc_path = doc_file_path(project_path, &id)?;
-                if let Ok(doc) = fs::read_to_string(doc_path) {
-                    if let Ok(parsed) = parse_mission_doc(&doc) {
-                        summaries.push(MissionSummary {
-                            id,
-                            title: parsed.spec.title,
-                            status: "draft".to_string(),
-                            task_total: 0,
-                            task_completed: 0,
-                            updated_at: String::new(),
-                        });
-                    }
-                }
-            }
-            LoadedState::Corrupt { .. } => {
+        // Reuse the read path so a valid hand-edited frontmatter change is reconciled before
+        // its summary is returned. This also repairs a state.json lost during creation.
+        match mission_read_inner(project_path, &id)? {
+            MissionReadResult::Loaded { state, .. } => summaries.push(summary_of(&state)),
+            MissionReadResult::Corrupt { .. } => {
                 // Stay honest: a corrupt mission still shows up (status `corrupt`) instead
                 // of silently disappearing from the room.
                 summaries.push(corrupt_summary(id));
             }
+            MissionReadResult::Missing | MissionReadResult::Locked => {}
         }
     }
     summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
@@ -1936,6 +1922,25 @@ mod tests {
                 assert!(warnings.is_empty());
                 assert!(state.events.iter().any(|e| e.kind == "doc_reconciled"));
             }
+            other => panic!("expected loaded, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn list_reconciles_hand_edited_frontmatter() {
+        let p = TempProject::new();
+        let m = create_mission(&p, "Original");
+        fs::write(
+            p.mission_dir(&m.id).join("mission.md"),
+            "---\ntitle: Renamed\nobjective: changed\n---\n\nbody\n",
+        )
+        .unwrap();
+
+        let summaries = mission_list_inner(&p.project()).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].title, "Renamed");
+        match mission_read_inner(&p.project(), &m.id).unwrap() {
+            MissionReadResult::Loaded { state, .. } => assert_eq!(state.revision, 2),
             other => panic!("expected loaded, got {:?}", other),
         }
     }

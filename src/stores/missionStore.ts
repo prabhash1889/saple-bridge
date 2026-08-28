@@ -107,10 +107,14 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   openMission: async (projectPath, id) => {
     const requestedProjectPath = get().requestedProjectPath;
     if (requestedProjectPath && requestedProjectPath !== projectPath) return;
+    const current = get();
+    const sameMission = current.activeId === id && current.activeProjectPath === projectPath;
     const token = ++activeSeq;
     set({
       activeId: id,
       activeProjectPath: projectPath,
+      activeState: sameMission ? current.activeState : null,
+      activeDoc: sameMission ? current.activeDoc : null,
       activeLoading: true,
       activeWarnings: [],
       error: null,
@@ -206,7 +210,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
   },
 
   saveDoc: async (projectPath, id, body, expectedRevision) => {
-    const activeToken = activeSeq;
+    const activeToken = ++activeSeq;
     const mutationToken = ++mutationSeq;
     try {
       const state = await invoke<MissionState>('mission_update_doc', {
@@ -223,7 +227,13 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         current.activeProjectPath !== projectPath
       )
         return;
-      set({ activeState: state, activeDoc: body, activeWarnings: [], error: null });
+      set({
+        activeState: state,
+        activeDoc: body,
+        activeWarnings: [],
+        activeLoading: false,
+        error: null,
+      });
       await get().loadMissions(projectPath, true);
     } catch (err) {
       if (
@@ -232,14 +242,14 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         get().activeId === id &&
         get().activeProjectPath === projectPath
       ) {
-        set({ error: toErrorMessage(err) });
+        set({ activeLoading: false, error: toErrorMessage(err) });
       }
       throw err;
     }
   },
 
   saveTasks: async (projectPath, id, expectedRevision, tasks) => {
-    const activeToken = activeSeq;
+    const activeToken = ++activeSeq;
     const mutationToken = ++mutationSeq;
     try {
       const state = await invoke<MissionState>('mission_set_tasks', {
@@ -256,7 +266,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         current.activeProjectPath !== projectPath
       )
         return;
-      set({ activeState: state, error: null });
+      set({ activeState: state, activeLoading: false, error: null });
       await get().loadMissions(projectPath, true);
     } catch (err) {
       if (
@@ -265,7 +275,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         get().activeId === id &&
         get().activeProjectPath === projectPath
       ) {
-        set({ error: toErrorMessage(err) });
+        set({ activeLoading: false, error: toErrorMessage(err) });
       }
       throw err;
     }
@@ -273,7 +283,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
 
   runCommand: async (projectPath, id, cmd) => {
     const expectedRevision = get().activeState?.revision ?? 0;
-    const activeToken = activeSeq;
+    const activeToken = ++activeSeq;
     const mutationToken = ++mutationSeq;
     try {
       const state = await invoke<MissionState>('mission_command', {
@@ -291,7 +301,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         current.activeProjectPath !== projectPath
       )
         return;
-      set({ activeState: state, error: null });
+      set({ activeState: state, activeLoading: false, error: null });
       await get().loadMissions(projectPath, true);
     } catch (err) {
       if (
@@ -300,7 +310,7 @@ export const useMissionStore = create<MissionStoreState>((set, get) => ({
         get().activeId === id &&
         get().activeProjectPath === projectPath
       ) {
-        set({ error: toErrorMessage(err) });
+        set({ activeLoading: false, error: toErrorMessage(err) });
       }
       throw err;
     }

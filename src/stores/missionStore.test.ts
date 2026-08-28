@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { useMissionStore } from './missionStore';
-import type { MissionState, MissionSummary } from '../types/mission';
+import type { MissionReadResult, MissionState, MissionSummary } from '../types/mission';
 
 const PROJECT = 'C:/proj';
 
@@ -119,6 +119,74 @@ describe('missionStore projection (M1)', () => {
     expect(state.activeWarnings).toHaveLength(1);
     // Projection-only rule: the store keeps what the engine reported, verbatim.
     expect(state.activeState?.tasks[1].deps).toEqual(['task_1']);
+  });
+
+  it('clears the previous mission while a different mission is loading', async () => {
+    let resolveRead: ((result: MissionReadResult) => void) | undefined;
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'mission_read') {
+        return new Promise<MissionReadResult>((resolve) => {
+          resolveRead = resolve;
+        });
+      }
+      throw new Error(`unexpected command ${String(args[0])}`);
+    });
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: engineState,
+      activeDoc: 'mission a',
+    });
+
+    const pending = useMissionStore.getState().openMission(PROJECT, 'msn_b');
+    expect(useMissionStore.getState().activeId).toBe('msn_b');
+    expect(useMissionStore.getState().activeState).toBeNull();
+    expect(useMissionStore.getState().activeDoc).toBeNull();
+
+    resolveRead?.({ status: 'missing' });
+    await pending;
+  });
+
+  it('does not let a read started before a save overwrite the saved projection', async () => {
+    let resolveRead: ((result: MissionReadResult) => void) | undefined;
+    let resolveSave: ((state: MissionState) => void) | undefined;
+    invokeMock.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'mission_read') {
+        return new Promise<MissionReadResult>((resolve) => {
+          resolveRead = resolve;
+        });
+      }
+      if (cmd === 'mission_update_doc') {
+        return new Promise<MissionState>((resolve) => {
+          resolveSave = resolve;
+        });
+      }
+      if (cmd === 'mission_list') return [summaryOf()];
+      throw new Error(`unexpected command ${cmd}`);
+    });
+    useMissionStore.setState({
+      activeId: 'msn_a',
+      activeProjectPath: PROJECT,
+      activeState: engineState,
+      activeDoc: 'old doc',
+    });
+
+    const pendingRead = useMissionStore.getState().openMission(PROJECT, 'msn_a');
+    const pendingSave = useMissionStore.getState().saveDoc(PROJECT, 'msn_a', 'new doc', 3);
+    resolveSave?.({ ...engineState, revision: 4 });
+    await pendingSave;
+    resolveRead?.({
+      status: 'loaded',
+      state: engineState,
+      doc: 'old doc',
+      warnings: [],
+    });
+    await pendingRead;
+
+    expect(useMissionStore.getState().activeState?.revision).toBe(4);
+    expect(useMissionStore.getState().activeDoc).toBe('new doc');
+    expect(useMissionStore.getState().activeLoading).toBe(false);
   });
 
   it('surfaces corrupt reads as an error instead of fabricating state', async () => {
