@@ -2,8 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Database,
+  Eye,
   Flag,
   FolderOpen,
+  GitBranch,
+  GitMerge,
   HelpCircle,
   ListChecks,
   Mail,
@@ -23,9 +26,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../stores/projectStore';
 import { useMissionStore } from '../../stores/missionStore';
 import { useNotificationStore } from '../../stores/notificationStore';
-import type { MissionState, MissionSummary, TaskKind, TaskSpecInput } from '../../types/mission';
+import type {
+  GitDiffSummary,
+  MissionState,
+  MissionSummary,
+  TaskKind,
+  TaskSpecInput,
+  WorktreeInfo,
+} from '../../types/mission';
 
-// Missions room projection (Phase M1/M2/M3). React never writes mission state directly: every
+// Missions room projection (Phase M1/M2/M3/M4/M5). React never writes mission state directly: every
 // mutation goes through the engine commands in src-tauri/src/missions.rs, and this store
 // only folds command results back into memory.
 
@@ -35,6 +45,7 @@ interface TaskDraft {
   kind: TaskKind;
   spec: string;
   deps: string[];
+  allowStaleBase?: boolean;
 }
 
 const TASK_KINDS: TaskKind[] = ['implement', 'review', 'verify'];
@@ -69,6 +80,7 @@ const draftsFromTasks = (tasks: MissionState['tasks']): TaskDraft[] =>
     title: task.title,
     kind: task.kind,
     spec: task.spec,
+    allowStaleBase: task.allowStaleBase ?? false,
     deps: task.deps
       .map((depId) => {
         const idx = tasks.findIndex((t) => t.id === depId);
@@ -100,6 +112,13 @@ export const MissionsView: React.FC = () => {
   const replyAsk = useMissionStore((state) => state.reply);
   const sendMessage = useMissionStore((state) => state.sendMessage);
 
+  // Phase M5 Worktree Hooks
+  const worktreesMap = useMissionStore((state) => state.worktrees);
+  const loadWorktrees = useMissionStore((state) => state.loadWorktrees);
+  const diffWorktree = useMissionStore((state) => state.diffWorktree);
+  const mergeWorktree = useMissionStore((state) => state.mergeWorktree);
+  const removeWorktree = useMissionStore((state) => state.removeWorktree);
+
   // Doc editor buffer. Kept local so typing never touches the engine until Save.
   const [docBuffer, setDocBuffer] = useState('');
   const [docDirty, setDocDirty] = useState(false);
@@ -110,10 +129,18 @@ export const MissionsView: React.FC = () => {
   const [selectedProviders, setSelectedProviders] = useState<Record<string, string>>({});
   const [replyBuffers, setReplyBuffers] = useState<Record<string, string>>({});
   const [composeBody, setComposeBody] = useState('');
+  const [activeDiffModal, setActiveDiffModal] = useState<{ branch: string; diff: GitDiffSummary } | null>(null);
+  const [loadingDiff, setLoadingDiff] = useState<string | null>(null);
+  const [mergingWorktree, setMergingWorktree] = useState<string | null>(null);
   const docBufferRef = useRef(docBuffer);
   const taskDraftsRef = useRef(taskDrafts);
   docBufferRef.current = docBuffer;
   taskDraftsRef.current = taskDrafts;
+
+  const activeWorktrees = useMemo(() => {
+    if (!activeId || !worktreesMap) return [];
+    return worktreesMap[activeId] || [];
+  }, [activeId, worktreesMap]);
 
   const pendingAsks = useMemo(() => {
     if (!activeState?.messages) return [];
@@ -121,12 +148,16 @@ export const MissionsView: React.FC = () => {
   }, [activeState?.messages]);
 
   useEffect(() => {
-    void loadAdapters();
+    if (loadAdapters) void loadAdapters();
   }, [loadAdapters]);
 
   useEffect(() => {
-    if (currentProjectPath) void loadMissions(currentProjectPath);
+    if (currentProjectPath && loadMissions) void loadMissions(currentProjectPath);
   }, [currentProjectPath, loadMissions]);
+
+  useEffect(() => {
+    if (currentProjectPath && activeId && loadWorktrees) void loadWorktrees(currentProjectPath, activeId);
+  }, [currentProjectPath, activeId, loadWorktrees]);
 
   // Focus polling / refresh
   useEffect(() => {
@@ -220,6 +251,7 @@ export const MissionsView: React.FC = () => {
       spec: draft.spec,
       deps: draft.deps.filter((dep) => dep !== draft.key && taskDrafts.some((d) => d.key === dep)),
       fanout: 1,
+      allowStaleBase: draft.allowStaleBase ?? false,
     }));
     try {
       await useMissionStore
@@ -236,6 +268,46 @@ export const MissionsView: React.FC = () => {
       }
     } catch {
       // Validation errors surface in the store banner.
+    }
+  };
+
+  const handleViewDiff = async (wt: WorktreeInfo) => {
+    if (!currentProjectPath) return;
+    setLoadingDiff(wt.worktreePath);
+    try {
+      const summary = await diffWorktree(currentProjectPath, wt.worktreePath);
+      setActiveDiffModal({ branch: wt.branch, diff: summary });
+    } catch (e) {
+      useNotificationStore.getState().error(`Failed to load diff: ${e}`);
+    } finally {
+      setLoadingDiff(null);
+    }
+  };
+
+  const handleMergeWorktree = async (wt: WorktreeInfo, strategy: 'merge' | 'discard') => {
+    if (!currentProjectPath) return;
+    setMergingWorktree(wt.worktreePath);
+    try {
+      const res = await mergeWorktree(currentProjectPath, wt.worktreePath, strategy);
+      if (res.ok) {
+        useNotificationStore.getState().success(res.message);
+      } else {
+        useNotificationStore.getState().error(res.message);
+      }
+    } catch (e) {
+      useNotificationStore.getState().error(`Merge failed: ${e}`);
+    } finally {
+      setMergingWorktree(null);
+    }
+  };
+
+  const handleRemoveWorktree = async (wt: WorktreeInfo) => {
+    if (!currentProjectPath) return;
+    try {
+      await removeWorktree(currentProjectPath, wt.worktreePath, !wt.isClean);
+      useNotificationStore.getState().success(`Worktree for '${wt.branch}' removed.`);
+    } catch (e) {
+      useNotificationStore.getState().error(`Failed to remove worktree: ${e}`);
     }
   };
 
@@ -536,6 +608,7 @@ export const MissionsView: React.FC = () => {
                       <th>Title</th>
                       <th>Kind</th>
                       <th>Instructions</th>
+                      <th title="Allow dispatch even when base branch is >20 commits behind">Allow Stale Base</th>
                       <th>Depends on</th>
                       <th>Status & Dispatch</th>
                       <th aria-label="Remove" />
@@ -584,6 +657,15 @@ export const MissionsView: React.FC = () => {
                               placeholder="Full instructions handed to the worker"
                               aria-label={`Task ${index + 1} instructions`}
                             />
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <label style={{ fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, cursor: 'pointer' }} title="Allow dispatch even if base branch is >20 commits behind">
+                              <input
+                                type="checkbox"
+                                checked={draft.allowStaleBase ?? false}
+                                onChange={(e) => updateDraft(index, { allowStaleBase: e.target.checked })}
+                              />
+                            </label>
                           </td>
                           <td>
                             <div className="missions-deps-cell">
@@ -721,6 +803,120 @@ export const MissionsView: React.FC = () => {
                     ))}
                   </tbody>
                 </table>
+              </section>
+            )}
+
+            {(activeWorktrees.length > 0 || activeState.spec.worktreeMode !== 'shared') && (
+              <section className="missions-section">
+                <div className="missions-section-heading">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <GitBranch size={13} />
+                    <span>
+                      Git Worktrees ({activeWorktrees.length})
+                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginLeft: 6 }}>
+                        mode: {activeState.spec.worktreeMode}
+                      </span>
+                    </span>
+                  </span>
+                  <div className="missions-section-actions">
+                    <button
+                      onClick={() =>
+                        currentProjectPath &&
+                        activeId &&
+                        void loadWorktrees(currentProjectPath, activeId)
+                      }
+                      title="Refresh worktrees"
+                    >
+                      <RefreshCw size={13} />
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+                </div>
+                {activeWorktrees.length === 0 ? (
+                  <div className="missions-empty-tasks">
+                    No active git worktrees currently allocated for this mission.
+                  </div>
+                ) : (
+                  <table className="missions-spec-table">
+                    <thead>
+                      <tr>
+                        <th>Branch</th>
+                        <th>Scope</th>
+                        <th>Status</th>
+                        <th>Ahead / Behind</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeWorktrees.map((wt) => {
+                        const associatedTask = wt.taskId
+                          ? activeState.tasks.find((t) => t.id === wt.taskId)
+                          : null;
+                        const isMerging = mergingWorktree === wt.worktreePath;
+                        const isLoadingThisDiff = loadingDiff === wt.worktreePath;
+
+                        return (
+                          <tr key={wt.worktreePath}>
+                            <td>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontWeight: 600 }}>
+                                {wt.branch}
+                              </span>
+                            </td>
+                            <td>
+                              {associatedTask ? (
+                                <span>{associatedTask.title}</span>
+                              ) : wt.taskId ? (
+                                <span>Task {wt.taskId}</span>
+                              ) : (
+                                <span>Mission Root</span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`mission-status-badge ${wt.isClean ? 'idle' : 'running'}`}>
+                                {wt.isClean ? 'clean' : 'modified'}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: 'var(--text-xs)' }}>
+                                +{wt.ahead} / -{wt.behind}
+                              </span>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <button
+                                  className="missions-dispatch-btn"
+                                  disabled={isLoadingThisDiff}
+                                  onClick={() => handleViewDiff(wt)}
+                                  title="Inspect diff relative to main"
+                                >
+                                  <Eye size={10} />
+                                  <span>{isLoadingThisDiff ? 'Loading...' : 'Diff'}</span>
+                                </button>
+                                <button
+                                  className="missions-dispatch-btn"
+                                  disabled={isMerging}
+                                  onClick={() => handleMergeWorktree(wt, 'merge')}
+                                  title="Merge worktree into main"
+                                >
+                                  <GitMerge size={10} />
+                                  <span>{isMerging ? 'Merging...' : 'Merge'}</span>
+                                </button>
+                                <button
+                                  className="missions-dispatch-btn"
+                                  onClick={() => handleRemoveWorktree(wt)}
+                                  title="Remove worktree"
+                                >
+                                  <Trash2 size={10} />
+                                  <span>Prune</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </section>
             )}
 
@@ -978,6 +1174,113 @@ export const MissionsView: React.FC = () => {
           </>
         )}
       </div>
+
+      {activeDiffModal && (
+        <div
+          className="missions-modal-backdrop"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setActiveDiffModal(null)}
+        >
+          <div
+            className="missions-modal-content"
+            style={{
+              background: 'var(--bg-primary, #1e1e1e)',
+              border: '1px solid var(--border, #333)',
+              borderRadius: '8px',
+              width: '80%',
+              maxWidth: '900px',
+              maxHeight: '80vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                padding: '12px 16px',
+                borderBottom: '1px solid var(--border, #333)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <GitBranch size={16} />
+                <strong>Diff: {activeDiffModal.branch}</strong>
+                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                  (+{activeDiffModal.diff.totalInsertions} / -{activeDiffModal.diff.totalDeletions} in{' '}
+                  {activeDiffModal.diff.files.length} files)
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveDiffModal(null)}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'inherit' }}
+                aria-label="Close diff modal"
+              >
+                <XCircle size={16} />
+              </button>
+            </div>
+            <div
+              style={{
+                padding: '16px',
+                overflowY: 'auto',
+                flex: 1,
+                fontFamily: 'var(--font-mono, monospace)',
+                fontSize: 'var(--text-xs)',
+              }}
+            >
+              {activeDiffModal.diff.files.length === 0 && !activeDiffModal.diff.fullDiff ? (
+                <div style={{ color: 'var(--text-muted)' }}>
+                  No differences found relative to upstream base.
+                </div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <strong>Changed Files:</strong>
+                    <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
+                      {activeDiffModal.diff.files.map((f) => (
+                        <li key={f.path} style={{ marginBottom: 4 }}>
+                          <code>{f.path}</code> ({f.status}) {f.insertions ? `+${f.insertions}` : ''}{' '}
+                          {f.deletions ? `-${f.deletions}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  {activeDiffModal.diff.fullDiff && (
+                    <div>
+                      <strong>Patch:</strong>
+                      <pre
+                        style={{
+                          marginTop: 6,
+                          padding: 12,
+                          background: 'var(--bg-secondary, #121212)',
+                          borderRadius: 4,
+                          overflowX: 'auto',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {activeDiffModal.diff.fullDiff}
+                      </pre>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
