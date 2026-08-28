@@ -184,6 +184,7 @@ mod tests {
                 spec: "Spec".to_string(),
                 deps: vec![],
                 fanout: 1,
+                allow_stale_base: false,
                 status: "dispatched".to_string(),
                 result: None,
                 gate_id: None,

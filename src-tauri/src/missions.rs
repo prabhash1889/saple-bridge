@@ -32,6 +32,7 @@ pub mod preamble;
 pub mod scheduler;
 pub mod settlement;
 pub mod supervisor;
+pub mod worktrees;
 
 /// Root folder for all missions inside a project's `.saple` directory.
 pub const MISSIONS_DIR: &str = ".saple/missions";
@@ -127,6 +128,8 @@ pub struct MissionTask {
     pub deps: Vec<String>,
     /// Best-of-N speculative fanout (M6). Validated 1..=3 here.
     pub fanout: u32,
+    #[serde(default)]
+    pub allow_stale_base: bool,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
@@ -233,6 +236,8 @@ pub struct TaskDispatchOutput {
     pub pane_id: String,
     pub prompt_file: String,
     pub capability_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +336,8 @@ pub struct TaskSpecInput {
     pub deps: Vec<String>,
     #[serde(default = "default_fanout")]
     pub fanout: u32,
+    #[serde(default)]
+    pub allow_stale_base: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1407,6 +1414,7 @@ pub(crate) fn mission_set_tasks_inner(
                     .map(|dep| key_to_id[dep].clone())
                     .collect(),
                 fanout: input.fanout,
+                allow_stale_base: input.allow_stale_base,
                 status: if input.deps.is_empty() {
                     "ready"
                 } else {
@@ -1632,6 +1640,7 @@ pub(crate) fn mission_dispatch_task_inner(
             pane_id: prepared.pane_id,
             prompt_file: prepared.prompt_file,
             capability_token: prepared.capability_token,
+            worktree_path: prepared.worktree_path,
         })
     })?
 }
@@ -2428,6 +2437,110 @@ pub async fn mission_inbox_ack(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub async fn mission_worktree_create(
+    project_path: String,
+    mission_id: String,
+    task_id: Option<String>,
+    base_ref: Option<String>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<worktrees::WorktreeInfo, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    let reg = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        worktrees::mission_worktree_create_inner(
+            &reg,
+            &project_path,
+            &mission_id,
+            task_id.as_deref(),
+            base_ref.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_worktree_diff(
+    project_path: String,
+    worktree_path: String,
+    base_ref: Option<String>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<worktrees::GitDiffSummary, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        worktrees::mission_worktree_diff_inner(&project_path, &worktree_path, base_ref.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_worktree_merge(
+    project_path: String,
+    worktree_path: String,
+    strategy: String,
+    target_branch: Option<String>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<worktrees::WorktreeMergeResult, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        worktrees::mission_worktree_merge_inner(
+            &project_path,
+            &worktree_path,
+            &strategy,
+            target_branch.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_worktree_remove(
+    project_path: String,
+    worktree_path: String,
+    force: bool,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<(), String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    let reg = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        worktrees::mission_worktree_remove_inner(&reg, &project_path, &worktree_path, force)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mission_worktree_list(
+    project_path: String,
+    mission_id: Option<String>,
+    registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
+) -> Result<Vec<worktrees::WorktreeInfo>, String> {
+    registry
+        .ensure_inside_approved_root(&project_path)
+        .map_err(|e| e.to_string())?;
+    ensure_missions_enabled(&project_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        worktrees::mission_worktree_list_inner(&project_path, mission_id.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2661,6 +2774,7 @@ mod tests {
                 spec: String::new(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -2929,6 +3043,7 @@ mod tests {
             spec: format!("Instructions for {}", key),
             deps: deps.iter().map(|d| d.to_string()).collect(),
             fanout: 1,
+            allow_stale_base: false,
         }
     }
 
@@ -3221,6 +3336,7 @@ mod tests {
                     spec: "Write authentication service".to_string(),
                     deps: Vec::new(),
                     fanout: 1,
+                    allow_stale_base: false,
                 },
                 TaskSpecInput {
                     key: Some("t2".to_string()),
@@ -3229,6 +3345,7 @@ mod tests {
                     spec: "Run auth tests".to_string(),
                     deps: vec!["t1".to_string()],
                     fanout: 1,
+                    allow_stale_base: false,
                 },
             ],
         )
@@ -3309,6 +3426,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -3342,6 +3460,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -3384,6 +3503,7 @@ mod tests {
                     spec: "Step 1".to_string(),
                     deps: Vec::new(),
                     fanout: 1,
+                    allow_stale_base: false,
                 },
                 TaskSpecInput {
                     key: Some("t2".to_string()),
@@ -3392,6 +3512,7 @@ mod tests {
                     spec: "Step 2".to_string(),
                     deps: vec!["t1".to_string()],
                     fanout: 1,
+                    allow_stale_base: false,
                 },
             ],
         )
@@ -3459,6 +3580,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -3512,6 +3634,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -3552,6 +3675,7 @@ mod tests {
                     spec: "Do something".to_string(),
                     deps: Vec::new(),
                     fanout: 1,
+                    allow_stale_base: false,
                 },
                 TaskSpecInput {
                     key: Some("t2".to_string()),
@@ -3560,6 +3684,7 @@ mod tests {
                     spec: "Do second thing".to_string(),
                     deps: vec!["t1".to_string()],
                     fanout: 1,
+                    allow_stale_base: false,
                 },
             ],
         )
@@ -3609,6 +3734,7 @@ mod tests {
                 spec: "Run schema migration".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -3664,6 +3790,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();
@@ -3730,6 +3857,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: Vec::new(),
                 fanout: 1,
+                allow_stale_base: false,
             }],
         )
         .unwrap();

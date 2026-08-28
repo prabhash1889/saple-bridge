@@ -21,7 +21,7 @@ const MAX_UNTRACKED_BYTES: u64 = 1_000_000;
 const MAX_UNTRACKED_ENRICHED_FILES: usize = 50;
 const MAX_UNTRACKED_ENRICHED_TOTAL_BYTES: u64 = 4_000_000;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFileStatus {
     pub path: String,

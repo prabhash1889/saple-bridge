@@ -115,7 +115,7 @@ pub fn prepare_dispatch_launch(
         .position(|t| t.id == task_id)
         .ok_or_else(|| format!("Task '{}' not found in mission '{}'", task_id, mission_id))?;
 
-    let (task_title, task_kind, task_spec, task_deps) = {
+    let (task_title, task_kind, task_spec, task_deps, task_allow_stale_base) = {
         let task = &state.tasks[task_idx];
         if task.status != "ready" && task.status != "pending" && task.status != "failed" {
             return Err(format!(
@@ -128,7 +128,43 @@ pub fn prepare_dispatch_launch(
             task.kind.clone(),
             task.spec.clone(),
             task.deps.clone(),
+            task.allow_stale_base,
         )
+    };
+
+    // Determine worktree path & branch if worktree isolation is active
+    let (worktree_path_str, worktree_branch_str) = match state.spec.worktree_mode.as_str() {
+        "per-task" => {
+            let wt_dir = super::worktrees::get_worktree_dir(project_path, mission_id, Some(task_id));
+            let wt_str = wt_dir.to_string_lossy().to_string();
+            let branch = super::worktrees::get_worktree_branch(mission_id, Some(task_id));
+            // Check stale base
+            if let Ok(Some(behind)) = super::worktrees::check_stale_base(project_path, &wt_str, None, super::worktrees::STALE_BASE_THRESHOLD) {
+                if !task_allow_stale_base {
+                    return Err(format!(
+                        "stale_base_refused: Task worktree is {} commits behind upstream base. Dispatch refused without burning retry budget.",
+                        behind
+                    ));
+                }
+            }
+            (Some(wt_str), Some(branch))
+        }
+        "per-mission" => {
+            let wt_dir = super::worktrees::get_worktree_dir(project_path, mission_id, None);
+            let wt_str = wt_dir.to_string_lossy().to_string();
+            let branch = super::worktrees::get_worktree_branch(mission_id, None);
+            // Check stale base
+            if let Ok(Some(behind)) = super::worktrees::check_stale_base(project_path, &wt_str, None, super::worktrees::STALE_BASE_THRESHOLD) {
+                if !task_allow_stale_base {
+                    return Err(format!(
+                        "stale_base_refused: Mission worktree is {} commits behind upstream base. Dispatch refused without burning retry budget.",
+                        behind
+                    ));
+                }
+            }
+            (Some(wt_str), Some(branch))
+        }
+        _ => (None, None),
     };
 
     // Determine if this is a retry of a previous dispatch
@@ -160,7 +196,7 @@ pub fn prepare_dispatch_launch(
     let effective_model = model.unwrap_or_else(|| "default".to_string());
 
     // Check session pool for an idle session to reuse
-    let reused_session_id = find_and_retain_idle_session(state, provider, &effective_model, None);
+    let reused_session_id = find_and_retain_idle_session(state, provider, &effective_model, worktree_path_str.as_deref());
 
     let ad = crate::providers::adapter(provider);
     let supports_mcp = ad.map(|a| a.supports_mcp).unwrap_or(false);
@@ -205,8 +241,8 @@ pub fn prepare_dispatch_launch(
         attempt_id: attempt_id.clone(),
         capability_token: capability_token.clone(),
         supports_mcp,
-        worktree_branch: None,
-        worktree_path: None,
+        worktree_branch: worktree_branch_str,
+        worktree_path: worktree_path_str.as_ref().map(std::path::PathBuf::from),
         task_title,
         task_kind,
         task_spec,
@@ -233,7 +269,7 @@ pub fn prepare_dispatch_launch(
         retry_of,
         provider: provider.to_string(),
         model: effective_model.clone(),
-        worktree_path: None,
+        worktree_path: worktree_path_str.clone(),
         pane_id: Some(pane_id.clone()),
         capability_hash,
         status: "starting".to_string(),
@@ -263,7 +299,7 @@ pub fn prepare_dispatch_launch(
         provider: provider.to_string(),
         model: effective_model,
         reused_session_id,
-        worktree_path: None,
+        worktree_path: worktree_path_str,
     })
 }
 
@@ -464,6 +500,7 @@ mod tests {
                 spec: "Do something".to_string(),
                 deps: vec![],
                 fanout: 1,
+                allow_stale_base: false,
                 status: "ready".to_string(),
                 result: None,
                 gate_id: None,

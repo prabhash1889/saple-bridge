@@ -115,6 +115,11 @@ export const IPC_COMMANDS = [
   'mission_send_message',
   'mission_inbox_fetch',
   'mission_inbox_ack',
+  'mission_worktree_create',
+  'mission_worktree_diff',
+  'mission_worktree_merge',
+  'mission_worktree_remove',
+  'mission_worktree_list',
   // filesystem helpers
   'list_project_files',
   'read_text_file',
