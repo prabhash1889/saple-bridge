@@ -1,0 +1,4 @@
+{"type":"thread.created","thread_id":"thread_xyz789"}
+{"type":"item.created","item":{"id":"item_1","type":"message","role":"user"}}
+{"type":"item.created","item":{"id":"item_2","type":"message","role":"assistant"}}
+{"type":"turn.finished","cost":0.015,"session_id":"thread_xyz789","result":"Token refresh logic implemented."}

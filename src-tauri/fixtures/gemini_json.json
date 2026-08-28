@@ -1,0 +1,10 @@
+{
+  "response": "Added OAuth token refresh handling in auth controller.",
+  "session_id": "gemini_sess_789",
+  "stats": {
+    "total_cost": 0.005,
+    "input_tokens": 1200,
+    "output_tokens": 350
+  },
+  "error": null
+}

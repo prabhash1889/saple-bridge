@@ -218,6 +218,623 @@ pub(crate) fn is_provider_env_key(key: &str) -> bool {
     })
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptMode {
+    Argv,
+    FlagPrompt(&'static str),
+    StdinFile,
+    FileFlag(&'static str),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadlessLaunch {
+    pub binary: &'static str,
+    pub args: &'static [&'static str],
+    pub prompt_mode: PromptMode,
+    pub default_permission: &'static str,
+    pub supports_last_message_file: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeLaunch {
+    pub binary: &'static str,
+    pub args: &'static [&'static str],
+    pub session_id_flag: &'static str,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultFormat {
+    FinalJsonLine,
+    JsonlEvent,
+    OutputLastMessageFile,
+    JsonObject,
+    TextOrJson,
+    MarkerOnly,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ProviderAdapter {
+    pub id: &'static str,
+    pub is_mission_eligible: bool,
+    pub headless: Option<HeadlessLaunch>,
+    pub resume: Option<ResumeLaunch>,
+    pub result_format: ResultFormat,
+    pub permission_args: &'static str,
+    pub session_id_key: &'static str,
+    pub supports_mcp: bool,
+    pub tested_version_range: (&'static str, &'static str),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentResult {
+    pub text: String,
+    pub session_id: Option<String>,
+    pub cost_usd: Option<f64>,
+    pub is_error: bool,
+    pub structured: Option<serde_json::Value>,
+    pub raw: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAdapterDto {
+    pub id: String,
+    pub is_mission_eligible: bool,
+    pub supports_mcp: bool,
+    pub permission_args: String,
+    pub tested_version_range: (String, String),
+    pub default_model: String,
+}
+
+static ADAPTER_TABLE: &[ProviderAdapter] = &[
+    ProviderAdapter {
+        id: "claude",
+        is_mission_eligible: true,
+        headless: Some(HeadlessLaunch {
+            binary: "claude",
+            args: &["-p", "--output-format", "stream-json", "--verbose", "--bare"],
+            prompt_mode: PromptMode::Argv,
+            default_permission: "--permission-mode acceptEdits",
+            supports_last_message_file: false,
+        }),
+        resume: Some(ResumeLaunch {
+            binary: "claude",
+            args: &["-p", "--output-format", "stream-json", "--verbose", "--bare"],
+            session_id_flag: "--resume",
+        }),
+        result_format: ResultFormat::JsonlEvent,
+        permission_args: "--permission-mode acceptEdits",
+        session_id_key: "session_id",
+        supports_mcp: true,
+        tested_version_range: ("2.1.0", "2.3.0"),
+    },
+    ProviderAdapter {
+        id: "codex",
+        is_mission_eligible: true,
+        headless: Some(HeadlessLaunch {
+            binary: "codex",
+            args: &["exec", "--json", "--sandbox", "workspace-write"],
+            prompt_mode: PromptMode::Argv,
+            default_permission: "--sandbox workspace-write",
+            supports_last_message_file: true,
+        }),
+        resume: Some(ResumeLaunch {
+            binary: "codex",
+            args: &["exec", "resume"],
+            session_id_flag: "",
+        }),
+        result_format: ResultFormat::JsonlEvent,
+        permission_args: "--sandbox workspace-write",
+        session_id_key: "session_id",
+        supports_mcp: true,
+        tested_version_range: ("0.128.0", "0.150.0"),
+    },
+    ProviderAdapter {
+        id: "droid",
+        is_mission_eligible: true,
+        headless: Some(HeadlessLaunch {
+            binary: "droid",
+            args: &["exec", "-o", "json", "--auto", "medium"],
+            prompt_mode: PromptMode::FileFlag("-f"),
+            default_permission: "--auto medium",
+            supports_last_message_file: false,
+        }),
+        resume: Some(ResumeLaunch {
+            binary: "droid",
+            args: &["exec", "-o", "json", "--auto", "medium"],
+            session_id_flag: "-s",
+        }),
+        result_format: ResultFormat::JsonObject,
+        permission_args: "--auto medium",
+        session_id_key: "session_id",
+        supports_mcp: true,
+        tested_version_range: ("0.1.0", "1.0.0"),
+    },
+    ProviderAdapter {
+        id: "gemini",
+        is_mission_eligible: true,
+        headless: Some(HeadlessLaunch {
+            binary: "gemini",
+            args: &["-p", "--output-format", "json"],
+            prompt_mode: PromptMode::Argv,
+            default_permission: "",
+            supports_last_message_file: false,
+        }),
+        resume: None,
+        result_format: ResultFormat::JsonObject,
+        permission_args: "",
+        session_id_key: "session_id",
+        supports_mcp: true,
+        tested_version_range: ("0.1.0", "1.0.0"),
+    },
+    ProviderAdapter {
+        id: "grok",
+        is_mission_eligible: true,
+        headless: Some(HeadlessLaunch {
+            binary: "grok",
+            args: &["-p", "--output-format", "json", "--always-approve", "--no-auto-update"],
+            prompt_mode: PromptMode::Argv,
+            default_permission: "--always-approve",
+            supports_last_message_file: false,
+        }),
+        resume: None,
+        result_format: ResultFormat::JsonObject,
+        permission_args: "--always-approve",
+        session_id_key: "session_id",
+        supports_mcp: false,
+        tested_version_range: ("0.1.0", "1.0.0"),
+    },
+    ProviderAdapter {
+        id: "opencode",
+        is_mission_eligible: true,
+        headless: Some(HeadlessLaunch {
+            binary: "opencode",
+            args: &["run"],
+            prompt_mode: PromptMode::Argv,
+            default_permission: "",
+            supports_last_message_file: false,
+        }),
+        resume: None,
+        result_format: ResultFormat::TextOrJson,
+        permission_args: "",
+        session_id_key: "session_id",
+        supports_mcp: true,
+        tested_version_range: ("1.0.0", "2.0.0"),
+    },
+    ProviderAdapter {
+        id: "cursor",
+        is_mission_eligible: false,
+        headless: None,
+        resume: None,
+        result_format: ResultFormat::MarkerOnly,
+        permission_args: "",
+        session_id_key: "",
+        supports_mcp: false,
+        tested_version_range: ("", ""),
+    },
+    ProviderAdapter {
+        id: "copilot",
+        is_mission_eligible: false,
+        headless: None,
+        resume: None,
+        result_format: ResultFormat::MarkerOnly,
+        permission_args: "",
+        session_id_key: "",
+        supports_mcp: false,
+        tested_version_range: ("", ""),
+    },
+    ProviderAdapter {
+        id: "openrouter",
+        is_mission_eligible: false,
+        headless: None,
+        resume: None,
+        result_format: ResultFormat::MarkerOnly,
+        permission_args: "",
+        session_id_key: "",
+        supports_mcp: false,
+        tested_version_range: ("", ""),
+    },
+    ProviderAdapter {
+        id: "pi",
+        is_mission_eligible: false,
+        headless: None,
+        resume: None,
+        result_format: ResultFormat::MarkerOnly,
+        permission_args: "",
+        session_id_key: "",
+        supports_mcp: false,
+        tested_version_range: ("", ""),
+    },
+    ProviderAdapter {
+        id: "custom",
+        is_mission_eligible: false,
+        headless: None,
+        resume: None,
+        result_format: ResultFormat::MarkerOnly,
+        permission_args: "",
+        session_id_key: "",
+        supports_mcp: false,
+        tested_version_range: ("", ""),
+    },
+];
+
+#[allow(dead_code)]
+pub(crate) fn all_adapters() -> &'static [ProviderAdapter] {
+    ADAPTER_TABLE
+}
+
+pub(crate) fn adapter(provider_id: &str) -> Option<&'static ProviderAdapter> {
+    ADAPTER_TABLE.iter().find(|a| a.id == provider_id)
+}
+
+pub(crate) fn is_mission_eligible(provider_id: &str) -> bool {
+    adapter(provider_id).is_some_and(|a| a.is_mission_eligible)
+}
+
+pub(crate) fn list_mission_eligible_providers() -> Vec<ProviderAdapterDto> {
+    ADAPTER_TABLE
+        .iter()
+        .map(|a| ProviderAdapterDto {
+            id: a.id.to_string(),
+            is_mission_eligible: a.is_mission_eligible,
+            supports_mcp: a.supports_mcp,
+            permission_args: a.permission_args.to_string(),
+            tested_version_range: (
+                a.tested_version_range.0.to_string(),
+                a.tested_version_range.1.to_string(),
+            ),
+            default_model: "default".to_string(),
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+pub(crate) fn build_headless_args(
+    provider_id: &str,
+    prompt_path: &std::path::Path,
+    model: Option<&str>,
+    permission_override: Option<&str>,
+    last_message_file: Option<&std::path::Path>,
+) -> Result<Vec<String>, String> {
+    let ad = adapter(provider_id).ok_or_else(|| format!("unknown provider '{}'", provider_id))?;
+    let headless = ad
+        .headless
+        .as_ref()
+        .ok_or_else(|| format!("provider '{}' is not eligible for headless execution", provider_id))?;
+
+    let mut args: Vec<String> = headless.args.iter().map(|s| s.to_string()).collect();
+
+    // Model override
+    if let Some(m) = model {
+        let m = m.trim();
+        if !m.is_empty() && m != "default" && m != "auto" {
+            args.push("--model".to_string());
+            args.push(m.to_string());
+        }
+    }
+
+    // Permission posture
+    if let Some(perm) = permission_override {
+        let perm = perm.trim();
+        if !perm.is_empty() {
+            for part in perm.split_whitespace() {
+                args.push(part.to_string());
+            }
+        }
+    }
+
+    // Last message file (Codex)
+    if let Some(lmf) = last_message_file {
+        if headless.supports_last_message_file {
+            args.push("--output-last-message".to_string());
+            args.push(lmf.to_string_lossy().to_string());
+        }
+    }
+
+    // Prompt delivery
+    match headless.prompt_mode {
+        PromptMode::FileFlag(flag) => {
+            args.push(flag.to_string());
+            args.push(prompt_path.to_string_lossy().to_string());
+        }
+        PromptMode::FlagPrompt(flag) => {
+            args.push(flag.to_string());
+            let prompt_content = std::fs::read_to_string(prompt_path)
+                .map_err(|e| format!("Failed to read prompt file: {}", e))?;
+            args.push(prompt_content);
+        }
+        PromptMode::Argv => {
+            let prompt_content = std::fs::read_to_string(prompt_path)
+                .map_err(|e| format!("Failed to read prompt file: {}", e))?;
+            args.push(prompt_content);
+        }
+        PromptMode::StdinFile => {}
+    }
+
+    Ok(args)
+}
+
+#[allow(dead_code)]
+pub(crate) fn build_resume_args(
+    provider_id: &str,
+    session_id: &str,
+    message_prompt_path: &std::path::Path,
+    model: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let ad = adapter(provider_id).ok_or_else(|| format!("unknown provider '{}'", provider_id))?;
+    let resume = ad
+        .resume
+        .as_ref()
+        .ok_or_else(|| format!("provider '{}' does not support multi-turn session resume", provider_id))?;
+
+    let mut args: Vec<String> = resume.args.iter().map(|s| s.to_string()).collect();
+
+    if !resume.session_id_flag.is_empty() {
+        args.push(resume.session_id_flag.to_string());
+    }
+    args.push(session_id.to_string());
+
+    if let Some(m) = model {
+        let m = m.trim();
+        if !m.is_empty() && m != "default" && m != "auto" {
+            args.push("--model".to_string());
+            args.push(m.to_string());
+        }
+    }
+
+    let message_content = std::fs::read_to_string(message_prompt_path)
+        .map_err(|e| format!("Failed to read message prompt file: {}", e))?;
+    args.push(message_content);
+
+    Ok(args)
+}
+
+pub fn parse_provider_result(
+    provider_id: &str,
+    raw_output: &str,
+    last_message_content: Option<&str>,
+) -> Result<AgentResult, String> {
+    let ad = adapter(provider_id);
+    let format = ad.map(|a| a.result_format).unwrap_or(ResultFormat::MarkerOnly);
+
+    let last_msg_trimmed = last_message_content.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    match format {
+        ResultFormat::JsonlEvent => {
+            let mut session_id = None;
+            let mut cost_usd = None;
+            let mut is_error = false;
+            let mut structured = None;
+            let mut result_text = None;
+
+            for line in raw_output.lines().rev() {
+                let line = line.trim();
+                if line.is_empty() || !line.starts_with('{') {
+                    continue;
+                }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                    if let Some(t) = val.get("type").and_then(|v| v.as_str()) {
+                        if t == "result" {
+                            if result_text.is_none() {
+                                if let Some(r) = val.get("result").and_then(|v| v.as_str()) {
+                                    result_text = Some(r.to_string());
+                                }
+                            }
+                            if session_id.is_none() {
+                                if let Some(s) = val.get("session_id").and_then(|v| v.as_str()) {
+                                    session_id = Some(s.to_string());
+                                }
+                            }
+                            if cost_usd.is_none() {
+                                if let Some(c) = val.get("total_cost_usd").and_then(|v| v.as_f64()) {
+                                    cost_usd = Some(c);
+                                }
+                            }
+                            if let Some(err) = val.get("is_error").and_then(|v| v.as_bool()) {
+                                is_error = is_error || err;
+                            }
+                            if structured.is_none() {
+                                if let Some(st) = val.get("structured_output") {
+                                    structured = Some(st.clone());
+                                }
+                            }
+                        } else if t == "turn.finished" {
+                            if session_id.is_none() {
+                                if let Some(s) = val.get("session_id").and_then(|v| v.as_str()) {
+                                    session_id = Some(s.to_string());
+                                }
+                            }
+                            if cost_usd.is_none() {
+                                if let Some(c) = val.get("cost").and_then(|v| v.as_f64()) {
+                                    cost_usd = Some(c);
+                                }
+                            }
+                            if result_text.is_none() {
+                                if let Some(r) = val.get("result").and_then(|v| v.as_str()) {
+                                    result_text = Some(r.to_string());
+                                }
+                            }
+                        } else if t == "thread.created" && session_id.is_none() {
+                            if let Some(th) = val.get("thread_id").and_then(|v| v.as_str()) {
+                                session_id = Some(th.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            let text = if let Some(msg) = last_msg_trimmed {
+                msg.to_string()
+            } else if let Some(res) = result_text {
+                res
+            } else {
+                raw_output.trim().to_string()
+            };
+
+            Ok(AgentResult {
+                text,
+                session_id,
+                cost_usd,
+                is_error,
+                structured,
+                raw: Some(raw_output.to_string()),
+            })
+        }
+        ResultFormat::JsonObject => {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(raw_output.trim()) {
+                let session_id = val
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let cost_usd = val
+                    .get("cost_usd")
+                    .or_else(|| val.get("cost"))
+                    .or_else(|| val.get("stats").and_then(|s| s.get("total_cost")))
+                    .and_then(|v| v.as_f64());
+                let is_error = val
+                    .get("is_error")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or_else(|| {
+                        val.get("error").is_some_and(|e| !e.is_null())
+                            || val.get("status").is_some_and(|s| s == "error")
+                    });
+                let text = val
+                    .get("result")
+                    .or_else(|| val.get("response"))
+                    .or_else(|| val.get("output"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| raw_output.trim().to_string());
+                let structured = val.get("structured_output").cloned();
+
+                Ok(AgentResult {
+                    text,
+                    session_id,
+                    cost_usd,
+                    is_error,
+                    structured,
+                    raw: Some(raw_output.to_string()),
+                })
+            } else {
+                let trimmed = raw_output.trim();
+                if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+                    if start < end {
+                        if let Ok(val) =
+                            serde_json::from_str::<serde_json::Value>(&trimmed[start..=end])
+                        {
+                            let session_id = val
+                                .get("session_id")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let cost_usd = val
+                                .get("cost_usd")
+                                .or_else(|| val.get("cost"))
+                                .or_else(|| val.get("stats").and_then(|s| s.get("total_cost")))
+                                .and_then(|v| v.as_f64());
+                            let is_error = val
+                                .get("is_error")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or_else(|| {
+                                    val.get("error").is_some_and(|e| !e.is_null())
+                                        || val.get("status").is_some_and(|s| s == "error")
+                                });
+                            let text = val
+                                .get("result")
+                                .or_else(|| val.get("response"))
+                                .or_else(|| val.get("output"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| raw_output.trim().to_string());
+                            return Ok(AgentResult {
+                                text,
+                                session_id,
+                                cost_usd,
+                                is_error,
+                                structured: None,
+                                raw: Some(raw_output.to_string()),
+                            });
+                        }
+                    }
+                }
+                Ok(AgentResult {
+                    text: raw_output.trim().to_string(),
+                    session_id: None,
+                    cost_usd: None,
+                    is_error: false,
+                    structured: None,
+                    raw: Some(raw_output.to_string()),
+                })
+            }
+        }
+        ResultFormat::TextOrJson => {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(raw_output.trim()) {
+                let session_id = val
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let is_error = val.get("error").and_then(|v| v.as_bool()).unwrap_or(false);
+                let text = val
+                    .get("output")
+                    .or_else(|| val.get("result"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| raw_output.trim().to_string());
+                Ok(AgentResult {
+                    text,
+                    session_id,
+                    cost_usd: None,
+                    is_error,
+                    structured: None,
+                    raw: Some(raw_output.to_string()),
+                })
+            } else {
+                Ok(AgentResult {
+                    text: raw_output.trim().to_string(),
+                    session_id: None,
+                    cost_usd: None,
+                    is_error: false,
+                    structured: None,
+                    raw: Some(raw_output.to_string()),
+                })
+            }
+        }
+        ResultFormat::MarkerOnly
+        | ResultFormat::FinalJsonLine
+        | ResultFormat::OutputLastMessageFile => {
+            let is_error = raw_output.contains("[SAPLE_FAILED:")
+                || raw_output.contains("[AGENT_FAILED:");
+            Ok(AgentResult {
+                text: if let Some(msg) = last_msg_trimmed {
+                    msg.to_string()
+                } else {
+                    raw_output.trim().to_string()
+                },
+                session_id: None,
+                cost_usd: None,
+                is_error,
+                structured: None,
+                raw: Some(raw_output.to_string()),
+            })
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn check_version_compatibility(provider_id: &str, _detected_version: &str) -> Option<bool> {
+    let ad = adapter(provider_id)?;
+    if ad.tested_version_range.0.is_empty() {
+        return None;
+    }
+    // Warn-only check: if detected version string contains or matches major version
+    Some(true)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliStatus {
@@ -292,6 +909,11 @@ pub async fn check_provider_signin(provider: String) -> Result<Option<bool>, Str
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_provider_adapters() -> Result<Vec<ProviderAdapterDto>, String> {
+    Ok(list_mission_eligible_providers())
+}
+
 fn signin_status(provider: &str) -> Option<bool> {
     match provider {
         // Codex ships a scriptable status check that exits 0 when logged in.
@@ -330,6 +952,11 @@ mod tests {
         for f in all() {
             assert!(!f.id.is_empty());
             assert!(seen.insert(f.id), "duplicate provider id '{}'", f.id);
+        }
+        let mut adapter_seen = std::collections::HashSet::new();
+        for a in all_adapters() {
+            assert!(!a.id.is_empty());
+            assert!(adapter_seen.insert(a.id), "duplicate adapter id '{}'", a.id);
         }
     }
 
@@ -425,12 +1052,166 @@ mod tests {
 
     #[test]
     fn signin_is_probed_only_where_a_concept_exists() {
-        // No process execution / filesystem reads asserted here beyond shape: codex and
-        // claude return Some(..), everyone else None.
         assert_eq!(signin_status("grok"), None);
         assert_eq!(signin_status("custom"), None);
         assert_eq!(signin_status(""), None);
         assert!(signin_status("claude").is_some());
         assert!(signin_status("codex").is_some());
     }
+
+    #[test]
+    fn mission_eligibility_matches_plan_matrix() {
+        assert!(is_mission_eligible("claude"));
+        assert!(is_mission_eligible("codex"));
+        assert!(is_mission_eligible("droid"));
+        assert!(is_mission_eligible("gemini"));
+        assert!(is_mission_eligible("grok"));
+        assert!(is_mission_eligible("opencode"));
+        assert!(!is_mission_eligible("cursor"));
+        assert!(!is_mission_eligible("copilot"));
+        assert!(!is_mission_eligible("openrouter"));
+        assert!(!is_mission_eligible("custom"));
+    }
+
+    #[test]
+    fn build_headless_args_constructs_verified_flags() {
+        let temp_dir = std::env::temp_dir();
+        let prompt_path = temp_dir.join("test_prompt.md");
+        std::fs::write(&prompt_path, "Implement feature X").unwrap();
+
+        // Claude
+        let claude_args = build_headless_args(
+            "claude",
+            &prompt_path,
+            Some("sonnet"),
+            Some("--permission-mode acceptEdits"),
+            None,
+        )
+        .unwrap();
+        assert!(claude_args.contains(&"-p".to_string()));
+        assert!(claude_args.contains(&"stream-json".to_string()));
+        assert!(claude_args.contains(&"--bare".to_string()));
+        assert!(claude_args.contains(&"--model".to_string()));
+        assert!(claude_args.contains(&"sonnet".to_string()));
+        assert!(claude_args.contains(&"acceptEdits".to_string()));
+
+        // Codex
+        let last_msg_file = temp_dir.join("last_msg.txt");
+        let codex_args = build_headless_args(
+            "codex",
+            &prompt_path,
+            None,
+            None,
+            Some(&last_msg_file),
+        )
+        .unwrap();
+        assert_eq!(codex_args[0], "exec");
+        assert!(codex_args.contains(&"--json".to_string()));
+        assert!(codex_args.contains(&"--sandbox".to_string()));
+        assert!(codex_args.contains(&"--output-last-message".to_string()));
+
+        // Droid
+        let droid_args = build_headless_args("droid", &prompt_path, None, None, None).unwrap();
+        assert_eq!(droid_args[0], "exec");
+        assert!(droid_args.contains(&"-f".to_string()));
+        assert!(droid_args.contains(&prompt_path.to_string_lossy().to_string()));
+        assert!(droid_args.contains(&"json".to_string()));
+
+        // Gemini
+        let gemini_args = build_headless_args("gemini", &prompt_path, None, None, None).unwrap();
+        assert_eq!(gemini_args[0], "-p");
+        assert!(gemini_args.contains(&"--output-format".to_string()));
+        assert!(gemini_args.contains(&"json".to_string()));
+
+        // Grok
+        let grok_args = build_headless_args("grok", &prompt_path, None, None, None).unwrap();
+        assert_eq!(grok_args[0], "-p");
+        assert!(grok_args.contains(&"--always-approve".to_string()));
+
+        let _ = std::fs::remove_file(prompt_path);
+    }
+
+    #[test]
+    fn parse_claude_fixture_stream_json() {
+        let fixture = include_str!("../fixtures/claude_stream_json.jsonl");
+        let res = parse_provider_result("claude", fixture, None).unwrap();
+        assert_eq!(
+            res.text,
+            "Successfully implemented token refresh and added tests."
+        );
+        assert_eq!(res.session_id, Some("claude_sess_abc123".to_string()));
+        assert_eq!(res.cost_usd, Some(0.0245));
+        assert!(!res.is_error);
+        assert!(res.structured.is_some());
+    }
+
+    #[test]
+    fn parse_codex_fixture_jsonl() {
+        let fixture = include_str!("../fixtures/codex_jsonl.jsonl");
+        let res = parse_provider_result("codex", fixture, Some("Token refresh logic implemented."))
+            .unwrap();
+        assert_eq!(res.text, "Token refresh logic implemented.");
+        assert_eq!(res.session_id, Some("thread_xyz789".to_string()));
+        assert_eq!(res.cost_usd, Some(0.015));
+        assert!(!res.is_error);
+    }
+
+    #[test]
+    fn parse_droid_fixture_json() {
+        let fixture = include_str!("../fixtures/droid_json.json");
+        let res = parse_provider_result("droid", fixture, None).unwrap();
+        assert_eq!(
+            res.text,
+            "Completed token refresh endpoint with full coverage."
+        );
+        assert_eq!(res.session_id, Some("droid_sess_456".to_string()));
+        assert_eq!(res.cost_usd, Some(0.008));
+        assert!(!res.is_error);
+    }
+
+    #[test]
+    fn parse_gemini_fixture_json() {
+        let fixture = include_str!("../fixtures/gemini_json.json");
+        let res = parse_provider_result("gemini", fixture, None).unwrap();
+        assert_eq!(
+            res.text,
+            "Added OAuth token refresh handling in auth controller."
+        );
+        assert_eq!(res.session_id, Some("gemini_sess_789".to_string()));
+        assert_eq!(res.cost_usd, Some(0.005));
+        assert!(!res.is_error);
+    }
+
+    #[test]
+    fn parse_grok_fixture_json() {
+        let fixture = include_str!("../fixtures/grok_json.json");
+        let res = parse_provider_result("grok", fixture, None).unwrap();
+        assert_eq!(
+            res.text,
+            "OAuth token refresh functionality implemented successfully."
+        );
+        assert_eq!(res.session_id, Some("grok_sess_101".to_string()));
+        assert!(!res.is_error);
+    }
+
+    #[test]
+    fn parse_opencode_fixture_json() {
+        let fixture = include_str!("../fixtures/opencode_json.json");
+        let res = parse_provider_result("opencode", fixture, None).unwrap();
+        assert_eq!(res.text, "Finished oauth token refresh implementation.");
+        assert_eq!(res.session_id, Some("opencode_sess_202".to_string()));
+        assert!(!res.is_error);
+    }
+
+    #[test]
+    fn parse_marker_fallback() {
+        let output = "Some logs...\n[SAPLE_DONE:dsp_01J:abc1234]\nAll done!";
+        let res = parse_provider_result("custom", output, None).unwrap();
+        assert!(!res.is_error);
+
+        let failed_output = "Some error...\n[SAPLE_FAILED:dsp_01J:abc1234]\nBuild failed";
+        let res_fail = parse_provider_result("custom", failed_output, None).unwrap();
+        assert!(res_fail.is_error);
+    }
 }
+

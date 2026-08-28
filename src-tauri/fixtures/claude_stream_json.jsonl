@@ -1,0 +1,3 @@
+{"type":"message_start","message":{"id":"msg_123","role":"assistant"}}
+{"type":"content_block_delta","delta":{"type":"text_delta","text":"Implementing the token refresh logic."}}
+{"type":"result","result":"Successfully implemented token refresh and added tests.","session_id":"claude_sess_abc123","total_cost_usd":0.0245,"is_error":false,"structured_output":{"status":"completed","files":["src/auth.ts"]}}
