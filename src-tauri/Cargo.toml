@@ -33,7 +33,7 @@ portable-pty = "0.9.0"
 uuid = { version = "1", features = ["v4"] }
 rfd = "0.15.0"
 keyring = "2.1"
-which = "6"
+which = "8"
 # Filesystem walker shared with ripgrep: respects .gitignore/.ignore, prunes VCS/build dirs, and
 # walks in parallel. Backs the file tree and workspace search (see `files.rs`).
 ignore = "0.4"
