@@ -5,7 +5,7 @@ spec that drives the **built** app. It catches the CSP / sidecar / packaging reg
 unit tests structurally cannot: the webview failing to boot, the production CSP blocking the
 bundle, or the PTY wiring breaking after packaging.
 
-The spec (`specs/smoke.e2e.ts`): launch the app → open `../smoke-test-workspace` → spawn a
+The spec (`specs/smoke.e2e.ts`): launch the app → open `fixtures/smoke-test-workspace` → spawn a
 terminal → assert a shell prompt renders.
 
 This is deliberately one spec with no page-object layer. Grow it by adding more `*.e2e.ts` files

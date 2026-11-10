@@ -2,6 +2,8 @@
 .DS_Store
 Thumbs.db
 .idea
+.obsidian/
+.playwright-cli/
 .vscode/*
 !.vscode/extensions.json
 *.suo
@@ -51,12 +53,6 @@ dist-ssr/
 build/
 builds/
 .vite/
-
-# Next.js
-.next/
-out/
-next-env.d.ts
-.vercel
 
 # TypeScript
 *.tsbuildinfo

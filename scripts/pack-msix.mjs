@@ -103,7 +103,7 @@ for (const logo of logos) {
   copyFileSync(join(root, 'src-tauri', 'icons', logo), join(stage, 'Assets', logo));
 }
 
-const manifest = readFileSync(join(root, 'Package.appxmanifest'), 'utf8').replace(
+const manifest = readFileSync(join(root, 'packaging', 'msix', 'Package.appxmanifest'), 'utf8').replace(
   /(<Identity[^>]*\bVersion=")[^"]*(")/,
   `$1${msixVersion}$2`,
 );

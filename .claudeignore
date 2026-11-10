@@ -3,8 +3,6 @@ node_modules/
 target/
 dist/
 build/
-.next/
-out/
 .venv/
 __pycache__/
 .pytest_cache/

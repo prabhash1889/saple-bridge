@@ -95,7 +95,9 @@ cargo test
   src/styles/             CSS modules and theme tokens
   src-tauri/              Tauri app, Rust commands, packaging config
   scripts/                Build and release helper scripts
-  smoke-test-workspace/   Small fixture workspace for manual QA
+  packaging/msix/         Microsoft Store (MSIX) package manifest
+  e2e/                    WebdriverIO smoke test and its fixture workspace
+  docs/                   Guides, design plans, and archived notes
 ```
 
 ## Workspace Data
@@ -166,7 +168,7 @@ For cross-compilation, set `SAPLE_MCP_TARGET=<target-triple>` or pass `--target 
 
 ## Manual Smoke Test
 
-Open `smoke-test-workspace/` in the desktop app and confirm that tasks, memory notes, review records, agent sessions, and swarm state load. See [smoke-test-workspace/README.md](smoke-test-workspace/README.md) for the checklist.
+Open `e2e/fixtures/smoke-test-workspace/` in the desktop app and confirm that tasks, memory notes, review records, agent sessions, and swarm state load. See [e2e/fixtures/smoke-test-workspace/README.md](e2e/fixtures/smoke-test-workspace/README.md) for the checklist.
 
 ## Releases and Auto-Update
 
