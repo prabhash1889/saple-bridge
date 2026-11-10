@@ -450,55 +450,32 @@ fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String
     let binary_path = crate::integrations::sidecar::sidecar_binary_path()?;
     let binary_str = binary_path.to_string_lossy().to_string();
 
-    let mcp_config = serde_json::json!({
-        "mcpServers": {
-            "saple-memory": {
-                "command": binary_str,
-                "args": [&project_path]
-            }
-        }
-    });
-    
-    let config_str = serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?;
-    
-    // Write .mcp.json preserving other servers
-    let mcp_json_path = get_project_file_path(&project_path, ".mcp.json")?;
-    if mcp_json_path.exists() {
-        let existing = fs::read_to_string(&mcp_json_path).map_err(|e| e.to_string())?;
-        let mut existing_json: serde_json::Value =
-            serde_json::from_str(&existing).map_err(|e| e.to_string())?;
-        if let Some(servers) = existing_json.get_mut("mcpServers") {
-            if let Some(obj) = servers.as_object_mut() {
-                obj.insert("saple-memory".to_string(), mcp_config["mcpServers"]["saple-memory"].clone());
-            }
+    let entry = serde_json::json!({ "command": binary_str, "args": [&project_path] });
+
+    // Claude Code reads .mcp.json, other clients mcp_config.json. Both get the same
+    // `saple-memory` entry merged in; any other servers and keys are preserved.
+    for name in [".mcp.json", "mcp_config.json"] {
+        let path = get_project_file_path(&project_path, name)?;
+        let mut config: serde_json::Value = if path.exists() {
+            let existing = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            serde_json::from_str(&existing).map_err(|e| e.to_string())?
         } else {
-            existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
+            serde_json::json!({})
+        };
+        // Indexing a non-object Value panics, and release builds abort on panic.
+        if !config.is_object() {
+            return Err(CodedError::internal(format!("{} is not a JSON object; fix or remove it", name)));
         }
-        let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
-        crate::workspace::fs_lock::atomic_write(&mcp_json_path, merged.as_bytes())?;
-    } else {
-        crate::workspace::fs_lock::atomic_write(&mcp_json_path, config_str.as_bytes())?;
-    }
-    
-    // Also write mcp_config.json (same content)
-    let mcp_config_path = get_project_file_path(&project_path, "mcp_config.json")?;
-    if mcp_config_path.exists() {
-        let existing = fs::read_to_string(&mcp_config_path).map_err(|e| e.to_string())?;
-        let mut existing_json: serde_json::Value =
-            serde_json::from_str(&existing).map_err(|e| e.to_string())?;
-        if let Some(servers) = existing_json.get_mut("mcpServers") {
-            if let Some(obj) = servers.as_object_mut() {
-                obj.insert("saple-memory".to_string(), mcp_config["mcpServers"]["saple-memory"].clone());
+        match config.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+            Some(servers) => {
+                servers.insert("saple-memory".to_string(), entry.clone());
             }
-        } else {
-            existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
+            None => config["mcpServers"] = serde_json::json!({ "saple-memory": entry.clone() }),
         }
-        let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
-        crate::workspace::fs_lock::atomic_write(&mcp_config_path, merged.as_bytes())?;
-    } else {
-        crate::workspace::fs_lock::atomic_write(&mcp_config_path, config_str.as_bytes())?;
+        let pretty = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+        crate::workspace::fs_lock::atomic_write(&path, pretty.as_bytes())?;
     }
-    
+
     Ok(format!("MCP config installed for project at {}", project_path))
 }
 
@@ -607,6 +584,40 @@ mod tests {
     use crate::terminal::process_ext::CommandNoWindow;
     use std::path::PathBuf;
     use std::process::Command;
+
+    #[test]
+    fn install_mcp_config_merges_into_both_files_and_keeps_other_servers() {
+        let dir = temp_project();
+        let path = dir.to_string_lossy().to_string();
+        let registry = ProjectRootRegistry::new();
+        registry.register_root(&dir).unwrap();
+        // .mcp.json has another server and a stale saple-memory entry; mcp_config.json is absent.
+        fs::write(
+            dir.join(".mcp.json"),
+            r#"{"mcpServers":{"other":{"command":"npx","args":["x"]},"saple-memory":{"command":"old"}},"extra":1}"#,
+        )
+        .unwrap();
+
+        install_mcp_config_inner(&registry, path.clone()).unwrap();
+
+        let read = |name: &str| -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(dir.join(name)).unwrap()).unwrap()
+        };
+        let merged = read(".mcp.json");
+        assert_eq!(merged["mcpServers"]["other"]["command"], "npx");
+        assert_eq!(merged["extra"], 1);
+        assert_ne!(merged["mcpServers"]["saple-memory"]["command"], "old");
+        assert_eq!(merged["mcpServers"]["saple-memory"]["args"][0], path.as_str());
+        let fresh = read("mcp_config.json");
+        assert_eq!(fresh["mcpServers"]["saple-memory"], merged["mcpServers"]["saple-memory"]);
+        assert_eq!(fresh["mcpServers"].as_object().unwrap().len(), 1);
+
+        // A non-object config is refused with an error instead of panicking (release aborts).
+        fs::write(dir.join("mcp_config.json"), "[]").unwrap();
+        assert!(install_mcp_config_inner(&registry, path).is_err());
+        assert_eq!(fs::read_to_string(dir.join("mcp_config.json")).unwrap(), "[]");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn temp_project() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("saple-proj-test-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
