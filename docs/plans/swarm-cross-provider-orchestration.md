@@ -12,8 +12,8 @@ Findings and implementation plan
 
 | Doc | Role |
 | --- | --- |
-| `docs/agent-orchestration-plan.md` | Durability / single writer / Rust engine rearchitecture (Draft v1 2026-07-13). This swarm plan feeds it; it does not replace it. |
-| `all-other-files/swarm-update-1.md` | Historical usability diagnosis (silent stalls, review deadlock, discovery). **Mostly shipped** - treat as archive for v1 fixes, not the v2 backlog. |
+| `docs/plans/agent-orchestration-plan.md` | Durability / single writer / Rust engine rearchitecture (Draft v1 2026-07-13). This swarm plan feeds it; it does not replace it. |
+| `docs/archive/swarm-update-1.md` | Historical usability diagnosis (silent stalls, review deadlock, discovery). **Mostly shipped** - treat as archive for v1 fixes, not the v2 backlog. |
 
 ---
 

@@ -59,9 +59,9 @@ npm run tauri:build
 
 ## Documentation
 
-- [First launch and provider readiness](docs/first-run.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Security, privacy, credentials, June and browser automation](docs/security-and-privacy.md)
+- [First launch and provider readiness](docs/guides/first-run.md)
+- [Troubleshooting](docs/guides/troubleshooting.md)
+- [Security, privacy, credentials, June and browser automation](docs/guides/security-and-privacy.md)
 
 ## Useful Commands
 

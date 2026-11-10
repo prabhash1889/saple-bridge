@@ -28,7 +28,7 @@ jobs:
   release:
     name: Build & publish (${{ matrix.os }})
     # The `release` GitHub environment carries the manual approval gate (required reviewers).
-    # Environments are configured repo-side (Settings > Environments); see docs/RELEASE_ENVIRONMENT.md.
+    # Environments are configured repo-side (Settings > Environments); see docs/guides/release-environment.md.
     environment: release
     # fail-fast: false so one platform failure never cancels the other release legs.
     # macos-latest is Apple Silicon (arm64); Intel Macs would need a separate x86_64 / universal

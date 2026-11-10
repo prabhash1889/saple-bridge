@@ -5,7 +5,7 @@
 | **Status** | Active. Decisions settled 2026-08-26 (see Decision log, section 9); M0 complete. |
 | **Goal** | One orchestrator agent (any harness, e.g. an opencode model) plans and drives many worker agents across different harnesses (Claude Code, Codex, Gemini, Droid, Grok, ...), each in its own git worktree, with deterministic lifecycle, verifiable settlement, and durable markdown context |
 | **Scope** | saple-bridge (Tauri app) + saple-mcp sidecar |
-| **Related** | `docs/agent-orchestration-plan.md` (engine phases 0-6), `docs/swarm-cross-provider-orchestration.md` (swarm v2 phases A-F) |
+| **Related** | `docs/plans/agent-orchestration-plan.md` (engine phases 0-6), `docs/plans/swarm-cross-provider-orchestration.md` (swarm v2 phases A-F) |
 
 This plan is informed by a 20-agent deep dive of Orca (`D:\project\repos\orca`) and Traycer (`D:\project\repos\traycer`) orchestration systems (see Traycer artifact `orca-traycer-orchestration-deep-dive`). It does not replace the two existing plans - it is the product layer that consumes them, and it fills the gaps they leave open (durable planning artifacts, dispatch identity binding, honest unknown states, decision gates, orchestrator-loop guardrails).
 
@@ -275,8 +275,8 @@ Dependency order: M0 -> M1 -> M2 -> M3 -> M4 -> M6. M5 can start any time after 
 
    | Prerequisite | Status | Evidence | Gap owner |
    | --- | --- | --- | --- |
-   | Provider adapters: headless launch + JSON result parsing (swarm v2 A) | Missing | `providers.rs` holds CLI launch facts only; no headless argv templates, no stream-json/JSONL envelope parsing anywhere in `src/` or `src-tauri/src/` | swarm v2 Phase A (`docs/swarm-cross-provider-orchestration.md`, marked not started) |
-   | `saple-engine` crate with single-writer broker (engine plan 2) | Missing | No `crates/` workspace under `src-tauri/`; no `.saple/engine.json` discovery handshake; Bridge writes `.saple/*` directly from React via generic file commands | engine plan Phase 2 (`docs/agent-orchestration-plan.md`) |
+   | Provider adapters: headless launch + JSON result parsing (swarm v2 A) | Missing | `providers.rs` holds CLI launch facts only; no headless argv templates, no stream-json/JSONL envelope parsing anywhere in `src/` or `src-tauri/src/` | swarm v2 Phase A (`docs/plans/swarm-cross-provider-orchestration.md`, marked not started) |
+   | `saple-engine` crate with single-writer broker (engine plan 2) | Missing | No `crates/` workspace under `src-tauri/`; no `.saple/engine.json` discovery handshake; Bridge writes `.saple/*` directly from React via generic file commands | engine plan Phase 2 (`docs/plans/agent-orchestration-plan.md`) |
    | `submit/command/observe` workflow core (engine plan 3) | Missing | Scheduling still lives in TS (`swarmScheduler.ts`); no workflow document format or revision-CAS command surface in Rust | engine plan Phase 3 |
    | `saple_step_report` tool surface (engine plan 4) | Missing | Tool exists only in plan docs; saple-mcp exposes no step-report tool; completion today is markers + PTY exit (`agentSignals.ts`) | engine plan Phase 4 |
 
