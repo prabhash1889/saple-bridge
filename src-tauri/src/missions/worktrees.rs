@@ -5,14 +5,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::git::{git_status_inner, GitFileStatus};
-use crate::terminal::process_ext::CommandNoWindow;
+use crate::git::{git_status_inner, run_git_with_timeout, GitFileStatus};
 use crate::workspace::project_roots::{canonical_base, ProjectRootRegistry};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -53,38 +51,6 @@ pub struct WorktreeMergeResult {
     pub conflicts: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merged_commit: Option<String>,
-}
-
-fn run_git_in_dir(dir: &Path, args: &[&str], timeout: Duration) -> Result<Output, String> {
-    let mut child = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .no_window()
-        .spawn()
-        .map_err(|e| format!("Failed to run git {}: {}", args.join(" "), e))?;
-
-    let started = Instant::now();
-    let mut backoff = Duration::from_millis(2);
-    loop {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            return child.wait_with_output().map_err(|e| e.to_string());
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!(
-                "git {} timed out after {}s",
-                args.join(" "),
-                timeout.as_secs()
-            ));
-        }
-        std::thread::sleep(backoff);
-        if backoff < Duration::from_millis(25) {
-            backoff = (backoff * 2).min(Duration::from_millis(25));
-        }
-    }
 }
 
 /// Sanitize id component for branch names and paths.
@@ -163,7 +129,7 @@ fn resolve_base_ref(dir: &Path, base_ref: &str) -> Result<String, String> {
         return Err(format!("Invalid base ref '{}'", base_ref));
     }
     let spec = format!("{}^{{commit}}", base_ref);
-    let out = run_git_in_dir(dir, &["rev-parse", "--verify", "--quiet", &spec], GIT_TIMEOUT)?;
+    let out = run_git_with_timeout(dir, &["rev-parse", "--verify", "--quiet", &spec], GIT_TIMEOUT)?;
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() || sha.is_empty() {
         return Err(format!("Base ref '{}' does not name a commit", base_ref));
@@ -183,7 +149,7 @@ pub fn get_worktree_branch(mission_id: &str, task_id: Option<&str>) -> String {
 
 /// Check if a given ref exists in the repository.
 fn ref_exists(project_dir: &Path, ref_name: &str) -> bool {
-    let out = run_git_in_dir(
+    let out = run_git_with_timeout(
         project_dir,
         &["rev-parse", "--verify", "--quiet", ref_name],
         GIT_TIMEOUT,
@@ -193,7 +159,7 @@ fn ref_exists(project_dir: &Path, ref_name: &str) -> bool {
 
 /// Resolve HEAD commit in a git dir.
 fn get_head_commit(dir: &Path) -> Option<String> {
-    let out = run_git_in_dir(dir, &["rev-parse", "HEAD"], GIT_TIMEOUT).ok()?;
+    let out = run_git_with_timeout(dir, &["rev-parse", "HEAD"], GIT_TIMEOUT).ok()?;
     if out.status.success() {
         let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if sha.is_empty() {
@@ -209,7 +175,7 @@ fn get_head_commit(dir: &Path) -> Option<String> {
 /// Get ahead/behind counts between two refs.
 fn get_ahead_behind(dir: &Path, local_ref: &str, upstream_ref: &str) -> (u32, u32) {
     let spec = format!("{}...{}", upstream_ref, local_ref);
-    let out = run_git_in_dir(
+    let out = run_git_with_timeout(
         dir,
         &["rev-list", "--left-right", "--count", &spec],
         GIT_TIMEOUT,
@@ -228,7 +194,7 @@ fn get_ahead_behind(dir: &Path, local_ref: &str, upstream_ref: &str) -> (u32, u3
 
 /// Check if working tree in a directory is clean (ignoring .saple/ worktrees metadata).
 fn is_dir_clean(dir: &Path) -> bool {
-    let out = run_git_in_dir(dir, &["status", "--porcelain"], GIT_TIMEOUT);
+    let out = run_git_with_timeout(dir, &["status", "--porcelain"], GIT_TIMEOUT);
     if let Ok(o) = out {
         if !o.status.success() {
             return false;
@@ -312,7 +278,7 @@ pub fn mission_worktree_create_inner(
         }
     }
 
-    let out = run_git_in_dir(&base_dir, &args, GIT_TIMEOUT)?;
+    let out = run_git_with_timeout(&base_dir, &args, GIT_TIMEOUT)?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(format!("git worktree add failed: {}", stderr));
@@ -385,7 +351,7 @@ pub fn mission_worktree_diff_inner(
     let wt_dir = wt.as_path();
 
     let branch = {
-        let out = run_git_in_dir(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
+        let out = run_git_with_timeout(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 
@@ -395,7 +361,7 @@ pub fn mission_worktree_diff_inner(
         Some(r) => resolve_base_ref(wt_dir, r)?,
         None => "HEAD".to_string(),
     };
-    let diff_out = run_git_in_dir(wt_dir, &["diff", &diff_target, "--"], GIT_TIMEOUT)?;
+    let diff_out = run_git_with_timeout(wt_dir, &["diff", &diff_target, "--"], GIT_TIMEOUT)?;
     let full_diff = if diff_out.status.success() {
         String::from_utf8_lossy(&diff_out.stdout).to_string()
     } else {
@@ -426,7 +392,7 @@ pub fn mission_worktree_merge_inner(
     let wt_dir = wt.as_path();
 
     let wt_branch = {
-        let out = run_git_in_dir(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
+        let out = run_git_with_timeout(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 
@@ -446,7 +412,7 @@ pub fn mission_worktree_merge_inner(
             }
 
             let merge_msg = format!("Merge mission branch '{}' into '{}'", wt_branch, target);
-            let out = run_git_in_dir(base_dir, &["merge", "--no-ff", "-m", &merge_msg, &wt_branch], GIT_TIMEOUT)?;
+            let out = run_git_with_timeout(base_dir, &["merge", "--no-ff", "-m", &merge_msg, &wt_branch], GIT_TIMEOUT)?;
 
             if out.status.success() {
                 let head = get_head_commit(base_dir);
@@ -481,8 +447,8 @@ pub fn mission_worktree_merge_inner(
         }
         "discard" => {
             // Reset worktree working tree and index
-            let out = run_git_in_dir(wt_dir, &["reset", "--hard", "HEAD"], GIT_TIMEOUT)?;
-            let _ = run_git_in_dir(wt_dir, &["clean", "-fd"], GIT_TIMEOUT);
+            let out = run_git_with_timeout(wt_dir, &["reset", "--hard", "HEAD"], GIT_TIMEOUT)?;
+            let _ = run_git_with_timeout(wt_dir, &["clean", "-fd"], GIT_TIMEOUT);
             if out.status.success() {
                 Ok(WorktreeMergeResult {
                     ok: true,
@@ -524,7 +490,7 @@ pub fn mission_worktree_remove_inner(
     }
 
     let branch = {
-        let out = run_git_in_dir(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT);
+        let out = run_git_with_timeout(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT);
         out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     };
 
@@ -539,11 +505,11 @@ pub fn mission_worktree_remove_inner(
     let wt_str = wt_dir.to_string_lossy().to_string();
     args.push(&wt_str);
 
-    let out = run_git_in_dir(base_dir, &args, GIT_TIMEOUT)?;
+    let out = run_git_with_timeout(base_dir, &args, GIT_TIMEOUT)?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         // Fallback: if git worktree remove failed, try manually pruning
-        let _ = run_git_in_dir(base_dir, &["worktree", "prune"], GIT_TIMEOUT);
+        let _ = run_git_with_timeout(base_dir, &["worktree", "prune"], GIT_TIMEOUT);
         if wt_dir.exists() {
             let _ = fs::remove_dir_all(wt_dir);
         }
@@ -554,7 +520,7 @@ pub fn mission_worktree_remove_inner(
 
     // Delete branch if it exists
     if !branch.is_empty() && branch != "HEAD" && branch != "main" && branch != "master" {
-        let _ = run_git_in_dir(base_dir, &["branch", "-D", &branch], GIT_TIMEOUT);
+        let _ = run_git_with_timeout(base_dir, &["branch", "-D", &branch], GIT_TIMEOUT);
     }
 
     Ok(())
@@ -603,7 +569,7 @@ pub fn mission_worktree_list_inner(
                     let task_id = if task_slug == "main" { None } else { Some(task_slug) };
 
                     let branch = {
-                        let out = run_git_in_dir(&p, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT);
+                        let out = run_git_with_timeout(&p, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT);
                         out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
                     };
 
@@ -633,6 +599,8 @@ pub fn mission_worktree_list_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::process_ext::CommandNoWindow;
+    use std::process::Command;
 
     fn init_test_git_repo(name: &str) -> (PathBuf, Arc<ProjectRootRegistry>) {
         let dir = std::env::temp_dir().join(format!("saple-wt-test-{}-{}", name, std::process::id()));

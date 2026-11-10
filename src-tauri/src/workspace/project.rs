@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use crate::error_code::CodedError;
-use crate::terminal::process_ext::CommandNoWindow;
 use crate::workspace::project_roots::ProjectRootRegistry;
 
 // Path policy (containment resolution, protected writer paths, destructive targets) lives in
@@ -407,12 +405,11 @@ fn git_current_branch_inner(registry: &ProjectRootRegistry, project_path: &str) 
     if let Some(branch) = read_head_branch(project_path) {
         return Ok(branch);
     }
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(project_path)
-        .no_window()
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
+    let output = crate::git::run_git_with_timeout(
+        project_path,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        std::time::Duration::from_secs(12),
+    )?;
 
     if output.status.success() {
         let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -607,7 +604,9 @@ fn check_mcp_status_inner(registry: &ProjectRootRegistry, project_path: String) 
 mod tests {
     use super::*;
     use crate::error_code::ErrorCode;
+    use crate::terminal::process_ext::CommandNoWindow;
     use std::path::PathBuf;
+    use std::process::Command;
 
     fn temp_project() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("saple-proj-test-{}-{}", std::process::id(), uuid::Uuid::new_v4()));

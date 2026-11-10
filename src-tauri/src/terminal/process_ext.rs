@@ -24,36 +24,79 @@ impl CommandNoWindow for Command {
     }
 }
 
+/// Why [`run_with_deadline`] produced no output.
+#[derive(Debug)]
+pub enum RunFailure {
+    /// The program could not be started (not installed, bad cwd, ...).
+    Spawn(std::io::Error),
+    /// It was still running at the deadline and has been killed.
+    TimedOut,
+    /// Waiting on the child failed.
+    Wait(std::io::Error),
+}
+
 /// Run a command to completion with stdout/stderr piped, killing it when it exceeds
-/// `timeout`. Returns None when the command cannot be spawned or hits the deadline.
-/// Polls with adaptive backoff so fast commands return immediately.
-pub fn run_with_timeout(mut command: Command, timeout: Duration) -> Option<Output> {
+/// `timeout`. Polls with adaptive backoff so fast commands return immediately.
+///
+/// Both pipes are drained on their own threads from spawn to exit. Reading them only after
+/// exit deadlocks any child that writes more than the OS pipe buffer (~64 KB): it blocks on
+/// the write, never exits, and the deadline kills a healthy command (a large `git diff`).
+pub fn run_with_deadline(mut command: Command, timeout: Duration) -> Result<Output, RunFailure> {
+    use std::io::Read;
+
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .ok()?;
+        .map_err(RunFailure::Spawn)?;
+
+    fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    }
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
 
     let started = Instant::now();
     let mut backoff = Duration::from_millis(1);
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(Some(status)) => break status,
             Ok(None) => {}
-            Err(_) => return None,
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RunFailure::Wait(e));
+            }
         }
 
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return None;
+            return Err(RunFailure::TimedOut);
         }
 
         std::thread::sleep(backoff);
         if backoff < Duration::from_millis(25) {
             backoff *= 2;
         }
-    }
+    };
+
+    Ok(Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+/// [`run_with_deadline`] for callers that only care whether output was produced.
+pub fn run_with_timeout(command: Command, timeout: Duration) -> Option<Output> {
+    run_with_deadline(command, timeout).ok()
 }
 
 #[cfg(test)]
@@ -76,6 +119,25 @@ mod tests {
         let out = run_with_timeout(cmd, Duration::from_secs(10));
         assert!(out.is_some());
         assert!(out.unwrap().status.success());
+    }
+
+    #[test]
+    fn output_larger_than_the_pipe_buffer_does_not_look_like_a_hang() {
+        // 2 MB on stdout, far past the ~64 KB pipe buffer. Undrained pipes block the child on
+        // write, so it never exits and the deadline kills a perfectly healthy command.
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut c = Command::new("powershell");
+            c.args(["-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.Write('x' * 2000000)"]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", "head -c 2000000 /dev/zero"]);
+            c
+        };
+        cmd.no_window();
+        let out = run_with_timeout(cmd, Duration::from_secs(20)).expect("must complete, not time out");
+        assert!(out.status.success());
+        assert_eq!(out.stdout.len(), 2_000_000);
     }
 
     #[test]

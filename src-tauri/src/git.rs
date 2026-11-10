@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 use std::fs;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use serde::{Serialize, Deserialize};
 use crate::workspace::project_roots::get_project_file_path;
-use crate::terminal::process_ext::CommandNoWindow;
+use crate::terminal::process_ext::{run_with_deadline, CommandNoWindow, RunFailure};
 use crate::workspace::project_roots::ProjectRootRegistry;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(12);
@@ -50,37 +50,21 @@ fn parse_rename_dest(field: &str) -> String {
     }
 }
 
-fn run_git_with_timeout(project_path: &str, args: &[&str], timeout: Duration) -> Result<Output, String> {
-    let mut child = Command::new("git")
-        .args(args)
-        .current_dir(project_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .no_window()
-        .spawn()
-        .map_err(|e| format!("Failed to run git {}: {}", args.join(" "), e))?;
-
-    let started = Instant::now();
-    // Adaptive backoff: poll quickly at first so fast git commands (the common case)
-    // return with sub-millisecond latency, then back off to avoid busy-spinning on
-    // long-running commands. Caps at 25ms.
-    let mut backoff = Duration::from_millis(1);
-    loop {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            return child.wait_with_output().map_err(|e| e.to_string());
-        }
-
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("git {} timed out after {}s", args.join(" "), timeout.as_secs()));
-        }
-
-        std::thread::sleep(backoff);
-        if backoff < Duration::from_millis(25) {
-            backoff = (backoff * 2).min(Duration::from_millis(25));
-        }
-    }
+/// The one git runner: argv exec (no shell), no console window, output drained while the
+/// command runs, and the process killed at `timeout`. Every git call in the crate goes
+/// through here.
+pub(crate) fn run_git_with_timeout(
+    dir: impl AsRef<std::path::Path>,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output, String> {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(dir).no_window();
+    run_with_deadline(command, timeout).map_err(|failure| match failure {
+        RunFailure::Spawn(e) => format!("Failed to run git {}: {}", args.join(" "), e),
+        RunFailure::TimedOut => format!("git {} timed out after {}s", args.join(" "), timeout.as_secs()),
+        RunFailure::Wait(e) => e.to_string(),
+    })
 }
 
 pub fn git_status_inner(project_path: String) -> Result<Vec<GitFileStatus>, String> {
@@ -1034,6 +1018,7 @@ fn ensure_saple_git_excluded_inner(project_path: String) -> Result<bool, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn parses_porcelain_arrow_rename() {
@@ -1296,6 +1281,26 @@ mod tests {
         git(&["config", "user.email", "test@saple.local"]);
         git(&["config", "user.name", "Saple Test"]);
         (dir, path)
+    }
+
+    #[test]
+    fn diff_larger_than_the_pipe_buffer_is_returned_not_timed_out() {
+        let (dir, path) = init_test_repo("saple-git-bigdiff");
+        let git = |args: &[&str]| {
+            let out = Command::new("git").args(args).current_dir(&dir).no_window().output().unwrap();
+            assert!(out.status.success(), "git {:?} failed", args);
+        };
+        fs::write(dir.join("big.txt"), "old\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "init"]);
+        // ~300 KB of changed lines: several times the OS pipe buffer.
+        fs::write(dir.join("big.txt"), "a changed line of text for the diff\n".repeat(8_000)).unwrap();
+
+        let started = Instant::now();
+        let diff = git_diff_file_inner(path, "big.txt".to_string()).expect("diff must not time out");
+        assert!(diff.len() > 250_000, "got {} bytes", diff.len());
+        assert!(started.elapsed() < GIT_TIMEOUT, "diff must not wait out the timeout");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
