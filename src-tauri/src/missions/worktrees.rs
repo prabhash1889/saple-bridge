@@ -132,6 +132,29 @@ pub fn get_worktree_dir(project_path: &str, mission_id: &str, task_id: Option<&s
     }
 }
 
+/// Resolve a renderer-supplied `worktree_path` and prove it is a mission worktree of this
+/// project: an existing directory strictly inside `<project>/.saple/worktrees/`. The diff,
+/// merge (`discard` = `reset --hard` + `clean -fd`) and remove (`remove_dir_all`) commands act
+/// on this path, so without the check a renderer could aim them at any directory on disk.
+fn contained_worktree(project_path: &str, worktree_path: &str) -> Result<PathBuf, String> {
+    let root = canonical_base(project_path)
+        .map_err(|e| e.to_string())?
+        .join(".saple")
+        .join("worktrees")
+        .canonicalize()
+        .map_err(|_| "This project has no mission worktrees".to_string())?;
+    let wt = Path::new(worktree_path)
+        .canonicalize()
+        .map_err(|e| format!("Worktree path '{}' does not exist: {}", worktree_path, e))?;
+    if wt == root || !wt.starts_with(&root) || !wt.is_dir() {
+        return Err(format!(
+            "Access denied: '{}' is not a mission worktree of this project",
+            worktree_path
+        ));
+    }
+    Ok(wt)
+}
+
 /// Formats branch name: `saple/<mission-short>/<task-short>` or `saple/<mission-short>/main`.
 pub fn get_worktree_branch(mission_id: &str, task_id: Option<&str>) -> String {
     let m_short = short_id(mission_id);
@@ -341,17 +364,15 @@ pub fn mission_worktree_diff_inner(
     worktree_path: &str,
     base_ref: Option<&str>,
 ) -> Result<GitDiffSummary, String> {
-    let wt_dir = Path::new(worktree_path);
-    if !wt_dir.exists() {
-        return Err(format!("Worktree path '{}' does not exist", worktree_path));
-    }
+    let wt = contained_worktree(project_path, worktree_path)?;
+    let wt_dir = wt.as_path();
 
     let branch = {
         let out = run_git_in_dir(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 
-    let files = git_status_inner(worktree_path.to_string()).unwrap_or_default();
+    let files = git_status_inner(wt.to_string_lossy().to_string()).unwrap_or_default();
 
     let diff_target = base_ref.unwrap_or("HEAD");
     let diff_out = run_git_in_dir(wt_dir, &["diff", diff_target], GIT_TIMEOUT)?;
@@ -363,8 +384,6 @@ pub fn mission_worktree_diff_inner(
 
     let total_insertions = files.iter().map(|f| f.insertions.unwrap_or(0)).sum();
     let total_deletions = files.iter().map(|f| f.deletions.unwrap_or(0)).sum();
-
-    let _ = project_path; // Keep signature consistent
 
     Ok(GitDiffSummary {
         branch,
@@ -383,11 +402,8 @@ pub fn mission_worktree_merge_inner(
     target_branch: Option<&str>,
 ) -> Result<WorktreeMergeResult, String> {
     let base_dir = Path::new(project_path);
-    let wt_dir = Path::new(worktree_path);
-
-    if !wt_dir.exists() {
-        return Err(format!("Worktree path '{}' does not exist", worktree_path));
-    }
+    let wt = contained_worktree(project_path, worktree_path)?;
+    let wt_dir = wt.as_path();
 
     let wt_branch = {
         let out = run_git_in_dir(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT)?;
@@ -472,11 +488,13 @@ pub fn mission_worktree_remove_inner(
     force: bool,
 ) -> Result<(), String> {
     let base_dir = Path::new(project_path);
-    let wt_dir = Path::new(worktree_path);
-
-    if !wt_dir.exists() {
+    // Already gone is success (idempotent remove); anything that exists must be a contained
+    // mission worktree before it is force-removed or `remove_dir_all`-ed.
+    if !Path::new(worktree_path).exists() {
         return Ok(());
     }
+    let wt = contained_worktree(project_path, worktree_path)?;
+    let wt_dir = wt.as_path();
 
     if !force && !is_dir_clean(wt_dir) {
         return Err(
@@ -489,6 +507,10 @@ pub fn mission_worktree_remove_inner(
         let out = run_git_in_dir(wt_dir, &["rev-parse", "--abbrev-ref", "HEAD"], GIT_TIMEOUT);
         out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     };
+
+    // Revoke the worktree's approved-root status while it still exists: `release_root`
+    // canonicalizes, which fails once the directory is gone and would leave it approved.
+    let _ = registry.release_root(wt_dir);
 
     let mut args = vec!["worktree", "remove"];
     if force {
@@ -509,9 +531,6 @@ pub fn mission_worktree_remove_inner(
             return Err(format!("Failed to remove worktree: {}", stderr));
         }
     }
-
-    // Release root from registry
-    let _ = registry.release_root(wt_dir);
 
     // Delete branch if it exists
     if !branch.is_empty() && branch != "HEAD" && branch != "main" && branch != "master" {
@@ -684,9 +703,11 @@ mod tests {
         assert!(!merge_res.conflicts);
         assert!(dir.join("file.txt").exists());
 
-        // 5. Remove worktree
+        // 5. Remove worktree; it must no longer be an approved root afterwards.
+        assert!(registry.verify_path_inside_approved_root(wt_path));
         mission_worktree_remove_inner(&registry, &project_path, &wt.worktree_path, false).unwrap();
         assert!(!wt_path.exists());
+        assert!(!registry.list_roots().iter().any(|r| r.ends_with("task_1")));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -760,6 +781,36 @@ mod tests {
         assert_eq!(check2, Some(5));
 
         mission_worktree_remove_inner(&registry, &project_path, &wt.worktree_path, true).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn worktree_commands_refuse_paths_outside_saple_worktrees() {
+        let (dir, registry) = init_test_git_repo("contain");
+        let project_path = dir.to_string_lossy().to_string();
+        // A separate repo with uncommitted work: the target a compromised renderer would aim at.
+        let (victim, _) = init_test_git_repo("contain-victim");
+        fs::write(victim.join("README.md"), "precious uncommitted edit\n").unwrap();
+        let victim_path = victim.to_string_lossy().to_string();
+
+        for path in [victim_path.as_str(), project_path.as_str()] {
+            assert!(mission_worktree_merge_inner(&project_path, path, "discard", None).is_err());
+            assert!(mission_worktree_diff_inner(&project_path, path, None).is_err());
+            assert!(mission_worktree_remove_inner(&registry, &project_path, path, true).is_err());
+        }
+        // `.saple/worktrees` itself is not a worktree either.
+        let root = dir.join(".saple").join("worktrees");
+        fs::create_dir_all(&root).unwrap();
+        assert!(mission_worktree_remove_inner(&registry, &project_path, &root.to_string_lossy(), true).is_err());
+
+        assert_eq!(
+            fs::read_to_string(victim.join("README.md")).unwrap(),
+            "precious uncommitted edit\n",
+            "the victim repo must be untouched"
+        );
+        assert!(dir.join("README.md").exists());
+
+        let _ = fs::remove_dir_all(&victim);
         let _ = fs::remove_dir_all(&dir);
     }
 
