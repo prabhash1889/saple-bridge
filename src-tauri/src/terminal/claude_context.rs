@@ -216,7 +216,7 @@ pub async fn get_claude_context_usage(
     cwd: String,
     session_uuid: String,
     pane_model: Option<String>,
-    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: tauri::State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<Option<ClaudeContextUsage>, String> {
     if !is_valid_session_uuid(&session_uuid) {
         return Err("Invalid Claude session id".to_string());

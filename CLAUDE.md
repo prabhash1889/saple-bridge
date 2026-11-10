@@ -64,10 +64,10 @@ Important files:
 - `src/lib/persistence/writeQueue.ts`
 - `scripts/tauri.mjs`
 - `src-tauri/src/lib.rs`
-- `src-tauri/src/pty.rs`
-- `src-tauri/src/project.rs`
-- `src-tauri/src/memory.rs`
-- `src-tauri/src/keychain.rs`
+- `src-tauri/src/terminal/pty.rs`
+- `src-tauri/src/workspace/project.rs`
+- `src-tauri/src/memory/mod.rs`
+- `src-tauri/src/providers/keychain.rs`
 
 ## Boundaries
 

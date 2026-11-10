@@ -1,3 +1,5 @@
+pub(crate) mod layout;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -5,8 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
 use serde::{Serialize, Deserialize};
 use crate::error_code::CodedError;
-use crate::memory_layout;
-use crate::project_roots::ProjectRootRegistry;
+use crate::workspace::project_roots::ProjectRootRegistry;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct MemoryNode {
@@ -458,7 +459,7 @@ pub async fn get_memory_graph(
 }
 
 fn get_memory_graph_inner(project_path: String) -> Result<MemoryGraph, String> {
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Ok(MemoryGraph { nodes: vec![], edges: vec![] });
     }
@@ -550,12 +551,12 @@ fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: b
         ));
     }
 
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Err(CodedError::internal("No memories found to snapshot"));
     }
 
-    let snapshots_dir = memory_layout::snapshots_dir(&project_path);
+    let snapshots_dir = layout::snapshots_dir(&project_path);
     let snapshot_dir = snapshots_dir.join(&name);
 
     // Stage into a temporary sibling so a failed or partial copy never replaces an existing
@@ -594,7 +595,7 @@ fn create_memory_snapshot_inner(project_path: String, name: String, overwrite: b
             CodedError::from(e.to_string())
         })?;
     }
-    if let Err(e) = crate::fs_lock::rename_with_retry(&tmp_dir, &snapshot_dir) {
+    if let Err(e) = crate::workspace::fs_lock::rename_with_retry(&tmp_dir, &snapshot_dir) {
         let _ = fs::remove_dir_all(&tmp_dir);
         return Err(e.into());
     }
@@ -622,12 +623,12 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         return Err("Snapshot name must contain only alphanumeric characters, dashes, or underscores".to_string());
     }
 
-    let snapshot_dir = memory_layout::snapshots_dir(&project_path).join(&name);
+    let snapshot_dir = layout::snapshots_dir(&project_path).join(&name);
     if !snapshot_dir.exists() {
         return Err(format!("Snapshot {} not found", name));
     }
 
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     if memory_dir.exists() && dir_contains_any_file(&memory_dir) {
         // Safety snapshot FIRST. Live memory must not be touched until a verified
         // valid backup exists; any failure here aborts the whole restore.
@@ -638,7 +639,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
                 e
             )
         })?;
-        let backup_dir = memory_layout::snapshots_dir(&project_path).join(&backup_name);
+        let backup_dir = layout::snapshots_dir(&project_path).join(&backup_name);
         verify_snapshot_copies_source(&memory_dir, &backup_dir).map_err(|e| {
             format!(
                 "Restore aborted: pre-restore safety snapshot could not be verified ({}). Live memory was left untouched.",
@@ -647,7 +648,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         })?;
     }
 
-    let write_dirs = memory_layout::write_dirs(&project_path);
+    let write_dirs = layout::write_dirs(&project_path);
 
     // Restore transactionally per target directory (Phase 2): stage the snapshot copy in a
     // temporary sibling, verify it byte-for-byte against the snapshot, and only then swap it
@@ -678,10 +679,10 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
         let old_dir = parent.join(format!(".{}.old-{}-{}", dir_name, std::process::id(), unique));
         let _ = fs::remove_dir_all(&old_dir);
         let swapped = if dir.exists() {
-            crate::fs_lock::rename_with_retry(&dir, &old_dir)
-                .and_then(|_| crate::fs_lock::rename_with_retry(&staged_dir, &dir))
+            crate::workspace::fs_lock::rename_with_retry(&dir, &old_dir)
+                .and_then(|_| crate::workspace::fs_lock::rename_with_retry(&staged_dir, &dir))
         } else {
-            crate::fs_lock::rename_with_retry(&staged_dir, &dir)
+            crate::workspace::fs_lock::rename_with_retry(&staged_dir, &dir)
         };
         match swapped {
             Ok(()) => {
@@ -691,7 +692,7 @@ fn restore_memory_snapshot_inner(project_path: String, name: String) -> Result<(
                 // Roll the live directory back into place; nothing was lost.
                 let _ = fs::remove_dir_all(&staged_dir);
                 if old_dir.exists() && !dir.exists() {
-                    let _ = crate::fs_lock::rename_with_retry(&old_dir, &dir);
+                    let _ = crate::workspace::fs_lock::rename_with_retry(&old_dir, &dir);
                 }
                 return Err(e);
             }
@@ -715,7 +716,7 @@ pub async fn list_memory_snapshots(
 }
 
 fn list_memory_snapshots_inner(project_path: String) -> Result<Vec<String>, String> {
-    let snapshots_dir = memory_layout::snapshots_dir(&project_path);
+    let snapshots_dir = layout::snapshots_dir(&project_path);
     if !snapshots_dir.exists() {
         return Ok(vec![]);
     }
@@ -747,7 +748,7 @@ pub async fn delete_memory_file(
 }
 
 pub(crate) fn delete_memory_file_inner(project_path: String, file_path: String) -> Result<(), String> {
-    let delete_dirs = memory_layout::write_dirs(&project_path);
+    let delete_dirs = layout::write_dirs(&project_path);
 
     for dir in delete_dirs {
         let full_path = dir.join(&file_path);
@@ -779,7 +780,7 @@ pub async fn read_memory_file(
 }
 
 fn read_memory_file_inner(project_path: String, file_path: String) -> Result<String, String> {
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     let full_path = memory_dir.join(&file_path);
 
     if full_path.exists() {
@@ -851,7 +852,7 @@ pub(crate) fn save_memory_node_inner(
     validate_note_path_component(&clean_id, "id")?;
     let relative_path = format!("{}/{}.md", clean_category, clean_id);
     
-    let read_dir = memory_layout::get_memory_dir(&project_path);
+    let read_dir = layout::get_memory_dir(&project_path);
 
     let mut created_time = now_iso();
     let mut unknown_fields = HashMap::new();
@@ -901,7 +902,7 @@ pub(crate) fn save_memory_node_inner(
         format!("{}# {}\n\n{}", frontmatter, title, body_trimmed)
     };
     
-    let write_dirs = memory_layout::write_dirs(&project_path);
+    let write_dirs = layout::write_dirs(&project_path);
 
     for dir in &write_dirs {
         // Contain to the *memory dir* (not the project root), mirroring the delete/read paths.
@@ -919,7 +920,7 @@ pub(crate) fn save_memory_node_inner(
                 return Err("Access denied: path is outside the memory directory".to_string());
             }
         }
-        crate::fs_lock::atomic_write(&full_path, full_content.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&full_path, full_content.as_bytes())?;
         invalidate_cached_note(&full_path);
     }
 
@@ -1195,7 +1196,7 @@ fn search_memory_content_inner(project_path: String, query: String) -> Result<Ve
     if query.trim().to_lowercase().len() < 2 {
         return Ok(vec![]);
     }
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Ok(vec![]);
     }
@@ -1263,7 +1264,7 @@ pub async fn get_unlinked_mentions(
 }
 
 fn get_unlinked_mentions_inner(project_path: String, id: String) -> Result<Vec<UnlinkedMention>, String> {
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     if !memory_dir.exists() {
         return Ok(vec![]);
     }
@@ -1361,7 +1362,7 @@ pub async fn add_memory_link(
 }
 
 fn add_memory_link_inner(project_path: String, source: String, target: String) -> Result<(), String> {
-    let memory_dir = memory_layout::get_memory_dir(&project_path);
+    let memory_dir = layout::get_memory_dir(&project_path);
     let (_, node, cached) = find_note_file_inner(&memory_dir, &source)
         .ok_or_else(|| format!("Source note '{}' not found", source))?;
 

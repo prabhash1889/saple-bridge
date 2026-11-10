@@ -7,8 +7,8 @@ use std::time::Instant;
 use serde::{Serialize, Deserialize};
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use crate::error_code::CodedError;
-use crate::process_ext::CommandNoWindow;
-use crate::project_roots::ProjectRootRegistry;
+use crate::terminal::process_ext::CommandNoWindow;
+use crate::workspace::project_roots::ProjectRootRegistry;
 
 const MAX_FILE_ENTRIES: usize = 5_000;
 const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -89,11 +89,11 @@ fn list_project_files_inner(
     // Containment policy comes from `project_roots`, like every other consumer of
     // renderer-supplied relative paths. Traversal is rejected by shape before any join, and a
     // missing subtree fails without creating anything (resolution is side-effect free).
-    let canonical_base = crate::project_roots::canonical_base(&project_path)?;
+    let canonical_base = crate::workspace::project_roots::canonical_base(&project_path)?;
     let canonical_target = if root.is_empty() {
         canonical_base.clone()
     } else {
-        let resolved = crate::project_roots::contained_target(&canonical_base, &root)?;
+        let resolved = crate::workspace::project_roots::contained_target(&canonical_base, &root)?;
         if !resolved.exists() {
             return Err("Directory does not exist".to_string().into());
         }
@@ -155,7 +155,7 @@ fn list_project_files_inner(
 fn read_text_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<String, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     // Utilize safe file path function from project module
-    let full_path = crate::project_roots::get_project_file_path(&project_path, &file_path)?;
+    let full_path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("File not found".to_string().into());
     }
@@ -181,15 +181,15 @@ fn write_text_file_inner(
 ) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     // Check if editing is enabled in the workspace configuration
-    let config = crate::project::read_project_config_inner(registry, project_path.clone())?;
+    let config = crate::workspace::project::read_project_config_inner(registry, project_path.clone())?;
     if !config.enable_edit_mode {
         return Err("Access denied: Editing files is disabled for this workspace. Enable it in Settings."
             .to_string()
             .into());
     }
     
-    let full_path = crate::project_roots::get_project_write_path(&project_path, &file_path)?;
-    crate::fs_lock::atomic_write(&full_path, content.as_bytes()).map_err(CodedError::internal)
+    let full_path = crate::workspace::project_roots::get_project_write_path(&project_path, &file_path)?;
+    crate::workspace::fs_lock::atomic_write(&full_path, content.as_bytes()).map_err(CodedError::internal)
 }
 
 // File types whose OS default action RUNS the file instead of opening it for editing: Windows
@@ -228,7 +228,7 @@ fn launches_on_open(path: &Path) -> bool {
 
 fn open_in_external_editor_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
-    let full_path = crate::project_roots::get_project_file_path(&project_path, &file_path)?;
+    let full_path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("File not found".to_string().into());
     }
@@ -295,7 +295,7 @@ fn reveal_in_file_explorer_inner(registry: &ProjectRootRegistry, project_path: S
     let full_path = if file_path.is_empty() {
         Path::new(&project_path).to_path_buf()
     } else {
-        crate::project_roots::get_project_file_path(&project_path, &file_path)?
+        crate::workspace::project_roots::get_project_file_path(&project_path, &file_path)?
     };
     if !full_path.exists() {
         return Err("Path not found".to_string().into());
@@ -378,7 +378,7 @@ pub async fn reveal_in_file_explorer(
 
 fn create_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
-    let full_path = crate::project_roots::get_project_write_path(&project_path, &file_path)?;
+    let full_path = crate::workspace::project_roots::get_project_write_path(&project_path, &file_path)?;
     if full_path.exists() {
         return Err("A file or folder with that name already exists".to_string().into());
     }
@@ -393,7 +393,7 @@ fn create_file_inner(registry: &ProjectRootRegistry, project_path: String, file_
 
 fn create_directory_inner(registry: &ProjectRootRegistry, project_path: String, dir_path: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
-    let full_path = crate::project_roots::get_project_write_path(&project_path, &dir_path)?;
+    let full_path = crate::workspace::project_roots::get_project_write_path(&project_path, &dir_path)?;
     if full_path.exists() {
         return Err("A file or folder with that name already exists".to_string().into());
     }
@@ -404,11 +404,11 @@ fn rename_path_inner(registry: &ProjectRootRegistry, project_path: String, from_
     registry.ensure_inside_approved_root(&project_path)?;
     // Both endpoints go through the writer policy: a rename must not move git internals
     // out of `.git` nor plant a foreign path inside it.
-    let from = crate::project_roots::get_project_write_path(&project_path, &from_path)?;
+    let from = crate::workspace::project_roots::get_project_write_path(&project_path, &from_path)?;
     if !from.exists() {
         return Err("Source path no longer exists".to_string().into());
     }
-    let to = crate::project_roots::get_project_write_path(&project_path, &to_path)?;
+    let to = crate::workspace::project_roots::get_project_write_path(&project_path, &to_path)?;
     if to.exists() {
         return Err("A file or folder with that name already exists".to_string().into());
     }
@@ -417,13 +417,13 @@ fn rename_path_inner(registry: &ProjectRootRegistry, project_path: String, from_
 
 fn delete_path_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
-    let full_path = crate::project_roots::get_project_file_path(&project_path, &file_path)?;
+    let full_path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("Path no longer exists".to_string().into());
     }
     // The root itself is a contained path, so containment alone would allow `file_path`
     // of "." or "" to trash the whole project. Reject any target that resolves to it.
-    crate::project_roots::ensure_not_workspace_root(&project_path, &full_path)?;
+    crate::workspace::project_roots::ensure_not_workspace_root(&project_path, &full_path)?;
     // Recycle bin rather than permanent delete, so an accidental removal is recoverable.
     trash::delete(&full_path).map_err(|e| CodedError::internal(format!("Failed to move to trash: {}", e)))
 }
@@ -482,10 +482,10 @@ pub async fn delete_path(
         .map_err(|e| CodedError::from(e.to_string()))
         .and_then(std::convert::identity);
     let audited = match &result {
-        Ok(()) => Ok(crate::audit::Outcome::ok()),
+        Ok(()) => Ok(crate::observability::audit::Outcome::ok()),
         Err(e) => Err(e.message.clone()),
     };
-    crate::audit::record(
+    crate::observability::audit::record(
         "renderer",
         &format!("delete_path {}", file_path),
         Some(&project_path),
@@ -573,7 +573,7 @@ fn search_in_files_inner(registry: &ProjectRootRegistry, project_path: String, q
     if needle.is_empty() {
         return Ok(SearchResult { hits: Vec::new(), truncated: false });
     }
-    let canonical_base = crate::project_roots::canonical_base(&project_path)?;
+    let canonical_base = crate::workspace::project_roots::canonical_base(&project_path)?;
     let needle_lower = needle.to_lowercase();
 
     let hits: Arc<Mutex<Vec<SearchHit>>> = Arc::new(Mutex::new(Vec::new()));

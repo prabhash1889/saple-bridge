@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use crate::keychain::get_api_key_inner;
+use crate::providers::keychain::get_api_key_inner;
 
 // How a provider authenticates its models endpoint and where the id list lives in the response.
 #[derive(Clone, Copy)]

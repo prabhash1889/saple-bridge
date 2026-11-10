@@ -3,7 +3,7 @@
 //! Every persisted store must distinguish `missing` from `unreadable`/`corrupt`. A corrupt
 //! `.saple/*.json` file is never treated as empty state: the original bytes are preserved in a
 //! sibling `.bak` copy, the path is flagged corrupt (which blocks every subsequent write through
-//! [`crate::fs_lock`]) until the user picks a recovery action.
+//! [`crate::workspace::fs_lock`]) until the user picks a recovery action.
 //!
 //! It also centralizes JSON text reading: UTF-8 BOMs are stripped consistently, and UTF-16/32
 //! content is reported clearly instead of failing with an opaque parse error.
@@ -11,7 +11,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-use crate::project_roots::get_project_file_path;
+use crate::workspace::project_roots::get_project_file_path;
 
 /// Outcome of loading a persisted state file. Serialized to the renderer with a `status` tag so
 /// the frontend can branch on `missing | loaded | corrupt | locked | ioError`.
@@ -131,14 +131,14 @@ pub(crate) fn preserve_and_flag_corrupt(path: &Path, parse_error: &str) -> Resul
         std::fs::write(&backup, &contents)
             .map_err(|e| format!("Failed to preserve corrupt file {}: {}", path.display(), e))?;
     }
-    crate::fs_lock::flag_corrupt(path, parse_error);
+    crate::workspace::fs_lock::flag_corrupt(path, parse_error);
     Ok(backup)
 }
 
 /// True when another live process currently holds the cross-process sentinel for `path`. A
 /// leftover sentinel from a dead process does not count as locked.
 fn probe_locked(path: &Path) -> bool {
-    crate::fs_lock::sentinel_held_by_live_process(path)
+    crate::workspace::fs_lock::sentinel_held_by_live_process(path)
 }
 
 /// Load a contained project state file as a structured outcome. Corrupt JSON preserves the
@@ -166,7 +166,7 @@ pub(crate) fn load_state_inner(project_path: &str, file_path: &str) -> Result<St
         Ok(_) => {
             // The user may have repaired the file externally while it was flagged; a clean
             // parse lifts the write block automatically.
-            crate::fs_lock::clear_corrupt_flag(&path);
+            crate::workspace::fs_lock::clear_corrupt_flag(&path);
             Ok(StateLoadResult::Loaded { content: text })
         }
         Err(e) => {
@@ -200,7 +200,7 @@ pub(crate) fn resolve_state_corruption_inner(
             // Restore the most recent preserved copy for this file, then re-validate below.
             // Lift the flag first: the atomic write itself is blocked while the path is flagged,
             // and re-validation below re-flags if the restored bytes are still broken.
-            crate::fs_lock::clear_corrupt_flag(&path);
+            crate::workspace::fs_lock::clear_corrupt_flag(&path);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -223,14 +223,14 @@ pub(crate) fn resolve_state_corruption_inner(
                 .pop()
                 .ok_or_else(|| "No preserved corrupt copy found to restore".to_string())?;
             let bytes = std::fs::read(&backup).map_err(|e| e.to_string())?;
-            crate::fs_lock::atomic_write(&path, &bytes)?;
+            crate::workspace::fs_lock::atomic_write(&path, &bytes)?;
         }
         other => return Err(format!("Unknown recovery action '{}'", other)),
     }
 
     if action == "start_empty" {
         // Explicit operator decision: unblock writes; the caller initializes empty state.
-        crate::fs_lock::clear_corrupt_flag(&path);
+        crate::workspace::fs_lock::clear_corrupt_flag(&path);
         return Ok(StateLoadResult::Missing);
     }
 
@@ -241,7 +241,7 @@ pub(crate) fn resolve_state_corruption_inner(
 pub async fn load_state_file(
     project_path: String,
     file_path: String,
-    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: tauri::State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<StateLoadResult, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || load_state_inner(&project_path, &file_path))
@@ -254,7 +254,7 @@ pub async fn resolve_state_corruption(
     project_path: String,
     file_path: String,
     action: String,
-    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: tauri::State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<StateLoadResult, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     tauri::async_runtime::spawn_blocking(move || resolve_state_corruption_inner(&project_path, &file_path, &action))
@@ -265,7 +265,7 @@ pub async fn resolve_state_corruption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project_roots::ProjectRootRegistry;
+    use crate::workspace::project_roots::ProjectRootRegistry;
     use std::sync::Arc;
 
     struct TempProject {
@@ -288,7 +288,7 @@ mod tests {
 
     impl Drop for TempProject {
         fn drop(&mut self) {
-            crate::fs_lock::clear_corrupt_flag(&self.path.join(".saple").join("tasks.json"));
+            crate::workspace::fs_lock::clear_corrupt_flag(&self.path.join(".saple").join("tasks.json"));
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(backup_count, 1);
 
         // Subsequent writes through the shared atomic-write funnel are blocked...
-        let blocked = crate::fs_lock::atomic_write(&file, b"[]");
+        let blocked = crate::workspace::fs_lock::atomic_write(&file, b"[]");
         assert!(blocked.is_err(), "writes to a corrupt-flagged file must be blocked");
         assert!(blocked.unwrap_err().contains("corrupt"));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
@@ -375,7 +375,7 @@ mod tests {
         // ...until the user explicitly starts empty.
         let resolved = resolve_state_corruption_inner(&p.project(), rel, "start_empty").unwrap();
         assert!(matches!(resolved, StateLoadResult::Missing));
-        assert!(crate::fs_lock::atomic_write(&file, b"[]").is_ok(), "flag cleared, writes resume");
+        assert!(crate::workspace::fs_lock::atomic_write(&file, b"[]").is_ok(), "flag cleared, writes resume");
     }
 
     #[test]
@@ -398,7 +398,7 @@ mod tests {
         std::fs::write(&file, r#"[{"id":"a"}]"#).unwrap();
         let retried = resolve_state_corruption_inner(&p.project(), rel, "retry").unwrap();
         assert!(matches!(retried, StateLoadResult::Loaded { .. }));
-        assert!(crate::fs_lock::atomic_write(&file, b"[]").is_ok());
+        assert!(crate::workspace::fs_lock::atomic_write(&file, b"[]").is_ok());
     }
 
     #[test]

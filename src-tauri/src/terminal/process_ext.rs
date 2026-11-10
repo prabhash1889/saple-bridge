@@ -59,7 +59,7 @@ pub fn run_with_timeout(mut command: Command, timeout: Duration) -> Option<Outpu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process_ext::CommandNoWindow;
+    use crate::terminal::process_ext::CommandNoWindow;
 
     #[test]
     fn fast_command_completes_within_deadline() {

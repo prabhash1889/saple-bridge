@@ -66,7 +66,7 @@ pub fn send_message(
 
     let msg_id = new_id("msg");
     let thread_id = input.thread_id.unwrap_or_else(|| new_id("thr"));
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
 
     // If this is a reply to another message, mark the original as answered
     if let Some(parent_id) = &input.in_reply_to {
@@ -182,7 +182,7 @@ pub fn sweep_stalled_receivers(
 ) -> Result<Vec<String>, String> {
     let recipient = format!("task_{}", task_id);
     let mut notices = Vec::new();
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
 
     let unanswered: Vec<(String, String, String)> = state
         .messages

@@ -79,7 +79,7 @@ fn count_columns(content: &str) -> Result<TaskColumnCounts, String> {
 }
 
 pub(crate) fn read_project_tasks_summary(project_path: &str) -> ProjectSummaryOutcome {
-    use crate::state_load::JsonText;
+    use crate::workspace::state_load::JsonText;
     let path = match tasks_file_path(project_path) {
         Some(p) => p,
         None => {
@@ -91,10 +91,10 @@ pub(crate) fn read_project_tasks_summary(project_path: &str) -> ProjectSummaryOu
     if !path.exists() {
         return ProjectSummaryOutcome::Missing;
     }
-    if crate::fs_lock::sentinel_held_by_live_process(&path) {
+    if crate::workspace::fs_lock::sentinel_held_by_live_process(&path) {
         return ProjectSummaryOutcome::Locked;
     }
-    let text = match crate::state_load::read_json_text(&path) {
+    let text = match crate::workspace::state_load::read_json_text(&path) {
         JsonText::Ok(t) => t,
         JsonText::Io(e) => return ProjectSummaryOutcome::IoError { error: e.to_string() },
         JsonText::Encoding(m) => return ProjectSummaryOutcome::IoError { error: m },

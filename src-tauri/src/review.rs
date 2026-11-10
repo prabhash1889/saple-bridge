@@ -3,11 +3,11 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
-use crate::project::now_iso;
-use crate::project_roots::get_project_file_path;
+use crate::workspace::project::now_iso;
+use crate::workspace::project_roots::get_project_file_path;
 use crate::git::{git_status_inner, git_tree_identity_inner, GitFileStatus, GitTreeIdentity};
-use crate::process_ext::CommandNoWindow;
-use crate::project_roots::ProjectRootRegistry;
+use crate::terminal::process_ext::CommandNoWindow;
+use crate::workspace::project_roots::ProjectRootRegistry;
 
 const VERIFICATION_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_VERIFICATION_OUTPUT_BYTES: usize = 800_000;
@@ -175,7 +175,7 @@ fn create_review_record_inner(
         record.reviewed_tree = capture_reviewed_evidence(&project_path);
         record.updated_at = now_iso();
         let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-        crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
         return Ok(record);
     }
 
@@ -254,7 +254,7 @@ fn create_review_record_inner(
     };
 
     let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+    crate::workspace::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
 
     // Capture the tree identity AFTER the record file exists: `git status` lists paths, and a
     // brand-new record path changes that list. Capturing before the write would bake in a
@@ -263,7 +263,7 @@ fn create_review_record_inner(
     record.reviewed_tree = capture_reviewed_evidence(&project_path);
     if record.reviewed_tree.is_some() {
         let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-        crate::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&review_file_path, json.as_bytes())?;
     }
 
     Ok(record)
@@ -273,11 +273,11 @@ fn create_review_record_inner(
 /// failure preserves the original bytes, flags the path so writes are blocked until recovery, and
 /// returns an error - the caller must fail closed instead of proceeding with empty state.
 fn load_json_array(path: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
-    match crate::state_load::read_json_text(path) {
-        crate::state_load::JsonText::Ok(content) => {
+    match crate::workspace::state_load::read_json_text(path) {
+        crate::workspace::state_load::JsonText::Ok(content) => {
             serde_json::from_str::<Vec<serde_json::Value>>(&content).map_err(|e| {
                 let err = format!("Failed to parse {}: {}", path.display(), e);
-                match crate::state_load::preserve_and_flag_corrupt(path, &err) {
+                match crate::workspace::state_load::preserve_and_flag_corrupt(path, &err) {
                     Ok(backup) => format!(
                         "{}. Original bytes preserved at {} — resolve recovery before writing.",
                         err,
@@ -287,8 +287,8 @@ fn load_json_array(path: &std::path::Path) -> Result<Vec<serde_json::Value>, Str
                 }
             })
         }
-        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
-        crate::state_load::JsonText::Encoding(m) => Err(m),
+        crate::workspace::state_load::JsonText::Io(e) => Err(e.to_string()),
+        crate::workspace::state_load::JsonText::Encoding(m) => Err(m),
     }
 }
 
@@ -296,10 +296,10 @@ fn load_json_array(path: &std::path::Path) -> Result<Vec<serde_json::Value>, Str
 /// record preserves its original bytes, flags the path (blocking writes until recovery), and never
 /// auto-recreates over the corruption.
 fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, ReviewLoadError> {
-    match crate::state_load::read_json_text(path) {
-        crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content).map_err(|e| {
+    match crate::workspace::state_load::read_json_text(path) {
+        crate::workspace::state_load::JsonText::Ok(content) => serde_json::from_str(&content).map_err(|e| {
             let err = format!("Failed to parse review record {}: {}", path.display(), e);
-            match crate::state_load::preserve_and_flag_corrupt(path, &err) {
+            match crate::workspace::state_load::preserve_and_flag_corrupt(path, &err) {
                 Ok(backup) => ReviewLoadError::Corrupt {
                     error: format!(
                         "{}. Original bytes preserved at {} — resolve recovery before editing.",
@@ -315,8 +315,8 @@ fn load_review_record(path: &std::path::Path) -> Result<ReviewRecord, ReviewLoad
                 },
             }
         }),
-        crate::state_load::JsonText::Io(e) => Err(ReviewLoadError::Other(e.to_string())),
-        crate::state_load::JsonText::Encoding(m) => Err(ReviewLoadError::Other(m)),
+        crate::workspace::state_load::JsonText::Io(e) => Err(ReviewLoadError::Other(e.to_string())),
+        crate::workspace::state_load::JsonText::Encoding(m) => Err(ReviewLoadError::Other(m)),
     }
 }
 
@@ -368,7 +368,7 @@ fn submit_review_decision_inner(
         return Err("Review record not found".to_string());
     }
 
-    let session_id = crate::fs_lock::with_path_lock(&review_file_path, || {
+    let session_id = crate::workspace::fs_lock::with_path_lock(&review_file_path, || {
         let mut record = load_review_record(&review_file_path)?;
 
         // Phase 3: an approval certifies exactly the evidence captured with the record. If HEAD
@@ -395,14 +395,14 @@ fn submit_review_decision_inner(
         record.updated_at = now_iso();
 
         let record_json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-        crate::fs_lock::write_unlocked(&review_file_path, record_json.as_bytes())?;
+        crate::workspace::fs_lock::write_unlocked(&review_file_path, record_json.as_bytes())?;
         Ok::<String, String>(session_id)
     })??;
 
     // 2. Update task in tasks.json (locked read-modify-write against tasks.json writers).
     let tasks_file = get_project_file_path(&project_path, ".saple/tasks.json")?;
     if tasks_file.exists() {
-        crate::fs_lock::with_path_lock(&tasks_file, || {
+        crate::workspace::fs_lock::with_path_lock(&tasks_file, || {
             match load_json_array(&tasks_file) {
                 Ok(mut tasks) => {
                     let next_column = if decision == "approve" { "done" } else { "progress" };
@@ -416,7 +416,7 @@ fn submit_review_decision_inner(
                     }
                     if updated {
                         let json = serde_json::to_string_pretty(&tasks).map_err(|e| e.to_string())?;
-                        crate::fs_lock::write_unlocked(&tasks_file, json.as_bytes())?;
+                        crate::workspace::fs_lock::write_unlocked(&tasks_file, json.as_bytes())?;
                     }
                     Ok(())
                 }
@@ -431,7 +431,7 @@ fn submit_review_decision_inner(
     let sessions_file = get_project_file_path(&project_path, ".saple/agents/sessions.json")?;
     let mut run_id: Option<String> = None;
     if sessions_file.exists() {
-        run_id = crate::fs_lock::with_path_lock(&sessions_file, || {
+        run_id = crate::workspace::fs_lock::with_path_lock(&sessions_file, || {
             let mut sessions = load_json_array(&sessions_file)?;
             let next_status = if decision == "approve" { "done" } else { "failed" };
             let mut updated = false;
@@ -448,7 +448,7 @@ fn submit_review_decision_inner(
             }
             if updated {
                 let json = serde_json::to_string_pretty(&sessions).map_err(|e| e.to_string())?;
-                crate::fs_lock::write_unlocked(&sessions_file, json.as_bytes())?;
+                crate::workspace::fs_lock::write_unlocked(&sessions_file, json.as_bytes())?;
             }
             Ok::<Option<String>, String>(run_id)
         })??;
@@ -473,7 +473,7 @@ fn submit_review_decision_inner(
                 "reviewFeedback": notes.clone().unwrap_or_default(),
             })
         };
-        let _ = crate::control_plane::canonical_write_inner(
+        let _ = crate::workspace::control_plane::canonical_write_inner(
             project_path.clone(),
             ".saple/runs.json".to_string(),
             run_id,
@@ -541,7 +541,7 @@ pub(crate) fn run_shell_with_timeout(
     let result = run_shell_with_timeout_impl(project_path, command_str, timeout, cancel);
     let audited = result
         .as_ref()
-        .map(|(output, stop)| crate::audit::Outcome {
+        .map(|(output, stop)| crate::observability::audit::Outcome {
             exit_code: output.status.code(),
             stop: match stop {
                 ShellStop::Completed => None,
@@ -550,7 +550,7 @@ pub(crate) fn run_shell_with_timeout(
             },
         })
         .map_err(|e| e.clone());
-    crate::audit::record(source, "shell.run", Some(project_path), started, &audited);
+    crate::observability::audit::record(source, "shell.run", Some(project_path), started, &audited);
     result
 }
 
@@ -600,7 +600,7 @@ pub(crate) fn run_shell_with_timeout_impl(
 
     // Windows: put the whole subtree under a kill-on-close Job Object before the shell can
     // spawn anything. No-op (None) on Unix or when job assignment fails.
-    let job = crate::proc_tree::JobObject::attach(child_pid);
+    let job = crate::terminal::proc_tree::JobObject::attach(child_pid);
 
     // Drain both pipes concurrently from spawn to exit. Without this, a verbose child that
     // fills its (64 KiB-ish) pipe buffer blocks on write and never exits - the classic false
@@ -645,7 +645,7 @@ pub(crate) fn run_shell_with_timeout_impl(
         if let Some(job) = job.as_ref() {
             job.terminate();
         }
-        crate::proc_tree::kill_process_group(child_pid);
+        crate::terminal::proc_tree::kill_process_group(child_pid);
         let _ = child.kill();
     }
     // On Completed, dropping `job` (the last handle) at scope end still fires
@@ -714,12 +714,12 @@ fn run_verification_command_inner(
     // (already flagged by the loader) rather than blocking the verification result.
     let review_file_path = get_project_file_path(&project_path, &format!(".saple/review/{}.json", task_id))?;
     if review_file_path.exists() {
-        let _ = crate::fs_lock::with_path_lock(&review_file_path, || {
+        let _ = crate::workspace::fs_lock::with_path_lock(&review_file_path, || {
             let Ok(mut record) = load_review_record(&review_file_path) else { return };
             record.test_output = Some(combined.clone());
             record.updated_at = now_iso();
             if let Ok(json) = serde_json::to_string_pretty(&record) {
-                let _ = crate::fs_lock::write_unlocked(&review_file_path, json.as_bytes());
+                let _ = crate::workspace::fs_lock::write_unlocked(&review_file_path, json.as_bytes());
             }
         });
     }
@@ -738,7 +738,7 @@ fn set_file_viewed_inner(
     if !review_file_path.exists() {
         return Err("Review record not found".to_string());
     }
-    crate::fs_lock::with_path_lock(&review_file_path, || {
+    crate::workspace::fs_lock::with_path_lock(&review_file_path, || {
         let mut record = load_review_record(&review_file_path)?;
 
         record.viewed_files.retain(|p| p != &file_path);
@@ -748,7 +748,7 @@ fn set_file_viewed_inner(
         record.updated_at = now_iso();
 
         let json = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-        crate::fs_lock::write_unlocked(&review_file_path, json.as_bytes())
+        crate::workspace::fs_lock::write_unlocked(&review_file_path, json.as_bytes())
     })?
 }
 
@@ -826,7 +826,7 @@ pub async fn run_verification_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control_plane::canonical_write_inner;
+    use crate::workspace::control_plane::canonical_write_inner;
 
     struct TempProject {
         path: std::path::PathBuf,
@@ -878,7 +878,7 @@ mod tests {
 
     fn write(project: &str, rel: &str, content: &str) {
         let path = get_project_file_path(project, rel).unwrap();
-        crate::fs_lock::atomic_write(&path, content.as_bytes()).unwrap();
+        crate::workspace::fs_lock::atomic_write(&path, content.as_bytes()).unwrap();
     }
 
     /// The P0 acceptance integration test: a Kanban launch registers an agent + run, completion
@@ -1139,7 +1139,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&record_path).unwrap(), "{ definitely not json");
 
         // Clean up the corrupt flag so other tests / drops are unaffected.
-        crate::fs_lock::clear_corrupt_flag(&record_path);
+        crate::workspace::fs_lock::clear_corrupt_flag(&record_path);
     }
 
     /// Phase 3 check: commits are scoped to exactly the reviewed/staged path set. An unexpected

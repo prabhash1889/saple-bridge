@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::project_roots::canonical_base;
+use crate::workspace::project_roots::canonical_base;
 use super::MissionMessage;
 
 /// Inputs required to assemble a mission worker's dispatch preamble prompt.
@@ -189,7 +189,7 @@ pub fn write_preamble_file(
     content: &str,
 ) -> Result<PathBuf, String> {
     let base = canonical_base(project_path).map_err(|e| e.to_string())?;
-    let prompts_dir = crate::project_roots::contained_target(
+    let prompts_dir = crate::workspace::project_roots::contained_target(
         &base,
         &format!(".saple/missions/{}/prompts", mission_id),
     )

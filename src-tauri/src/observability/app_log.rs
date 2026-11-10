@@ -80,7 +80,7 @@ fn write_entry(dir: &Path, level: &str, source: &str, message: &str) -> std::io:
 
     let line = format!(
         "{} {} [{}] {}\n",
-        crate::project::now_iso(),
+        crate::workspace::project::now_iso(),
         level,
         sanitize_source(source),
         redact(message)

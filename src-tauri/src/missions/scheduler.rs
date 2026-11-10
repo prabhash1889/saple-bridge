@@ -257,7 +257,7 @@ pub fn scheduler_tick(
         state,
         project_path,
         mission_id,
-        &crate::project::now_iso(),
+        &crate::workspace::project::now_iso(),
         liveness::DEFAULT_LEASE_DURATION_SECS,
     );
 

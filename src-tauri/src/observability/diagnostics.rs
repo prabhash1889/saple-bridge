@@ -3,8 +3,8 @@ use std::process::Command;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
-use crate::keychain;
-use crate::process_ext::{run_with_timeout, CommandNoWindow};
+use crate::providers::keychain;
+use crate::terminal::process_ext::{run_with_timeout, CommandNoWindow};
 use crate::providers::{self, CliStatus};
 
 /// Every external probe in the diagnostics report is bounded so a hung CLI or shell
@@ -37,7 +37,7 @@ pub struct KeychainStatus {
 
 /// MCP config presence flags embedded in the diagnostics report.
 ///
-/// A lean subset of [`crate::project::McpStatus`] (the Settings → MCP tab type):
+/// A lean subset of [`crate::workspace::project::McpStatus`] (the Settings → MCP tab type):
 /// it omits `other_servers` because diagnostics only needs to confirm that
 /// `saple-memory` is configured, not enumerate every server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ pub struct McpConfigStatus {
 #[tauri::command]
 pub async fn run_diagnostics(
     project_path: String,
-    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: tauri::State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<DiagnosticsResult, String> {
     let registry = registry.inner().clone();
     tauri::async_runtime::spawn_blocking(move || run_diagnostics_inner(&registry, project_path))
@@ -150,7 +150,7 @@ fn keychain_backend_status() -> String {
     }
 }
 
-fn run_diagnostics_inner(registry: &crate::project_roots::ProjectRootRegistry, project_path: String) -> Result<DiagnosticsResult, String> {
+fn run_diagnostics_inner(registry: &crate::workspace::project_roots::ProjectRootRegistry, project_path: String) -> Result<DiagnosticsResult, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     // 1. OS check
     let os = if cfg!(target_os = "windows") {

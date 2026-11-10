@@ -4,7 +4,7 @@
 //! report": app identity, OS facts, live session/watcher counts, and bounded tails of the two
 //! durable evidence files (app log + privileged-action audit) that Phase 4 already maintains.
 //!
-//! Redaction contract: every line read back from disk is passed through [`crate::app_log::redact`]
+//! Redaction contract: every line read back from disk is passed through [`crate::observability::app_log::redact`]
 //! again before it leaves the process. The files were written redacted, but re-redacting is cheap
 //! defense in depth - a future writer regression must not leak through a diagnostics copy. API
 //! keys and keychain values are never read here at all; only presence counts are reported.
@@ -53,9 +53,9 @@ pub struct DiagnosticsReport {
 pub fn collect_diagnostics(
     app: tauri::AppHandle,
     project_path: Option<String>,
-    pty: tauri::State<'_, crate::pty::PtyRegistry>,
-    watchers: tauri::State<'_, crate::watcher::WatcherState>,
-    swarm_watchers: tauri::State<'_, crate::watcher::SwarmWatcherState>,
+    pty: tauri::State<'_, crate::terminal::pty::PtyRegistry>,
+    watchers: tauri::State<'_, crate::workspace::watcher::WatcherState>,
+    swarm_watchers: tauri::State<'_, crate::workspace::watcher::SwarmWatcherState>,
 ) -> Result<DiagnosticsReport, String> {
     let package = app.package_info();
     let pty_count = pty
@@ -74,16 +74,16 @@ pub fn collect_diagnostics(
         .map(|slot| slot.is_some())
         .unwrap_or(false);
 
-    let log_dir = crate::app_log::log_dir();
+    let log_dir = crate::observability::app_log::log_dir();
     let (log_tail, log_truncated) = log_dir
-        .map(|dir| tail_lines(&dir.join(crate::app_log::LOG_FILE_NAME), LOG_TAIL_LINES))
+        .map(|dir| tail_lines(&dir.join(crate::observability::app_log::LOG_FILE_NAME), LOG_TAIL_LINES))
         .unwrap_or_else(|| (Vec::new(), false));
     // The audit file lives next to the app log but has no public path accessor; reuse the same
     // directory handle rather than adding one.
     let (audit_recent, audit_entry_count) = log_dir
         .map(|dir| {
-            let lines = tail_lines(&dir.join(crate::audit::AUDIT_FILE_NAME), AUDIT_TAIL_LINES);
-            let total = fs::read_to_string(dir.join(crate::audit::AUDIT_FILE_NAME))
+            let lines = tail_lines(&dir.join(crate::observability::audit::AUDIT_FILE_NAME), AUDIT_TAIL_LINES);
+            let total = fs::read_to_string(dir.join(crate::observability::audit::AUDIT_FILE_NAME))
                 .map(|contents| contents.lines().count())
                 .unwrap_or(0);
             (lines.0, total)
@@ -91,7 +91,7 @@ pub fn collect_diagnostics(
         .unwrap_or_else(|| (Vec::new(), 0));
 
     Ok(DiagnosticsReport {
-        generated_at: crate::project::now_iso(),
+        generated_at: crate::workspace::project::now_iso(),
         app_name: package.name.clone(),
         app_version: package.version.to_string(),
         app_identifier: app.config().identifier.clone(),
@@ -141,7 +141,7 @@ fn tail_lines(path: &Path, max_lines: usize) -> (Vec<String>, bool) {
     let selected: Vec<String> = lines
         .into_iter()
         .skip(skipped)
-        .map(crate::app_log::redact)
+        .map(crate::observability::app_log::redact)
         .collect();
     (selected, skipped > 0)
 }

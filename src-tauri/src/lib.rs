@@ -1,34 +1,17 @@
-mod browser;
-mod claude_context;
+// Domain folders; see AGENTS.md for the module map.
 mod error_code;
-mod pty;
-mod project;
-mod keychain;
-mod models;
-mod memory;
-mod memory_layout;
 mod git;
-mod review;
-mod control_plane;
-mod june_control;
-mod swarm;
+mod integrations;
+mod memory;
 mod missions;
-mod files;
-mod diagnostics;
+mod observability;
 mod providers;
-mod process_ext;
-mod proc_tree;
-mod fs_lock;
-mod project_roots;
-mod project_summary;
-mod sidecar;
-mod state_load;
-mod watcher;
-mod app_log;
-mod audit;
-mod diag_report;
+mod review;
+mod swarm;
+mod terminal;
+mod workspace;
 
-use project_roots::ProjectRootRegistry;
+use workspace::project_roots::ProjectRootRegistry;
 
 #[tauri::command]
 fn select_directory(registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>) -> Option<String> {
@@ -51,7 +34,7 @@ fn select_directory(registry: tauri::State<std::sync::Arc<ProjectRootRegistry>>)
 pub fn run() {
     // Must run before any webview is built: WebView2's environment (and its remote-debugging
     // args) is fixed at first-webview creation. No-op unless the user opted in. See browser.rs.
-    browser::apply_agent_browser_port();
+    integrations::browser::apply_agent_browser_port();
 
     let mut builder = tauri::Builder::default();
 
@@ -87,30 +70,30 @@ pub fn run() {
             // application log directory. Best-effort: if resolution or creation fails, logging
             // degrades to a silent no-op rather than blocking startup.
             if let Ok(dir) = app.path().app_log_dir() {
-                app_log::init(dir);
+                observability::app_log::init(dir);
             }
             // Stage the sidecar to its stable per-user path before any project opens, so
             // `.mcp.json` never has to reference the (versioned, ACL-restricted on MSIX)
             // install directory. Release only: dev resolves the repo-local staging path.
             #[cfg(not(debug_assertions))]
-            sidecar::ensure_stable_sidecar();
+            integrations::sidecar::ensure_stable_sidecar();
             // June control endpoint: a per-process token, then start the loopback server only if the
             // user opted in (default off, no open port). See june_control.rs.
-            app.manage(june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
+            app.manage(integrations::june_control::JuneControl::new(uuid::Uuid::new_v4().to_string()));
             // Panes June spawned and may drive with terminal actions; everything else is refused.
-            app.manage(june_control::JuneTerminalScopes::default());
+            app.manage(integrations::june_control::JuneTerminalScopes::default());
             // Registry of approved project roots (canonical absolute paths). Lives only in
             // Rust memory: roots are added by native directory selection or validated
             // restoration, and every privileged command verifies against it before touching
             // the filesystem or spawning a process (sub-phase 1B). Arc-shared so commands can
             // move a handle into their blocking workers.
-            app.manage(std::sync::Arc::new(project_roots::ProjectRootRegistry::new()));
-            june_control::start(app.handle().clone());
+            app.manage(std::sync::Arc::new(workspace::project_roots::ProjectRootRegistry::new()));
+            integrations::june_control::start(app.handle().clone());
             Ok(())
         })
-        .manage(pty::PtyRegistry::new())
-        .manage(watcher::WatcherState::new())
-        .manage(watcher::SwarmWatcherState::new())
+        .manage(terminal::pty::PtyRegistry::new())
+        .manage(workspace::watcher::WatcherState::new())
+        .manage(workspace::watcher::SwarmWatcherState::new())
         // Restore the window's last size/position/maximized state on launch and save it on exit.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -126,36 +109,36 @@ pub fn run() {
             // otherwise agent CLIs keep running as orphaned processes after the app exits.
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 use tauri::Manager;
-                window.state::<pty::PtyRegistry>().shutdown();
+                window.state::<terminal::pty::PtyRegistry>().shutdown();
                 // Drop the discovery record so June rejects this dead endpoint immediately.
-                june_control::remove_discovery_record();
+                integrations::june_control::remove_discovery_record();
             }
         })
         .invoke_handler(tauri::generate_handler![
             select_directory,
-            project_roots::register_project_root,
-            project_roots::release_project_root,
-            pty::spawn_pty,
-            claude_context::get_claude_context_usage,
-            pty::write_pty,
-            pty::resize_pty,
-            pty::kill_pty,
-            project::read_project_file,
-            project::write_project_file,
-            project::git_current_branch,
-            project::ensure_workspace_dirs,
-            project::ensure_project_config,
-            project::read_project_config,
-            project::write_project_config,
-            project::get_workspace_summary,
-            project::install_mcp_config,
-            project::check_mcp_status,
-            sidecar::test_mcp_tools,
-            keychain::set_api_key,
-            keychain::has_api_key,
-            keychain::delete_api_key,
-            keychain::test_provider_connection,
-            models::list_provider_models,
+            workspace::project_roots::register_project_root,
+            workspace::project_roots::release_project_root,
+            terminal::pty::spawn_pty,
+            terminal::claude_context::get_claude_context_usage,
+            terminal::pty::write_pty,
+            terminal::pty::resize_pty,
+            terminal::pty::kill_pty,
+            workspace::project::read_project_file,
+            workspace::project::write_project_file,
+            workspace::project::git_current_branch,
+            workspace::project::ensure_workspace_dirs,
+            workspace::project::ensure_project_config,
+            workspace::project::read_project_config,
+            workspace::project::write_project_config,
+            workspace::project::get_workspace_summary,
+            workspace::project::install_mcp_config,
+            workspace::project::check_mcp_status,
+            integrations::sidecar::test_mcp_tools,
+            providers::keychain::set_api_key,
+            providers::keychain::has_api_key,
+            providers::keychain::delete_api_key,
+            providers::keychain::test_provider_connection,
+            providers::models::list_provider_models,
             memory::get_memory_graph,
             memory::create_memory_snapshot,
             memory::restore_memory_snapshot,
@@ -189,17 +172,17 @@ pub fn run() {
             review::run_verification_command,
             review::cancel_run_command,
             review::set_file_viewed,
-            control_plane::canonical_record_write,
-            state_load::load_state_file,
-            state_load::resolve_state_corruption,
-            project_summary::get_recent_project_summaries,
-            june_control::june_control_get_enabled,
-            june_control::june_control_set_enabled,
-            june_control::june_command_result,
-            june_control::june_emit_event,
-            june_control::june_permit_terminals,
-            june_control::june_ensure_terminal_permitted,
-            june_control::june_revoke_terminal,
+            workspace::control_plane::canonical_record_write,
+            workspace::state_load::load_state_file,
+            workspace::state_load::resolve_state_corruption,
+            workspace::project_summary::get_recent_project_summaries,
+            integrations::june_control::june_control_get_enabled,
+            integrations::june_control::june_control_set_enabled,
+            integrations::june_control::june_command_result,
+            integrations::june_control::june_emit_event,
+            integrations::june_control::june_permit_terminals,
+            integrations::june_control::june_ensure_terminal_permitted,
+            integrations::june_control::june_revoke_terminal,
             swarm::read_swarm_state,
             swarm::write_swarm_state,
             swarm::read_mailbox_file,
@@ -232,37 +215,37 @@ pub fn run() {
             missions::mission_worktree_merge,
             missions::mission_worktree_remove,
             missions::mission_worktree_list,
-            files::list_project_files,
-            files::read_text_file,
-            files::write_text_file,
-            files::open_in_external_editor,
-            files::reveal_in_file_explorer,
-            files::create_file,
-            files::create_directory,
-            files::rename_path,
-            files::delete_path,
-            files::search_in_files,
-            diagnostics::run_diagnostics,
+            workspace::files::list_project_files,
+            workspace::files::read_text_file,
+            workspace::files::write_text_file,
+            workspace::files::open_in_external_editor,
+            workspace::files::reveal_in_file_explorer,
+            workspace::files::create_file,
+            workspace::files::create_directory,
+            workspace::files::rename_path,
+            workspace::files::delete_path,
+            workspace::files::search_in_files,
+            observability::diagnostics::run_diagnostics,
             providers::check_provider_cli,
             providers::check_provider_signin,
             providers::get_provider_adapters,
-            watcher::watch_project_files,
-            watcher::unwatch_project_files,
-            watcher::watch_swarm_dir,
-            watcher::unwatch_swarm_dir,
-            app_log::log_renderer_error,
-            diag_report::collect_diagnostics,
-            browser::browser_open_tab,
-            browser::browser_close_tab,
-            browser::browser_set_bounds,
-            browser::browser_set_visible,
-            browser::browser_navigate,
-            browser::browser_back,
-            browser::browser_forward,
-            browser::browser_reload,
-            browser::agent_browser_get_enabled,
-            browser::agent_browser_active_port,
-            browser::agent_browser_set_enabled
+            workspace::watcher::watch_project_files,
+            workspace::watcher::unwatch_project_files,
+            workspace::watcher::watch_swarm_dir,
+            workspace::watcher::unwatch_swarm_dir,
+            observability::app_log::log_renderer_error,
+            observability::diag_report::collect_diagnostics,
+            integrations::browser::browser_open_tab,
+            integrations::browser::browser_close_tab,
+            integrations::browser::browser_set_bounds,
+            integrations::browser::browser_set_visible,
+            integrations::browser::browser_navigate,
+            integrations::browser::browser_back,
+            integrations::browser::browser_forward,
+            integrations::browser::browser_reload,
+            integrations::browser::agent_browser_get_enabled,
+            integrations::browser::agent_browser_active_port,
+            integrations::browser::agent_browser_set_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -433,7 +416,7 @@ mod tests {
             .split(',')
             .map(|entry| entry.trim())
             .filter(|entry| !entry.is_empty())
-            // Entries may be module-qualified (`pty::spawn_pty`); the wire name is the identifier.
+            // Entries may be module-qualified (`terminal::pty::spawn_pty`); the wire name is the identifier.
             .map(|entry| {
                 entry
                     .rsplit("::")

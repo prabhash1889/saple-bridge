@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::git::{git_status_inner, GitFileStatus};
-use crate::process_ext::CommandNoWindow;
-use crate::project_roots::{canonical_base, ProjectRootRegistry};
+use crate::terminal::process_ext::CommandNoWindow;
+use crate::workspace::project_roots::{canonical_base, ProjectRootRegistry};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 pub const STALE_BASE_THRESHOLD: u32 = 20;

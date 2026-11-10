@@ -164,7 +164,7 @@ pub fn settle_step_report(
     let task_id = dispatch.task_id.clone();
     let provider = dispatch.provider.clone();
     let model = dispatch.model.clone();
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
 
     // Idempotent duplicate check
     if dispatch.status == "succeeded" {

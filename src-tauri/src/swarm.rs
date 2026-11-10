@@ -2,7 +2,7 @@ use std::fs;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use sha2::{Digest, Sha256};
-use crate::project_roots::ProjectRootRegistry;
+use crate::workspace::project_roots::ProjectRootRegistry;
 
 // Mirrors the frontend SwarmAgent for `validate_dependency_graph`. The TS
 // SwarmAgent carries extra fields (provider, autoApprove) that serde silently
@@ -26,12 +26,12 @@ pub struct SwarmAgentRust {
 pub async fn read_swarm_state(
     project_path: String,
     registry: tauri::State<'_, Arc<ProjectRootRegistry>>,
-) -> Result<crate::state_load::StateLoadResult, String> {
+) -> Result<crate::workspace::state_load::StateLoadResult, String> {
     registry.ensure_inside_approved_root(&project_path)?;
     // Structured outcome (Phase 2): missing vs corrupt vs locked are distinct, and a corrupt
     // state.json preserves its bytes + blocks writes until recovery.
     tauri::async_runtime::spawn_blocking(move || {
-        crate::state_load::load_state_inner(&project_path, ".saple/swarm/state.json")
+        crate::workspace::state_load::load_state_inner(&project_path, ".saple/swarm/state.json")
     })
     .await
     .map_err(|e| e.to_string())?
@@ -50,8 +50,8 @@ pub async fn write_swarm_state(
 }
 
 fn write_swarm_state_inner(project_path: String, state_json: String) -> Result<(), String> {
-    let path = crate::project_roots::get_project_file_path(&project_path, ".saple/swarm/state.json")?;
-    crate::fs_lock::atomic_write(&path, state_json.as_bytes())
+    let path = crate::workspace::project_roots::get_project_file_path(&project_path, ".saple/swarm/state.json")?;
+    crate::workspace::fs_lock::atomic_write(&path, state_json.as_bytes())
 }
 
 #[tauri::command]
@@ -68,7 +68,7 @@ pub async fn read_mailbox_file(
 
 fn read_mailbox_file_inner(project_path: String, agent_id: String) -> Result<String, String> {
     let file_name = format!(".saple/swarm/mailbox/{}.md", agent_id);
-    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
+    let path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_name)?;
     if !path.exists() {
         return Ok(format!("# {} Mailbox\nNo messages yet.\n", agent_id));
     }
@@ -90,8 +90,8 @@ pub async fn write_mailbox_file(
 
 fn write_mailbox_file_inner(project_path: String, agent_id: String, content: String) -> Result<(), String> {
     let file_name = format!(".saple/swarm/mailbox/{}.md", agent_id);
-    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
-    crate::fs_lock::atomic_write(&path, content.as_bytes())
+    let path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_name)?;
+    crate::workspace::fs_lock::atomic_write(&path, content.as_bytes())
 }
 
 #[tauri::command]
@@ -109,7 +109,7 @@ pub async fn read_handoff_file(
 
 fn read_handoff_file_inner(project_path: String, from_agent: String, to_agent: String) -> Result<String, String> {
     let file_name = format!(".saple/swarm/handoffs/{}-to-{}.json", from_agent, to_agent);
-    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
+    let path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_name)?;
     if !path.exists() {
         return Err("Handoff file not found".to_string());
     }
@@ -132,8 +132,8 @@ pub async fn write_handoff_file(
 
 fn write_handoff_file_inner(project_path: String, from_agent: String, to_agent: String, content: String) -> Result<(), String> {
     let file_name = format!(".saple/swarm/handoffs/{}-to-{}.json", from_agent, to_agent);
-    let path = crate::project_roots::get_project_file_path(&project_path, &file_name)?;
-    crate::fs_lock::atomic_write(&path, content.as_bytes())
+    let path = crate::workspace::project_roots::get_project_file_path(&project_path, &file_name)?;
+    crate::workspace::fs_lock::atomic_write(&path, content.as_bytes())
 }
 
 /// Phase 5 acceptance runner result. `exit_code` is `None` when the command timed out or was

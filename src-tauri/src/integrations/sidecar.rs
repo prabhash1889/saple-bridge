@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use crate::error_code::CodedError;
-use crate::process_ext::CommandNoWindow;
-use crate::project_roots::ProjectRootRegistry;
+use crate::terminal::process_ext::CommandNoWindow;
+use crate::workspace::project_roots::ProjectRootRegistry;
 // Release-only staging/healing helpers are cfg'd out of dev builds, so their imports follow.
 #[cfg(not(debug_assertions))]
 use std::fs;
 #[cfg(not(debug_assertions))]
-use crate::project_roots::get_project_file_path;
+use crate::workspace::project_roots::get_project_file_path;
 
 /// Absolute path to the `saple-mcp` sidecar binary that MCP configs should reference.
 ///
@@ -160,7 +160,7 @@ pub(crate) fn heal_mcp_configs(project_path: &str) {
         let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) else { continue };
         if heal_saple_memory_command(&mut val, &current) {
             if let Ok(pretty) = serde_json::to_string_pretty(&val) {
-                let _ = crate::fs_lock::atomic_write(&path, pretty.as_bytes());
+                let _ = crate::workspace::fs_lock::atomic_write(&path, pretty.as_bytes());
             }
         }
     }

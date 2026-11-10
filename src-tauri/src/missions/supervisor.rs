@@ -261,7 +261,7 @@ pub fn prepare_dispatch_launch(
         &preamble_content,
     )?;
 
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
     let dispatch = MissionDispatch {
         id: dispatch_id.clone(),
         task_id: task_id.to_string(),
@@ -317,7 +317,7 @@ pub fn finalize_dispatch_running(
         .position(|d| d.id == dispatch_id)
         .ok_or_else(|| format!("Dispatch '{}' not found in mission '{}'", dispatch_id, mission_id))?;
 
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
     state.dispatches[dispatch_idx].status = "running".to_string();
     state.dispatches[dispatch_idx].started_at = Some(now);
 
@@ -354,7 +354,7 @@ pub fn handle_dispatch_failure(
         .position(|d| d.id == dispatch_id)
         .ok_or_else(|| format!("Dispatch '{}' not found in mission '{}'", dispatch_id, mission_id))?;
 
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
     let task_id = state.dispatches[dispatch_idx].task_id.clone();
     let failure_count = state.dispatches[dispatch_idx].failure_count + 1;
 
@@ -425,7 +425,7 @@ pub fn reconcile_orphan_dispatches(
     mission_id: &str,
     live_pane_ids: &HashSet<String>,
 ) -> Result<bool, String> {
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
     let mut recoveries = Vec::new();
 
     for d in &mut state.dispatches {

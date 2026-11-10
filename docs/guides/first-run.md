@@ -24,7 +24,7 @@ Every privileged command (file reads/writes, PTY spawns, diagnostics, state load
 
 ## What gets created under .saple/
 
-On first project open, `ensure_workspace_dirs` (`src-tauri/src/project.rs`) creates:
+On first project open, `ensure_workspace_dirs` (`src-tauri/src/workspace/project.rs`) creates:
 
 ```text
 .saple/
@@ -53,7 +53,7 @@ All of this stays inside the project directory. See README.md ("Workspace Data")
 
 ## Provider readiness
 
-Bridge detects installed provider CLIs without launching them interactively. The single source of truth is the provider table in `src-tauri/src/providers.rs`; detection and pane launch share it so they can never disagree.
+Bridge detects installed provider CLIs without launching them interactively. The single source of truth is the provider table in `src-tauri/src/providers/mod.rs`; detection and pane launch share it so they can never disagree.
 
 - `check_provider_cli` resolves each CLI on `PATH` (handling Windows `PATHEXT`) and runs `<cli> --version` with a 5 second timeout. `available` reflects PATH resolution; `version` is best-effort.
 - Providers probed for a version: codex, claude, gemini, opencode, cursor (`cursor-agent`), droid, copilot (`gh copilot`), pi.

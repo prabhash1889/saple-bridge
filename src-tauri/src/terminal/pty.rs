@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error_code::CodedError;
-use crate::keychain;
+use crate::providers::keychain;
 
 
 // Process-tree cleanup lives in the shared proc_tree module (Phase 3): review verification and
@@ -49,7 +49,7 @@ pub struct PtySession {
     // Windows: Job Object owning the shell + its descendant process tree, so closing a pane
     // kills the AI CLI (and its children), not just powershell.exe. `None` on non-Windows or
     // if job assignment failed — in which case we fall back to `child.kill()` alone.
-    pub job: Option<crate::proc_tree::JobObject>,
+    pub job: Option<crate::terminal::proc_tree::JobObject>,
 }
 
 pub struct PtyRegistry {
@@ -209,7 +209,7 @@ fn validate_prompt_file(cwd: &str, prompt_file: &str) -> Result<(), CodedError> 
             "Prompt file requires a project working directory",
         ));
     }
-    let resolved = crate::project_roots::get_project_file_path(cwd, prompt_file)?;
+    let resolved = crate::workspace::project_roots::get_project_file_path(cwd, prompt_file)?;
     if !resolved.is_file() {
         return Err(CodedError::invalid_path(format!(
             "Prompt file not found in project: {}",
@@ -272,7 +272,7 @@ pub async fn spawn_pty(
     interactive_prompt: Option<bool>,
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
-    roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
+    roots: State<'_, Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), CodedError> {
     // Phase 4 audit: spawning a PTY is a privileged action (it runs shells and agent CLIs inside
     // an approved root). One line per spawn attempt - success or refusal - with the provider tag
@@ -286,10 +286,10 @@ pub async fn spawn_pty(
     )
     .await;
     let audited = match &result {
-        Ok(()) => Ok(crate::audit::Outcome::ok()),
+        Ok(()) => Ok(crate::observability::audit::Outcome::ok()),
         Err(e) => Err(e.message.clone()),
     };
-    crate::audit::record(
+    crate::observability::audit::record(
         "renderer",
         &format!("spawn_pty({})", provider_tag),
         Some(&audited_cwd),
@@ -312,7 +312,7 @@ async fn spawn_pty_inner(
     interactive_prompt: Option<bool>,
     app_handle: AppHandle,
     registry: State<'_, PtyRegistry>,
-    roots: State<'_, Arc<crate::project_roots::ProjectRootRegistry>>,
+    roots: State<'_, Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), CodedError> {
     // Trust boundary (Phase 1): a pane may only run inside an approved project root or,
     // as the one deliberate exception, the user's home directory (plain home shells).
@@ -329,7 +329,7 @@ async fn spawn_pty_inner(
 
     // Resolved on the async task (needs the AppHandle); consumed inside the blocking
     // closure below when building a claude invocation.
-    let claude_hook_dir = crate::claude_context::pane_hook_dir(&app_handle);
+    let claude_hook_dir = crate::terminal::claude_context::pane_hook_dir(&app_handle);
 
     // Build the PTY, read keychain secrets and spawn the child process on a blocking
     // worker so this (synchronous, occasionally slow) work never blocks the Tauri main
@@ -340,7 +340,7 @@ async fn spawn_pty_inner(
         PtyPair,
         Box<dyn Child + Send + Sync>,
         Box<dyn Read + Send>,
-        Option<crate::proc_tree::JobObject>,
+        Option<crate::terminal::proc_tree::JobObject>,
         Option<String>,
     );
     let (writer, pair, child, mut reader, job, injected_prompt) =
@@ -400,7 +400,7 @@ async fn spawn_pty_inner(
             if interactive_delivery {
                 if let Some(p_file) = prompt_file.as_ref() {
                     validate_prompt_file(&cwd, p_file)?;
-                    let resolved = crate::project_roots::get_project_file_path(&cwd, p_file)?;
+                    let resolved = crate::workspace::project_roots::get_project_file_path(&cwd, p_file)?;
                     injected_prompt =
                         Some(std::fs::read_to_string(&resolved).map_err(|e| e.to_string())?);
                 }
@@ -412,7 +412,7 @@ async fn spawn_pty_inner(
             // must pass its validator.
             let provider_invocation = match session_uuid.as_deref().filter(|_| provider == "claude") {
                 Some(uuid) => {
-                    if !crate::claude_context::is_valid_session_uuid(uuid) {
+                    if !crate::terminal::claude_context::is_valid_session_uuid(uuid) {
                         return Err(format!("Invalid Claude session id: {}", uuid));
                     }
                     // Per-pane SessionStart hook keeps the context badge attached to
@@ -421,7 +421,7 @@ async fn spawn_pty_inner(
                     // tracks the spawn-time session.
                     let settings_arg = claude_hook_dir
                         .as_deref()
-                        .and_then(|d| crate::claude_context::prepare_pane_hook(d, uuid))
+                        .and_then(|d| crate::terminal::claude_context::prepare_pane_hook(d, uuid))
                         .map(|p| format!(" --settings \"{}\"", p.display()))
                         .unwrap_or_default();
                     format!("{} --session-id \"{}\"{}", provider_cleaned, uuid, settings_arg)
@@ -558,7 +558,7 @@ async fn spawn_pty_inner(
     // Put the shell (and the descendants it will spawn) into a kill-on-close Job Object so
     // closing the pane tears down the whole process tree, not just powershell.exe. Done right
     // after spawn, before the shell has had time to launch the AI CLI. No-op on non-Windows.
-    let job = child.process_id().and_then(crate::proc_tree::JobObject::attach);
+    let job = child.process_id().and_then(crate::terminal::proc_tree::JobObject::attach);
 
     // 6. Split reader & writer
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -805,7 +805,7 @@ pub async fn write_pty(
             // child) is exactly the kind of silent privileged-path failure the audit trail must
             // capture. Successful interactive keystrokes are NOT audited - they would flood the
             // trail with noise and bury the real events.
-            crate::audit::record(
+            crate::observability::audit::record(
                 "renderer",
                 "write_pty",
                 None,
@@ -816,7 +816,7 @@ pub async fn write_pty(
         }
         Err(mpsc::TrySendError::Disconnected(_)) => {
             let err = format!("PTY session {} writer closed", id);
-            crate::audit::record("renderer", "write_pty", None, Instant::now(), &Err(err.clone()));
+            crate::observability::audit::record("renderer", "write_pty", None, Instant::now(), &Err(err.clone()));
             Err(CodedError::internal(err))
         }
     }
@@ -1069,7 +1069,7 @@ mod tests {
 
     #[test]
     fn spawn_cwd_requires_approved_root_or_home() {
-        let registry = crate::project_roots::ProjectRootRegistry::new();
+        let registry = crate::workspace::project_roots::ProjectRootRegistry::new();
         let home_ok = match std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
             Some(home) => PathBuf::from(home).canonicalize().unwrap(),
             None => return,

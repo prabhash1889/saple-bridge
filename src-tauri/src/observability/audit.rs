@@ -19,7 +19,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 
-/// Audit file name inside [`crate::app_log::log_dir`].
+/// Audit file name inside [`crate::observability::app_log::log_dir`].
 pub const AUDIT_FILE_NAME: &str = "audit.log";
 /// Previous generation kept when the current file rotates out.
 const ROTATED_FILE_NAME: &str = "audit.log.old";
@@ -66,10 +66,10 @@ struct AuditEntry<'a> {
 /// before it started. Best-effort and failure-silent: no-op when logging is uninitialized, and I/O
 /// errors are swallowed - auditing must never break the action it audits.
 pub fn record(source: &str, command: &str, cwd: Option<&str>, started: Instant, outcome: &Result<Outcome, String>) {
-    let Some(dir) = crate::app_log::log_dir() else { return };
+    let Some(dir) = crate::observability::app_log::log_dir() else { return };
     let entry = match outcome {
         Ok(out) => AuditEntry {
-            ts: crate::project::now_iso(),
+            ts: crate::workspace::project::now_iso(),
             source,
             command,
             cwd,
@@ -78,7 +78,7 @@ pub fn record(source: &str, command: &str, cwd: Option<&str>, started: Instant, 
             duration_ms: started.elapsed().as_millis(),
         },
         Err(err) => AuditEntry {
-            ts: crate::project::now_iso(),
+            ts: crate::workspace::project::now_iso(),
             source,
             command,
             cwd,
@@ -95,7 +95,7 @@ pub fn record(source: &str, command: &str, cwd: Option<&str>, started: Instant, 
 
 fn bounded(s: &str) -> String {
     const MAX_ERROR_CHARS: usize = 512;
-    let redacted = crate::app_log::redact(s);
+    let redacted = crate::observability::app_log::redact(s);
     if redacted.chars().count() <= MAX_ERROR_CHARS {
         return redacted;
     }

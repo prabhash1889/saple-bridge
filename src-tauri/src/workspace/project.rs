@@ -5,12 +5,12 @@ use std::process::Command;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use crate::error_code::CodedError;
-use crate::process_ext::CommandNoWindow;
-use crate::project_roots::ProjectRootRegistry;
+use crate::terminal::process_ext::CommandNoWindow;
+use crate::workspace::project_roots::ProjectRootRegistry;
 
 // Path policy (containment resolution, protected writer paths, destructive targets) lives in
-// `project_roots` as of Phase 5; import from `crate::project_roots` directly.
-use crate::project_roots::{get_project_file_path, get_project_write_path};
+// `project_roots` as of Phase 5; import from `crate::workspace::project_roots` directly.
+use crate::workspace::project_roots::{get_project_file_path, get_project_write_path};
 
 fn default_enable_edit_mode() -> bool {
     true
@@ -55,7 +55,7 @@ pub struct WorkspaceSummary {
 /// Full MCP configuration status for the project Settings → MCP tab.
 ///
 /// Returned by [`check_mcp_status`]. Distinct from
-/// [`crate::diagnostics::McpConfigStatus`], which is a leaner subset embedded in
+/// [`crate::observability::diagnostics::McpConfigStatus`], which is a leaner subset embedded in
 /// the diagnostics report: this struct additionally surfaces `other_servers`
 /// (non-`saple-memory` servers found in the config) for the Settings UI.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -155,7 +155,7 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
     }
 
     // Memory directories come from the layout owner so mode rules live in one place.
-    for dir in crate::memory_layout::required_dir_names(&project_path) {
+    for dir in crate::memory::layout::required_dir_names(&project_path) {
         let path = get_project_file_path(&project_path, dir)?;
         if !path.exists() {
             fs::create_dir_all(&path).map_err(|e| format!("Failed to create {}: {}", dir, e))?;
@@ -164,7 +164,7 @@ fn ensure_workspace_dirs_inner(registry: &ProjectRootRegistry, project_path: Str
 
     // Project open is the one hook every user passes through — repair stale sidecar paths here.
     #[cfg(not(debug_assertions))]
-    crate::sidecar::heal_mcp_configs(&project_path);
+    crate::integrations::sidecar::heal_mcp_configs(&project_path);
 
     Ok(())
 }
@@ -187,11 +187,11 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
     if config_path.exists() {
         // Phase 2: a corrupt config is never silently recreated over; original bytes are
         // preserved and writes to the config stay blocked until recovery.
-        match crate::state_load::read_json_text(&config_path) {
-            crate::state_load::JsonText::Ok(content) => {
+        match crate::workspace::state_load::read_json_text(&config_path) {
+            crate::workspace::state_load::JsonText::Ok(content) => {
                 serde_json::from_str(&content).map_err(|e| {
                     let err = format!("Failed to parse config: {}", e);
-                    match crate::state_load::preserve_and_flag_corrupt(&config_path, &err) {
+                    match crate::workspace::state_load::preserve_and_flag_corrupt(&config_path, &err) {
                         Ok(backup) => format!(
                             "{}. Original bytes preserved at {} - resolve recovery before writing.",
                             err,
@@ -202,8 +202,8 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
                 })
                 .map_err(CodedError::internal)
             }
-            crate::state_load::JsonText::Io(e) => Err(e.to_string().into()),
-            crate::state_load::JsonText::Encoding(m) => Err(m.into()),
+            crate::workspace::state_load::JsonText::Io(e) => Err(e.to_string().into()),
+            crate::workspace::state_load::JsonText::Encoding(m) => Err(m.into()),
         }
     } else {
         let now = now_iso();
@@ -227,7 +227,7 @@ fn ensure_project_config_inner(registry: &ProjectRootRegistry, project_path: Str
         };
         
         let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-        crate::fs_lock::atomic_write(&config_path, json.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&config_path, json.as_bytes())?;
         
         Ok(config)
     }
@@ -250,11 +250,11 @@ pub(crate) fn read_project_config_inner(registry: &ProjectRootRegistry, project_
     if !config_path.exists() {
         return Err("Config file not found".to_string().into());
     }
-    match crate::state_load::read_json_text(&config_path) {
-        crate::state_load::JsonText::Ok(content) => serde_json::from_str(&content)
+    match crate::workspace::state_load::read_json_text(&config_path) {
+        crate::workspace::state_load::JsonText::Ok(content) => serde_json::from_str(&content)
             .map_err(|e| CodedError::internal(format!("Failed to parse config: {}", e))),
-        crate::state_load::JsonText::Io(e) => Err(e.to_string().into()),
-        crate::state_load::JsonText::Encoding(m) => Err(m.into()),
+        crate::workspace::state_load::JsonText::Io(e) => Err(e.to_string().into()),
+        crate::workspace::state_load::JsonText::Encoding(m) => Err(m.into()),
     }
 }
 
@@ -276,7 +276,7 @@ fn write_project_config_inner(registry: &ProjectRootRegistry, project_path: Stri
     let mut updated = config;
     updated.updated_at = now_iso();
     let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
-    crate::fs_lock::atomic_write(&config_path, json.as_bytes())?;
+    crate::workspace::fs_lock::atomic_write(&config_path, json.as_bytes())?;
     Ok(updated)
 }
 
@@ -317,7 +317,7 @@ pub async fn write_project_file(
 fn write_project_file_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String, content: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let full_path = get_project_write_path(&project_path, &file_path)?;
-    crate::fs_lock::atomic_write(&full_path, content.as_bytes()).map_err(CodedError::internal)
+    crate::workspace::fs_lock::atomic_write(&full_path, content.as_bytes()).map_err(CodedError::internal)
 }
 
 #[tauri::command]
@@ -351,7 +351,7 @@ fn get_workspace_summary_inner(registry: &ProjectRootRegistry, project_path: Str
     let has_saple_config = canonical_base.join(".saple").join("config.json").exists();
     
     // Check bridge memory
-    let has_bridge_memory = crate::memory_layout::bridge_memory_dir(&project_path).exists();
+    let has_bridge_memory = crate::memory::layout::bridge_memory_dir(&project_path).exists();
     
     // Check MCP config
     let has_mcp_config = canonical_base.join(".mcp.json").exists() || canonical_base.join("mcp_config.json").exists();
@@ -450,7 +450,7 @@ pub async fn install_mcp_config(
 
 fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String) -> Result<String, CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
-    let binary_path = crate::sidecar::sidecar_binary_path()?;
+    let binary_path = crate::integrations::sidecar::sidecar_binary_path()?;
     let binary_str = binary_path.to_string_lossy().to_string();
 
     let mcp_config = serde_json::json!({
@@ -478,9 +478,9 @@ fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String
             existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
         }
         let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
-        crate::fs_lock::atomic_write(&mcp_json_path, merged.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&mcp_json_path, merged.as_bytes())?;
     } else {
-        crate::fs_lock::atomic_write(&mcp_json_path, config_str.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&mcp_json_path, config_str.as_bytes())?;
     }
     
     // Also write mcp_config.json (same content)
@@ -497,9 +497,9 @@ fn install_mcp_config_inner(registry: &ProjectRootRegistry, project_path: String
             existing_json["mcpServers"] = serde_json::json!({"saple-memory": mcp_config["mcpServers"]["saple-memory"].clone()});
         }
         let merged = serde_json::to_string_pretty(&existing_json).map_err(|e| e.to_string())?;
-        crate::fs_lock::atomic_write(&mcp_config_path, merged.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&mcp_config_path, merged.as_bytes())?;
     } else {
-        crate::fs_lock::atomic_write(&mcp_config_path, config_str.as_bytes())?;
+        crate::workspace::fs_lock::atomic_write(&mcp_config_path, config_str.as_bytes())?;
     }
     
     Ok(format!("MCP config installed for project at {}", project_path))

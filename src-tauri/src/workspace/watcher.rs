@@ -7,7 +7,7 @@
 //!
 //! This module closes that gap: it watches `.saple` and emits `saple-file-changed` when one of the
 //! three tracked files changes on disk, so the frontend can force-reload the affected store before
-//! its next save. Echoes of our own [`crate::fs_lock::atomic_write`] (a temp-file+rename fires a
+//! its next save. Echoes of our own [`crate::workspace::fs_lock::atomic_write`] (a temp-file+rename fires a
 //! change event on the target) are filtered out by fingerprint, so a save the renderer just made
 //! never bounces back as a reload.
 
@@ -79,7 +79,7 @@ pub fn watch_project_files(
     project_path: String,
     app_handle: AppHandle,
     state: State<'_, WatcherState>,
-    registry: State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), String> {
     registry.ensure_inside_approved_root(&project_path)?;
     let mut guard = state.0.lock().unwrap();
@@ -111,7 +111,7 @@ pub fn watch_project_files(
                 }
                 // Skip our own atomic_write echoing back; only surface genuine external edits.
                 if let Ok(bytes) = std::fs::read(&event.path) {
-                    if crate::fs_lock::is_last_own_write(&event.path, &bytes) {
+                    if crate::workspace::fs_lock::is_last_own_write(&event.path, &bytes) {
                         continue;
                     }
                 }
@@ -187,7 +187,7 @@ pub fn watch_swarm_dir(
     project_path: String,
     app_handle: AppHandle,
     state: State<'_, SwarmWatcherState>,
-    registry: State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<(), String> {
     registry.ensure_inside_approved_root(&project_path)?;
     let mut guard = state.0.lock().unwrap();
@@ -220,7 +220,7 @@ pub fn watch_swarm_dir(
                 }
                 // Skip our own atomic_write echoing back (e.g. Bridge writing state.json).
                 if let Ok(bytes) = std::fs::read(&event.path) {
-                    if crate::fs_lock::is_last_own_write(&event.path, &bytes) {
+                    if crate::workspace::fs_lock::is_last_own_write(&event.path, &bytes) {
                         continue;
                     }
                 }

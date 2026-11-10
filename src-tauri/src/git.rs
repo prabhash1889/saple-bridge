@@ -4,9 +4,9 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
-use crate::project_roots::get_project_file_path;
-use crate::process_ext::CommandNoWindow;
-use crate::project_roots::ProjectRootRegistry;
+use crate::workspace::project_roots::get_project_file_path;
+use crate::terminal::process_ext::CommandNoWindow;
+use crate::workspace::project_roots::ProjectRootRegistry;
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(12);
 // Network round-trips (fetch/pull/push) legitimately take far longer than local

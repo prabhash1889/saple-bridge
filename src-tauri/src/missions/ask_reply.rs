@@ -55,7 +55,7 @@ pub fn ask_question(
     };
 
     let task_id = state.dispatches[dispatch_idx].task_id.clone();
-    let now = crate::project::now_iso();
+    let now = crate::workspace::project::now_iso();
     state.dispatches[dispatch_idx].last_heartbeat_at = Some(now.clone());
 
     let thread_id = new_id("thr");

@@ -15,8 +15,8 @@
 
 use serde_json::Value;
 
-use crate::project::now_iso;
-use crate::project_roots::get_project_file_path;
+use crate::workspace::project::now_iso;
+use crate::workspace::project_roots::get_project_file_path;
 
 /// The only files this generic writer may touch — the canonical control-plane collections. Without
 /// this whitelist a "write arbitrary JSON by id" command would be a way to clobber `tasks.json`,
@@ -41,15 +41,15 @@ fn load_array(path: &std::path::Path) -> Result<Vec<Value>, String> {
         return Ok(Vec::new());
     }
     // Centralized JSON text reading: BOM-stripped UTF-8, clear UTF-16/32 reporting.
-    match crate::state_load::read_json_text(path) {
-        crate::state_load::JsonText::Ok(content) => {
+    match crate::workspace::state_load::read_json_text(path) {
+        crate::workspace::state_load::JsonText::Ok(content) => {
             match serde_json::from_str::<Value>(&content).map_err(|e| format!("parse {:?}: {}", path, e))? {
                 Value::Array(arr) => Ok(arr),
                 _ => Err(format!("{:?} is not a JSON array", path)),
             }
         }
-        crate::state_load::JsonText::Io(e) => Err(e.to_string()),
-        crate::state_load::JsonText::Encoding(m) => Err(m),
+        crate::workspace::state_load::JsonText::Io(e) => Err(e.to_string()),
+        crate::workspace::state_load::JsonText::Encoding(m) => Err(m),
     }
 }
 
@@ -75,7 +75,7 @@ pub(crate) fn canonical_write_inner(
 
     let path = get_project_file_path(&project_path, &file_path)?;
 
-    crate::fs_lock::with_path_lock(&path, || {
+    crate::workspace::fs_lock::with_path_lock(&path, || {
         let mut items = load_array(&path)?;
         let now = now_iso();
 
@@ -108,7 +108,7 @@ pub(crate) fn canonical_write_inner(
         };
 
         let json = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
-        crate::fs_lock::write_unlocked(&path, json.as_bytes())?;
+        crate::workspace::fs_lock::write_unlocked(&path, json.as_bytes())?;
         Ok(record)
     })?
 }
@@ -126,7 +126,7 @@ pub async fn canonical_record_write(
     id: String,
     patch: Value,
     create: bool,
-    registry: tauri::State<'_, std::sync::Arc<crate::project_roots::ProjectRootRegistry>>,
+    registry: tauri::State<'_, std::sync::Arc<crate::workspace::project_roots::ProjectRootRegistry>>,
 ) -> Result<Value, String> {
     // The inner writer is shared with trusted Rust callers (review.rs), so the renderer-side
     // trust gate lives here at the command boundary rather than inside the shared body.

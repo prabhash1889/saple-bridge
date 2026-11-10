@@ -9,11 +9,14 @@
 // contract for edits: adding a provider means one row here plus renderer-side entries in
 // providerFacts.ts; changing an env var or service name here changes what panes receive.
 
+pub(crate) mod keychain;
+pub(crate) mod models;
+
 use serde::{Serialize, Deserialize};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::process_ext::CommandNoWindow;
+use crate::terminal::process_ext::CommandNoWindow;
 
 /// Bound on a single `--version` probe so a hung CLI cannot stall readiness checks,
 /// diagnostics, or the provider UI indefinitely.
@@ -852,7 +855,7 @@ pub(crate) fn probe_cli(name: &str, bin: &str, args: &[&str], timeout: Duration)
             let mut command = Command::new(&path);
             command.args(args);
             command.no_window();
-            let version = match crate::process_ext::run_with_timeout(command, timeout) {
+            let version = match crate::terminal::process_ext::run_with_timeout(command, timeout) {
                 Some(output) => {
                     let text = if output.status.success() {
                         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -944,7 +947,7 @@ fn signin_status(provider: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keychain;
+    use crate::providers::keychain;
 
     #[test]
     fn provider_ids_are_unique_and_nonempty() {
@@ -1133,7 +1136,7 @@ mod tests {
 
     #[test]
     fn parse_claude_fixture_stream_json() {
-        let fixture = include_str!("../fixtures/claude_stream_json.jsonl");
+        let fixture = include_str!("../../fixtures/claude_stream_json.jsonl");
         let res = parse_provider_result("claude", fixture, None).unwrap();
         assert_eq!(
             res.text,
@@ -1147,7 +1150,7 @@ mod tests {
 
     #[test]
     fn parse_codex_fixture_jsonl() {
-        let fixture = include_str!("../fixtures/codex_jsonl.jsonl");
+        let fixture = include_str!("../../fixtures/codex_jsonl.jsonl");
         let res = parse_provider_result("codex", fixture, Some("Token refresh logic implemented."))
             .unwrap();
         assert_eq!(res.text, "Token refresh logic implemented.");
@@ -1158,7 +1161,7 @@ mod tests {
 
     #[test]
     fn parse_droid_fixture_json() {
-        let fixture = include_str!("../fixtures/droid_json.json");
+        let fixture = include_str!("../../fixtures/droid_json.json");
         let res = parse_provider_result("droid", fixture, None).unwrap();
         assert_eq!(
             res.text,
@@ -1171,7 +1174,7 @@ mod tests {
 
     #[test]
     fn parse_gemini_fixture_json() {
-        let fixture = include_str!("../fixtures/gemini_json.json");
+        let fixture = include_str!("../../fixtures/gemini_json.json");
         let res = parse_provider_result("gemini", fixture, None).unwrap();
         assert_eq!(
             res.text,
@@ -1184,7 +1187,7 @@ mod tests {
 
     #[test]
     fn parse_grok_fixture_json() {
-        let fixture = include_str!("../fixtures/grok_json.json");
+        let fixture = include_str!("../../fixtures/grok_json.json");
         let res = parse_provider_result("grok", fixture, None).unwrap();
         assert_eq!(
             res.text,
@@ -1196,7 +1199,7 @@ mod tests {
 
     #[test]
     fn parse_opencode_fixture_json() {
-        let fixture = include_str!("../fixtures/opencode_json.json");
+        let fixture = include_str!("../../fixtures/opencode_json.json");
         let res = parse_provider_result("opencode", fixture, None).unwrap();
         assert_eq!(res.text, "Finished oauth token refresh implementation.");
         assert_eq!(res.session_id, Some("opencode_sess_202".to_string()));
