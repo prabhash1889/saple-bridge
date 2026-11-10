@@ -44,7 +44,10 @@ tauri-plugin-window-state = "2"
 # In-app updates: `check()` fetches the signed release feed and applies the NSIS update; the
 # process plugin provides the `relaunch()` that restarts into the new version. Updater artifact
 # signing (and the `plugins.updater` feed config) are release-only — see tauri.release.conf.json.
-tauri-plugin-updater = "2"
+# `zip` (a default feature) only unpacks legacy v1-compat `.exe.zip`/`.msi.zip` updates; our
+# releases publish v2 artifacts (raw setup.exe/.msi/.AppImage, and .app.tar.gz whose tar/flate2
+# are unconditional on macOS), so drop it along with the `zip` crate's advisories.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
 trash = "5.2.6"
 # Watch the open project's .saple state files so external writers (the saple-mcp sidecar,
