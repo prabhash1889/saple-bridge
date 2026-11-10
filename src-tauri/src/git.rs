@@ -221,7 +221,8 @@ pub fn git_diff_file_inner(project_path: String, file_path: String) -> Result<St
     let full_path = get_project_file_path(&project_path, &file_path)?;
 
     // Check if it's untracked
-    let status_output = run_git_with_timeout(&project_path, &["status", "--porcelain", &file_path], GIT_TIMEOUT);
+    // `--` keeps a contained path such as `-foo` a pathspec rather than a git option.
+    let status_output = run_git_with_timeout(&project_path, &["status", "--porcelain", "--", &file_path], GIT_TIMEOUT);
 
     let is_untracked = if let Ok(out) = status_output {
         let stdout_str = String::from_utf8_lossy(&out.stdout);

@@ -155,6 +155,22 @@ fn contained_worktree(project_path: &str, worktree_path: &str) -> Result<PathBuf
     Ok(wt)
 }
 
+/// Resolve a renderer-supplied ref to the commit it names. git parses an argument starting
+/// with `-` as an option even in a ref position (`git diff --output=<file>` writes anywhere), so
+/// such refs are refused outright, and only the resulting hex SHA is ever passed on to git.
+fn resolve_base_ref(dir: &Path, base_ref: &str) -> Result<String, String> {
+    if base_ref.is_empty() || base_ref.starts_with('-') {
+        return Err(format!("Invalid base ref '{}'", base_ref));
+    }
+    let spec = format!("{}^{{commit}}", base_ref);
+    let out = run_git_in_dir(dir, &["rev-parse", "--verify", "--quiet", &spec], GIT_TIMEOUT)?;
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || sha.is_empty() {
+        return Err(format!("Base ref '{}' does not name a commit", base_ref));
+    }
+    Ok(sha)
+}
+
 /// Formats branch name: `saple/<mission-short>/<task-short>` or `saple/<mission-short>/main`.
 pub fn get_worktree_branch(mission_id: &str, task_id: Option<&str>) -> String {
     let m_short = short_id(mission_id);
@@ -246,18 +262,19 @@ pub fn mission_worktree_create_inner(
     let base_dir = canonical_base(project_path).map_err(|e| e.to_string())?;
     let wt_path = get_worktree_dir(project_path, mission_id, task_id);
     let branch = get_worktree_branch(mission_id, task_id);
+    // Validated up front so a bad ref fails before anything is created on disk.
+    let base_sha = base_ref.map(|r| resolve_base_ref(&base_dir, r)).transpose()?;
 
     // If worktree directory already exists and is a valid worktree, refresh and return it
     if wt_path.exists() && wt_path.join(".git").exists() {
         let canonical_wt = wt_path.canonicalize().map_err(|e| e.to_string())?;
         let _ = registry.register_root(&canonical_wt);
         let head = get_head_commit(&canonical_wt);
-        let base = base_ref.and_then(|b| get_head_commit(&base_dir.join(b))).or_else(|| get_head_commit(&base_dir));
-        let (ahead, behind) = if let Some(b_ref) = base_ref {
-            get_ahead_behind(&canonical_wt, "HEAD", b_ref)
-        } else {
-            (0, 0)
+        let (ahead, behind) = match &base_sha {
+            Some(sha) => get_ahead_behind(&canonical_wt, "HEAD", sha),
+            None => (0, 0),
         };
+        let base = base_sha.or_else(|| get_head_commit(&base_dir));
         return Ok(WorktreeInfo {
             worktree_path: canonical_wt.to_string_lossy().to_string(),
             branch,
@@ -290,8 +307,8 @@ pub fn mission_worktree_create_inner(
         args.push("-b");
         args.push(&branch);
         args.push(&wt_path_str);
-        if let Some(base) = base_ref {
-            args.push(base);
+        if let Some(sha) = &base_sha {
+            args.push(sha);
         }
     }
 
@@ -309,7 +326,7 @@ pub fn mission_worktree_create_inner(
     let _ = registry.register_root(&canonical_wt);
 
     let head = get_head_commit(&canonical_wt);
-    let base = get_head_commit(&base_dir);
+    let base = base_sha.or_else(|| get_head_commit(&base_dir));
 
     Ok(WorktreeInfo {
         worktree_path: canonical_wt.to_string_lossy().to_string(),
@@ -374,8 +391,11 @@ pub fn mission_worktree_diff_inner(
 
     let files = git_status_inner(wt.to_string_lossy().to_string()).unwrap_or_default();
 
-    let diff_target = base_ref.unwrap_or("HEAD");
-    let diff_out = run_git_in_dir(wt_dir, &["diff", diff_target], GIT_TIMEOUT)?;
+    let diff_target = match base_ref {
+        Some(r) => resolve_base_ref(wt_dir, r)?,
+        None => "HEAD".to_string(),
+    };
+    let diff_out = run_git_in_dir(wt_dir, &["diff", &diff_target, "--"], GIT_TIMEOUT)?;
     let full_diff = if diff_out.status.success() {
         String::from_utf8_lossy(&diff_out.stdout).to_string()
     } else {
@@ -811,6 +831,34 @@ mod tests {
         assert!(dir.join("README.md").exists());
 
         let _ = fs::remove_dir_all(&victim);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn base_ref_cannot_smuggle_git_options() {
+        let (dir, registry) = init_test_git_repo("baseref");
+        let project_path = dir.to_string_lossy().to_string();
+        let wt = mission_worktree_create_inner(&registry, &project_path, "msn_ref", Some("t1"), None).unwrap();
+        fs::write(Path::new(&wt.worktree_path).join("edit.txt"), "x\n").unwrap();
+
+        // `git diff --output=<file>` writes the diff wherever the caller says.
+        let planted = std::env::temp_dir().join(format!("saple-planted-{}.txt", std::process::id()));
+        let _ = fs::remove_file(&planted);
+        let evil = format!("--output={}", planted.display());
+        assert!(mission_worktree_diff_inner(&project_path, &wt.worktree_path, Some(&evil)).is_err());
+        assert!(!planted.exists(), "a ref starting with '-' must never reach git as an option");
+        assert!(
+            mission_worktree_create_inner(&registry, &project_path, "msn_ref", Some("t2"), Some(&evil)).is_err()
+        );
+        assert!(mission_worktree_diff_inner(&project_path, &wt.worktree_path, Some("no-such-ref")).is_err());
+
+        // Real refs keep working.
+        assert!(mission_worktree_diff_inner(&project_path, &wt.worktree_path, Some("main")).is_ok());
+        let wt3 = mission_worktree_create_inner(&registry, &project_path, "msn_ref", Some("t3"), Some("main")).unwrap();
+        assert_eq!(wt3.base_commit, get_head_commit(&dir));
+
+        mission_worktree_remove_inner(&registry, &project_path, &wt.worktree_path, true).unwrap();
+        mission_worktree_remove_inner(&registry, &project_path, &wt3.worktree_path, true).unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 
