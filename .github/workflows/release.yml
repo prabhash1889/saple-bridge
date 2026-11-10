@@ -13,10 +13,12 @@ on:
 
 # The release job needs to create the GitHub release and upload the installer + latest.json.
 # id-token is required by attest-build-provenance for keyless Sigstore signing of the
-# build-provenance attestations uploaded alongside the installers.
+# build-provenance attestations uploaded alongside the installers; attestations: write lets
+# attest-build-provenance persist them to the repo's attestation store.
 permissions:
   contents: write
   id-token: write
+  attestations: write
 
 # One release at a time, never cancelled: two tags pushed close together queue instead of racing
 # for the same draft release / latest.json.
