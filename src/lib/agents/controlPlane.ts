@@ -10,9 +10,9 @@
 // than aborting a launch or a completion. Callers get `null` on failure.
 
 import { invoke } from '@tauri-apps/api/core';
-import { createId } from './id';
-import { nowIso } from './date';
-import type { AgentOutcome, AgentSession, AgentStatus } from '../types/agent';
+import { createId } from '../id';
+import { nowIso } from '../date';
+import type { AgentOutcome, AgentSession, AgentStatus } from '../../types/agent';
 
 const AGENTS = '.saple/agents.json';
 const RUNS = '.saple/runs.json';

@@ -11,7 +11,7 @@
 //     the user dismisses it. Repeats after escalation keep bumping that same sticky entry instead
 //     of stacking toasts.
 
-import { useNotificationStore } from '../stores/notificationStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 import { reportError } from './errorReporting';
 
 const PERSISTENT_THRESHOLD = 3;

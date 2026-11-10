@@ -1,5 +1,5 @@
 import type { AgentSession, AgentStatus } from '../../types/agent';
-import { formatElapsed } from '../../lib/swarmStatus';
+import { formatElapsed } from '../../lib/swarm/swarmStatus';
 
 export type ActivityOutcome = 'running' | 'completed' | 'failed' | 'cancelled';
 

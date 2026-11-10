@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { formatElapsed } from '../../lib/swarmStatus';
+import { formatElapsed } from '../../lib/swarm/swarmStatus';
 import { useProjectStore } from '../../stores/projectStore';
 
 // Ticking "running for" badge for active agent nodes/cards. `startedAt` is the ms epoch stamped

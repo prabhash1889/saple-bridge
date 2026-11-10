@@ -2,10 +2,10 @@
 // coordinator gets its own plan-contract prompt while workers keep the existing brief. The plan IS
 // the assignment now: worker missions come from the coordinator's `plan.json` task, not a
 // `tasks.json` convention nothing parsed.
-import type { SwarmAgent } from '../stores/swarmStore';
-import type { ContextFileRef } from '../types/wizard';
-import { SWARM_SKILLS } from '../components/swarm/wizard/skills';
-import { contextBriefSection } from './contextBrief';
+import type { SwarmAgent } from '../../stores/swarmStore';
+import type { ContextFileRef } from '../../types/wizard';
+import { SWARM_SKILLS } from '../../components/swarm/wizard/skills';
+import { contextBriefSection } from '../agents/contextBrief';
 
 export interface PromptContext {
   mission: string;
@@ -31,7 +31,7 @@ const contextSectionFor = (contextFiles: ContextFileRef[]): string =>
     : '';
 
 // The `plan.json` contract, embedded verbatim so the coordinator emits exactly what `parsePlan`
-// accepts. Kept in sync with `src/types/swarmPlan.ts` / `src/lib/swarmPlan.ts`.
+// accepts. Kept in sync with `src/types/swarmPlan.ts` / `src/lib/swarm/swarmPlan.ts`.
 const PLAN_CONTRACT = `{
   "version": 2,
   "acceptance": { "command": "npm test", "description": "how success is verified" },

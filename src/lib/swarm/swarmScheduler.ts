@@ -12,7 +12,7 @@
 //    can never complete (missing from the roster, or terminally failed/blocked/stopped) while
 //    nothing is running or starting. Left alone, such a swarm sits silently stuck forever.
 
-import type { AgentStatus } from '../types/agent';
+import type { AgentStatus } from '../../types/agent';
 
 export interface SchedulerAgent {
   id: string;

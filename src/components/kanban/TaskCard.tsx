@@ -9,7 +9,7 @@ import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useModelCatalogStore } from '../../stores/modelCatalogStore';
-import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
+import { buildTaskAgentPrompt } from '../../lib/agents/taskAgentPrompt';
 
 interface TaskCardProps {
   task: Task;

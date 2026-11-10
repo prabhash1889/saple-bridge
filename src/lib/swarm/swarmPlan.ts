@@ -2,7 +2,7 @@
 // untrusted agent output; these parsers sanitize-or-drop so a malformed, partial, or hostile file
 // can never crash the scheduler or launch a bad worker. Mirrors the `parseWorkerRequests` /
 // `parseAgentOutcome` posture: drop, never throw.
-import type { AgentRole } from '../types/agent';
+import type { AgentRole } from '../../types/agent';
 import type {
   PlanAcceptance,
   PlanProvider,
@@ -10,7 +10,7 @@ import type {
   SwarmPlan,
   TaskStrategy,
   Verdict,
-} from '../types/swarmPlan';
+} from '../../types/swarmPlan';
 
 const VALID_ROLES: AgentRole[] = ['coordinator', 'builder', 'scout', 'reviewer'];
 const VALID_STRATEGIES: TaskStrategy[] = ['single', 'debate'];

@@ -3,7 +3,7 @@ import {
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
-import { useNotificationStore, type NotificationType } from '../stores/notificationStore';
+import { useNotificationStore, type NotificationType } from '../../stores/notificationStore';
 
 interface AppNotificationOptions {
   title: string;

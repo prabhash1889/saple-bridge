@@ -1,4 +1,4 @@
-import type { Task } from '../types/task';
+import type { Task } from '../../types/task';
 import { contextBriefSection } from './contextBrief';
 
 // P1: single source for the prompt written when a Kanban task launches an agent. TaskCard, the task

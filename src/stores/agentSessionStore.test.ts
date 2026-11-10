@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 // Run queued writes inline (no real serialization needed for the assertions).
-vi.mock('../lib/writeQueue', () => ({
+vi.mock('../lib/persistence/writeQueue', () => ({
   enqueueWrite: (_key: string, fn: () => unknown) => Promise.resolve(fn()),
 }));
 

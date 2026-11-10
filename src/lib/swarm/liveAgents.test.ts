@@ -4,8 +4,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // state, so a no-op invoke mock is enough.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-import { useSwarmStore } from '../stores/swarmStore';
-import { useTerminalStore } from '../stores/terminalStore';
+import { useSwarmStore } from '../../stores/swarmStore';
+import { useTerminalStore } from '../../stores/terminalStore';
 import { getLiveAgents, describeLiveAgents } from './liveAgents';
 
 const resetStores = () => {

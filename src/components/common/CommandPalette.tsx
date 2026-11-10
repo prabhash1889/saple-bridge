@@ -16,8 +16,8 @@ import { useFileStore } from '../../stores/fileStore';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../../lib/id';
 import { useFocusTrap } from '../../lib/useFocusTrap';
-import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
-import { providerKeychainService } from '../../lib/providerFacts';
+import { buildTaskAgentPrompt } from '../../lib/agents/taskAgentPrompt';
+import { providerKeychainService } from '../../lib/agents/providerFacts';
 
 interface CommandPaletteProps {
   isOpen: boolean;

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { parseUnifiedDiffToSplitRows, SplitCellKind } from '../../lib/diffSplit';
+import { parseUnifiedDiffToSplitRows, SplitCellKind } from '../../lib/git/diffSplit';
 
 const LINE_HEIGHT = 20;
 const MIN_VIEWPORT_HEIGHT = 200;

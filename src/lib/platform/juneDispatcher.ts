@@ -9,10 +9,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import { useBrowserStore } from '../stores/browserStore';
-import { useProjectStore } from '../stores/projectStore';
-import { useSwarmStore } from '../stores/swarmStore';
-import { useTerminalStore, type AiProvider } from '../stores/terminalStore';
+import { useBrowserStore } from '../../stores/browserStore';
+import { useProjectStore } from '../../stores/projectStore';
+import { useSwarmStore } from '../../stores/swarmStore';
+import { useTerminalStore, type AiProvider } from '../../stores/terminalStore';
 
 // Kept in lockstep with the Rust `MAX_BATCH_SIZE` (june_control.rs).
 const MAX_BATCH_SIZE = 16;

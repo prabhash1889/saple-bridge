@@ -2,8 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { createId } from '../lib/id';
-import { enqueueWrite } from '../lib/writeQueue';
-import { recordFailure } from '../lib/failureTracking';
+import { enqueueWrite } from '../lib/persistence/writeQueue';
+import { recordFailure } from '../lib/platform/failureTracking';
 import type { AgentRole, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { WizardLaunchInput, ContextFileRef } from '../types/wizard';
@@ -21,17 +21,17 @@ import { useProjectStore } from './projectStore';
 import { useAgentSessionStore } from './agentSessionStore';
 import { useConfirmStore } from './confirmStore';
 import { useModelCatalogStore } from './modelCatalogStore';
-import { parseAgentOutcome } from '../lib/controlPlane';
-import { parsePlan, diffPlan, parseVerdict } from '../lib/swarmPlan';
-import { buildAgentPrompt } from '../lib/swarmPrompts';
-import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, capDigestLog, truncateDigest, MAX_PENDING_DIGESTS, type DigestEntry } from '../lib/swarmDigest';
-import { consumePendingAgentExits, reconcileLoadedAgents } from '../lib/swarmCrashRecovery';
-import { removeAgentFromRoster, findHungAgents, findDeadlockedAgents } from '../lib/swarmScheduler';
-import { createCoordinatorLink } from '../lib/swarmCoordinatorLink';
-import { notifyAgentStatusChanged } from '../lib/desktopNotifications';
+import { parseAgentOutcome } from '../lib/agents/controlPlane';
+import { parsePlan, diffPlan, parseVerdict } from '../lib/swarm/swarmPlan';
+import { buildAgentPrompt } from '../lib/swarm/swarmPrompts';
+import { buildResultsDigest, buildAcceptanceDigest, hashAcceptanceOutput, capDigestLog, truncateDigest, MAX_PENDING_DIGESTS, type DigestEntry } from '../lib/swarm/swarmDigest';
+import { consumePendingAgentExits, reconcileLoadedAgents } from '../lib/swarm/swarmCrashRecovery';
+import { removeAgentFromRoster, findHungAgents, findDeadlockedAgents } from '../lib/swarm/swarmScheduler';
+import { createCoordinatorLink } from '../lib/swarm/swarmCoordinatorLink';
+import { notifyAgentStatusChanged } from '../lib/platform/desktopNotifications';
 import { useNotificationStore } from './notificationStore';
-import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
-import { createWriteCoalescer } from '../lib/trailingWriteCoalescer';
+import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/persistence/stateLoad';
+import { createWriteCoalescer } from '../lib/persistence/trailingWriteCoalescer';
 import { providerSupportsTurnInjection } from '../components/swarm/wizard/providerMeta';
 
 export type { AgentRole, AgentStatus } from '../types/agent';
@@ -863,7 +863,7 @@ export const useSwarmStore = create<SwarmState>()(
         try {
           const parsed = JSON.parse(content);
 
-          // Crash/restart reconciliation (see lib/swarmCrashRecovery): running/starting agents
+          // Crash/restart reconciliation (see lib/swarm/swarmCrashRecovery): running/starting agents
           // whose pane is gone are failed (or recovered from a marker tail / pending exit), and
           // an interrupted run pauses so continuing is a deliberate Resume. Recovered transitions
           // replay below through updateAgentStatus so completion side effects fire exactly as if
@@ -2099,7 +2099,7 @@ export const useSwarmStore = create<SwarmState>()(
 
 // Phase 3 live coordinator: one link per app session (one live swarm at a time). It owns the pane
 // watch and pump timers; every store/state access flows through these deps, so the delivery loop
-// itself lives dependency-free in lib/swarmCoordinatorLink.
+// itself lives dependency-free in lib/swarm/swarmCoordinatorLink.
 const coordinatorLink = createCoordinatorLink({
   getSnapshot: () => {
     const s = useSwarmStore.getState();

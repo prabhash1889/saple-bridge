@@ -5,14 +5,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (bare vs scoped, line anchoring) is exercised genuinely.
 
 const notifyTaskReadyForReview = vi.hoisted(() => vi.fn());
-vi.mock('./desktopNotifications', () => ({
+vi.mock('../platform/desktopNotifications', () => ({
   notifyTaskReadyForReview,
 }));
 
 const projectRef = vi.hoisted(() => ({
   currentProjectPath: '/proj' as string | null,
 }));
-vi.mock('../stores/projectStore', () => ({
+vi.mock('../../stores/projectStore', () => ({
   useProjectStore: { getState: () => projectRef },
 }));
 
@@ -22,7 +22,7 @@ const kanbanState = vi.hoisted(() => ({
   updateTask: vi.fn(),
 }));
 const recordPendingTaskReview = vi.hoisted(() => vi.fn());
-vi.mock('../stores/kanbanStore', () => ({
+vi.mock('../../stores/kanbanStore', () => ({
   useKanbanStore: { getState: () => kanbanState },
   recordPendingTaskReview,
 }));
@@ -34,7 +34,7 @@ const swarmState = vi.hoisted(() => ({
   ingestPlan: vi.fn(),
 }));
 const recordPendingAgentExit = vi.hoisted(() => vi.fn());
-vi.mock('../stores/swarmStore', () => ({
+vi.mock('../../stores/swarmStore', () => ({
   useSwarmStore: { getState: () => swarmState },
 }));
 vi.mock('./swarmCrashRecovery', () => ({
@@ -51,7 +51,7 @@ const terminalRef = vi.hoisted(() => {
     capturedHandler: null as ((event: unknown) => void) | null,
   };
 });
-vi.mock('../stores/terminalStore', () => ({
+vi.mock('../../stores/terminalStore', () => ({
   useTerminalStore: { getState: () => terminalRef },
   getPaneSignalTail: (paneId: string) => terminalRef.tails[paneId] ?? '',
   subscribeRawTerminalEvents: (listener: (event: unknown) => void) => {
@@ -63,7 +63,7 @@ vi.mock('../stores/terminalStore', () => ({
 }));
 
 import { startTerminalSwarmBridge } from './terminalSwarmBridge';
-import { exitFallbackTransition } from './agentSignals';
+import { exitFallbackTransition } from '../agents/agentSignals';
 
 const PANE = 'pane-1';
 

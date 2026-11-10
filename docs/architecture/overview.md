@@ -221,7 +221,7 @@ When the opt-in control endpoint is enabled, an external app can drive Bridge to
 
 These are the answers to "tell me about a hard problem you solved." Each is real and in the code.
 
-### 7.1 Two-layer write safety (`src/lib/writeQueue.ts` + Rust atomic writes)
+### 7.1 Two-layer write safety (`src/lib/persistence/writeQueue.ts` + Rust atomic writes)
 The problem: rapid edits, the swarm scheduler ticking, and an MCP-triggered save can all try to write the same file at once and clobber each other.
 
 - **Rust layer** writes atomically: write to a temp file, then rename, under a **per-path mutex**. This guarantees a reader never sees a half-written (torn) file.

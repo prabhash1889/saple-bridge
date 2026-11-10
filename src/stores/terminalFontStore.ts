@@ -7,7 +7,7 @@ import {
   TERMINAL_SCROLLBACK_ROWS,
   MIN_SCROLLBACK_ROWS,
   MAX_SCROLLBACK_ROWS,
-} from '../lib/terminalLimits';
+} from '../lib/terminal/terminalLimits';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 

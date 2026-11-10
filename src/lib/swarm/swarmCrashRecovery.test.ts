@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { AgentStatus } from '../types/agent';
+import type { AgentStatus } from '../../types/agent';
 import {
   reconcileLoadedAgents,
   recordPendingAgentExit,

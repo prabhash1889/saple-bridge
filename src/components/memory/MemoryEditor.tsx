@@ -6,7 +6,7 @@ import { useFileStore } from '../../stores/fileStore';
 import { useConfirmStore } from '../../stores/confirmStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { MemoryMarkdown } from './markdown/MemoryMarkdown';
-import { memoryPathPrefix } from '../../lib/memoryLayout';
+import { memoryPathPrefix } from '../../lib/persistence/memoryLayout';
 
 export const MemoryEditor: React.FC = () => {
   const currentProjectPath = useProjectStore((state) => state.currentProjectPath);

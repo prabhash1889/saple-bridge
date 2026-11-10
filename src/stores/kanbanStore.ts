@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { nowIso } from '../lib/date';
-import { toErrorMessage } from '../lib/errors';
+import { toErrorMessage } from '../lib/platform/errors';
 import { createId } from '../lib/id';
-import { enqueueWrite } from '../lib/writeQueue';
-import { notifyTaskReadyForReview } from '../lib/desktopNotifications';
-import { recordFailure } from '../lib/failureTracking';
-import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/stateLoad';
+import { enqueueWrite } from '../lib/persistence/writeQueue';
+import { notifyTaskReadyForReview } from '../lib/platform/desktopNotifications';
+import { recordFailure } from '../lib/platform/failureTracking';
+import { loadStateFile, type CorruptState, type StateLoadResult } from '../lib/persistence/stateLoad';
 import { invoke } from '@tauri-apps/api/core';
 import type { Task, TaskColumn, TaskPriority } from '../types/task';
 export type { AgentConfig, Task, TaskColumn, TaskPriority } from '../types/task';

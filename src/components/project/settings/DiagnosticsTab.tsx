@@ -3,7 +3,7 @@ import { CheckCircle, ClipboardCopy, RefreshCw, ShieldCheck, XCircle } from 'luc
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
-import { writeTextToClipboard } from '../../../lib/clipboard';
+import { writeTextToClipboard } from '../../../lib/platform/clipboard';
 import { UpdatesSection } from './UpdatesSection';
 
 // Shape of the `run_diagnostics` Rust command result, limited to the fields this tab reads.

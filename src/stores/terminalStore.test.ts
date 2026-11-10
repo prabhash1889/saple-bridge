@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
+import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminal/terminalLimits';
 
 // terminalStore reaches into Tauri IPC and several sibling stores. Mock all of them so the pure
 // state logic — workspace bucketing, focus resolution, output buffering/trimming, pane limits —

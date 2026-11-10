@@ -2,7 +2,7 @@ import React from 'react';
 import { RotateCw, FolderOpen, ArchiveRestore, Eraser, FileWarning, AlertTriangle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useConfirmStore } from '../../stores/confirmStore';
-import { resolveStateCorruption, type CorruptState } from '../../lib/stateLoad';
+import { resolveStateCorruption, type CorruptState } from '../../lib/persistence/stateLoad';
 
 interface StateRecoveryBannerProps {
   projectPath: string;

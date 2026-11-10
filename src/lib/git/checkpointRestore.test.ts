@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateRestoreGate, findCheckpoint } from './checkpointRestore';
-import type { Checkpoint } from '../stores/gitStore';
+import type { Checkpoint } from '../../stores/gitStore';
 
 const cp = (id: string): Checkpoint => ({ id, commit: `${id}-sha` });
 

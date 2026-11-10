@@ -7,7 +7,7 @@ import {
   PROVIDER_LABELS,
   SIGN_IN_COMMANDS,
 } from './providerFacts';
-import type { AgentProvider } from '../types/provider';
+import type { AgentProvider } from '../../types/provider';
 
 describe('isHeadlessProvider', () => {
   it('treats piped-prompt CLIs as headless', () => {

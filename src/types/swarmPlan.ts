@@ -3,7 +3,7 @@ import type { AgentProvider } from './provider';
 
 // Swarm v2 contracts. These describe the machine-read files the coordinator and reviewers write
 // under `.saple/swarm/` (`plan.json`, `verdicts/*.json`). Everything here is untrusted agent output
-// on the wire — the parsers in `src/lib/swarmPlan.ts` are the trust boundary; these types describe
+// on the wire — the parsers in `src/lib/swarm/swarmPlan.ts` are the trust boundary; these types describe
 // the sanitized shape that survives.
 
 // How much a swarm may do without a human click. `manual` records everything but gates every

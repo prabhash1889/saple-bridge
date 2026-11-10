@@ -1,4 +1,4 @@
-import type { AgentProvider } from '../types/provider';
+import type { AgentProvider } from '../../types/provider';
 
 // Single source of truth for AI-provider facts on the renderer side. The privileged side has
 // its own owner across the IPC boundary (`src-tauri/src/providers.rs`): launch commands,

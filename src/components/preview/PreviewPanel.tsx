@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, ExternalLink, X, Paperclip, Globe, AlertTriangle } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { parseLoopbackUrl } from '../../lib/loopback';
+import { parseLoopbackUrl } from '../../lib/platform/loopback';
 import { createId } from '../../lib/id';
 import { useFocusTrap } from '../../lib/useFocusTrap';
 import { useProjectStore } from '../../stores/projectStore';

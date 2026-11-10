@@ -38,6 +38,21 @@ Filesystem access, PTY spawning, keychain access, and memory parsing belong to `
 | notificationStore | `stores/notificationStore.ts` | in-memory toast state |
 | themeStore | `stores/themeStore.ts` | localStorage theme preference |
 
+## Shared Logic Map (`lib/`)
+
+Framework-free logic shared by stores and components, grouped by domain. Put new modules in the
+matching folder; only cross-cutting utilities stay at the `lib/` root. Tests sit next to the module.
+
+| Folder | Holds |
+| --- | --- |
+| `lib/swarm/` | Swarm plan parsing, prompts, scheduler, digests, events, crash recovery, coordinator link, terminal-to-swarm bridge |
+| `lib/agents/` | Agent lifecycle signals, control-plane client, launch prompts, provider facts, Claude context math |
+| `lib/git/` | Diff splitting, branch sync formatting, checkpoint restore gating |
+| `lib/persistence/` | Write queue and coalescer, state-load bridge, memory layout, recent-project summaries |
+| `lib/platform/` | IPC command registry, error parsing and reporting, failure tracking, clipboard, notifications, June dispatcher, loopback URLs |
+| `lib/terminal/` | SSH presets, terminal output limits |
+| `lib/` root | Generic utilities: ids, dates, feature flags, syntax highlighter, focus trap |
+
 ## Patterns
 
 To add a new view:

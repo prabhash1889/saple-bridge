@@ -1,7 +1,7 @@
 // Single owner of AI-provider facts on the privileged side: how each provider CLI is
 // invoked, its readiness probe, its keychain service name, the credential environment
 // variables it must (and must not) receive, and whether prompts can be piped into it.
-// Renderer-side provider facts live in `src/lib/providerFacts.ts`; the IPC boundary is
+// Renderer-side provider facts live in `src/lib/agents/providerFacts.ts`; the IPC boundary is
 // deliberate, so neither side imports from the other.
 //
 // Launch and probe share one table so detection (`check_provider_cli`, diagnostics) and

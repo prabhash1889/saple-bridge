@@ -1,4 +1,4 @@
-import { providerKeychainService } from '../../../lib/providerFacts';
+import { providerKeychainService } from '../../../lib/agents/providerFacts';
 
 // The Keychain tab's "OpenAI API Key (for Codex)" slot writes the SAME keychain entry the Codex
 // provider card uses (`saple_provider_codex_api_key`), so a key saved in either place reflects in

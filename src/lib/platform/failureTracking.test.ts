@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { recordFailure, resetFailureTracking } from './failureTracking';
-import { useNotificationStore } from '../stores/notificationStore';
+import { useNotificationStore } from '../../stores/notificationStore';
 
 describe('recordFailure', () => {
   beforeEach(() => {

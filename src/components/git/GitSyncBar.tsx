@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { CloudDownload, GitBranch, RefreshCw } from 'lucide-react';
 import { useGitStore, type RemoteAction, type RemoteResult } from '../../stores/gitStore';
 import { useNotificationStore } from '../../stores/notificationStore';
-import { describeSyncState, hasDiverged } from '../../lib/gitFormat';
+import { describeSyncState, hasDiverged } from '../../lib/git/gitFormat';
 import { CheckpointPanel } from './CheckpointPanel';
 
 const ACTION_LABEL: Record<RemoteAction, string> = {

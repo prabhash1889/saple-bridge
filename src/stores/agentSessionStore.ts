@@ -1,14 +1,14 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { enqueueWrite } from '../lib/writeQueue';
+import { enqueueWrite } from '../lib/persistence/writeQueue';
 import { createId } from '../lib/id';
 import { nowIso } from '../lib/date';
-import { loadStateFile, type CorruptState } from '../lib/stateLoad';
+import { loadStateFile, type CorruptState } from '../lib/persistence/stateLoad';
 import type { AgentSession, AgentStatus, AgentOutcome } from '../types/agent';
 import type { AgentProvider } from '../types/provider';
 import type { AgentRole } from '../types/agent';
-import { registerLaunch, recordRunOutcome, writeOutcomeArtifacts } from '../lib/controlPlane';
-import { recordFailure } from '../lib/failureTracking';
+import { registerLaunch, recordRunOutcome, writeOutcomeArtifacts } from '../lib/agents/controlPlane';
+import { recordFailure } from '../lib/platform/failureTracking';
 
 interface AgentSessionState {
   sessions: AgentSession[];

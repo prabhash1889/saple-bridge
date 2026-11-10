@@ -58,7 +58,7 @@ vi.mock('./agentSessionStore', () => ({
   },
 }));
 
-vi.mock('../lib/desktopNotifications', () => ({
+vi.mock('../lib/platform/desktopNotifications', () => ({
   notifyAgentStatusChanged: vi.fn(),
 }));
 
@@ -69,8 +69,8 @@ import {
   type SwarmAgent,
   type AgentStatus,
 } from './swarmStore';
-import { recordPendingAgentExit } from '../lib/swarmCrashRecovery';
-import { hashAcceptanceOutput } from '../lib/swarmDigest';
+import { recordPendingAgentExit } from '../lib/swarm/swarmCrashRecovery';
+import { hashAcceptanceOutput } from '../lib/swarm/swarmDigest';
 import { useProjectStore } from './projectStore';
 import type { WizardLaunchInput } from '../types/wizard';
 

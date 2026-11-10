@@ -9,8 +9,8 @@ import { openLink } from '../../stores/browserStore';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useNotificationStore } from '../../stores/notificationStore';
-import { writeTextToClipboard } from '../../lib/clipboard';
-import { hasIpcErrorCode } from '../../lib/errors';
+import { writeTextToClipboard } from '../../lib/platform/clipboard';
+import { hasIpcErrorCode } from '../../lib/platform/errors';
 import { useTerminalFontStore, fontStackFor } from '../../stores/terminalFontStore';
 import {
   copyTerminalSelection,

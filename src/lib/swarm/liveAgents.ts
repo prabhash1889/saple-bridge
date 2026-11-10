@@ -1,5 +1,5 @@
-import { useSwarmStore } from '../stores/swarmStore';
-import { useTerminalStore } from '../stores/terminalStore';
+import { useSwarmStore } from '../../stores/swarmStore';
+import { useTerminalStore } from '../../stores/terminalStore';
 
 export interface LiveAgents {
   /** Names of swarm agents currently working (running or waiting). */

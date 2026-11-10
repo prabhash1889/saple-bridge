@@ -5,7 +5,7 @@ import {
   findDeadlockedAgents,
   type SchedulerAgent,
 } from './swarmScheduler';
-import type { AgentStatus } from '../types/agent';
+import type { AgentStatus } from '../../types/agent';
 
 const a = (id: string, status: AgentStatus, dependencies: string[] = []): SchedulerAgent => ({
   id,

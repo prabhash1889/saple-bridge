@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useProjectStore } from '../../../stores/projectStore';
 import { useSwarmStore } from '../../../stores/swarmStore';
 import { useTerminalFontStore } from '../../../stores/terminalFontStore';
-import { MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS } from '../../../lib/terminalLimits';
+import { MIN_SCROLLBACK_ROWS, MAX_SCROLLBACK_ROWS } from '../../../lib/terminal/terminalLimits';
 import { SshPresetsSection } from './SshPresetsSection';
 
 export const WorkspaceTab: React.FC = () => {

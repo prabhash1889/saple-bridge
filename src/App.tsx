@@ -20,11 +20,11 @@ import { useBrowserStore } from './stores/browserStore';
 import { useFileStore } from './stores/fileStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useConfirmStore } from './stores/confirmStore';
-import { getLiveAgents, describeLiveAgents } from './lib/liveAgents';
+import { getLiveAgents, describeLiveAgents } from './lib/swarm/liveAgents';
 import { useThemeStore, resolveTheme } from './stores/themeStore';
-import { startJuneDispatcher } from './lib/juneDispatcher';
-import { startTerminalSwarmBridge } from './lib/terminalSwarmBridge';
-import { recordFailure } from './lib/failureTracking';
+import { startJuneDispatcher } from './lib/platform/juneDispatcher';
+import { startTerminalSwarmBridge } from './lib/swarm/terminalSwarmBridge';
+import { recordFailure } from './lib/platform/failureTracking';
 import { isMissionsEnabled } from './lib/featureFlags';
 import { useMissionStore } from './stores/missionStore';
 

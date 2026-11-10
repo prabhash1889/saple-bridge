@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { createId } from '../lib/id';
-import type { SshPreset } from '../lib/sshPreset';
+import type { SshPreset } from '../lib/terminal/sshPreset';
 
-export type { SshPreset } from '../lib/sshPreset';
+export type { SshPreset } from '../lib/terminal/sshPreset';
 
 interface SshPresetState {
   presets: SshPreset[];

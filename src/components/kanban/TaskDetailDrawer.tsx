@@ -11,7 +11,7 @@ import { createId } from '../../lib/id';
 import { invoke } from '@tauri-apps/api/core';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useFocusTrap } from '../../lib/useFocusTrap';
-import { buildTaskAgentPrompt } from '../../lib/taskAgentPrompt';
+import { buildTaskAgentPrompt } from '../../lib/agents/taskAgentPrompt';
 
 interface TaskDetailDrawerProps {
   task: Task | null;

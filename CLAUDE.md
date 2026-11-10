@@ -61,7 +61,7 @@ Important files:
 - `src/stores/memoryStore.ts`
 - `src/stores/swarmStore.ts`
 - `src/stores/reviewStore.ts`
-- `src/lib/writeQueue.ts`
+- `src/lib/persistence/writeQueue.ts`
 - `scripts/tauri.mjs`
 - `src-tauri/src/lib.rs`
 - `src-tauri/src/pty.rs`
@@ -75,7 +75,7 @@ Important files:
 - React owns user interaction, routing, provider/project selection, rendering, and UI state.
 - Project writes must stay contained inside the selected project directory.
 - Secrets must not be stored in JSON, localStorage, markdown, or component state. Use the OS keychain commands.
-- Frontend writes to project files should use the existing queued write helpers (`src/lib/writeQueue.ts`) when a store already follows that pattern.
+- Frontend writes to project files should use the existing queued write helpers (`src/lib/persistence/writeQueue.ts`) when a store already follows that pattern.
 - New Rust writes to project state should use existing atomic write helpers where practical.
 
 ## Storage

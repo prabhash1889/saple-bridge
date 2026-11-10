@@ -35,7 +35,7 @@ import {
   fetchRecentProjectSummaries,
   summarizeRecentProject,
   MAX_SUMMARY_PROJECTS,
-} from '../../lib/recentProjectSummaries';
+} from '../../lib/persistence/recentProjectSummaries';
 import { workspaceEntries } from './workspaceEntries';
 import { isMissionsEnabled } from '../../lib/featureFlags';
 

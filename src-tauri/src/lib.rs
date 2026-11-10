@@ -271,7 +271,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     /// The expected set of Tauri command wire names. Must stay identical to
-    /// `IPC_COMMANDS` in `src/lib/ipcCommands.ts` (the frontend test asserts
+    /// `IPC_COMMANDS` in `src/lib/platform/ipcCommands.ts` (the frontend test asserts
     /// exact equality against this same lib.rs source, so drift on either side
     /// fails a test).
     const EXPECTED_COMMANDS: &[&str] = &[
@@ -451,7 +451,7 @@ mod tests {
         for name in registered_handler_names() {
             assert!(
                 expected.contains(name.as_str()),
-                "command `{}` is registered but missing from EXPECTED_COMMANDS (and from src/lib/ipcCommands.ts)",
+                "command `{}` is registered but missing from EXPECTED_COMMANDS (and from src/lib/platform/ipcCommands.ts)",
                 name
             );
         }

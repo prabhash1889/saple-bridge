@@ -21,8 +21,8 @@
 // through the store's normal updateAgentStatus path so completion side effects (persistence,
 // notifications, run close-out, scheduler advance) fire exactly as if the user had been watching.
 
-import type { AgentStatus } from '../types/agent';
-import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from './agentSignals';
+import type { AgentStatus } from '../../types/agent';
+import { hasReviewSignal, getSwarmStatusFromOutput, exitFallbackTransition } from '../agents/agentSignals';
 
 export type SwarmRunStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed';
 

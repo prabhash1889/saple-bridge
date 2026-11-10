@@ -5,7 +5,7 @@ import { useProjectStore } from '../../../stores/projectStore';
 import { useProviderStore } from '../../../stores/providerStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
 import { useTerminalStore } from '../../../stores/terminalStore';
-import { SIGN_IN_COMMANDS, providerKeychainService } from '../../../lib/providerFacts';
+import { SIGN_IN_COMMANDS, providerKeychainService } from '../../../lib/agents/providerFacts';
 import { MASKED_KEY } from './constants';
 import type { AgentProvider } from '../../../types/provider';
 

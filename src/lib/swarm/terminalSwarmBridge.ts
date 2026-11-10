@@ -17,18 +17,18 @@ import {
   getSwarmStatusFromOutput,
   getPlanSignalFromOutput,
   exitFallbackTransition,
-} from './agentSignals';
-import { notifyTaskReadyForReview } from './desktopNotifications';
-import { useKanbanStore, recordPendingTaskReview } from '../stores/kanbanStore';
-import { useProjectStore } from '../stores/projectStore';
-import { useSwarmStore } from '../stores/swarmStore';
+} from '../agents/agentSignals';
+import { notifyTaskReadyForReview } from '../platform/desktopNotifications';
+import { useKanbanStore, recordPendingTaskReview } from '../../stores/kanbanStore';
+import { useProjectStore } from '../../stores/projectStore';
+import { useSwarmStore } from '../../stores/swarmStore';
 import { recordPendingAgentExit } from './swarmCrashRecovery';
 import {
   getPaneSignalTail,
   subscribeRawTerminalEvents,
   useTerminalStore,
   type RawTerminalEvent,
-} from '../stores/terminalStore';
+} from '../../stores/terminalStore';
 
 // Route lifecycle signals by the PANE's own project (P13), not whichever project the UI
 // currently shows - a swarm/task agent keeps running (and finishing) after the user switches

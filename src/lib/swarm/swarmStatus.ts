@@ -1,4 +1,4 @@
-import type { AgentStatus } from '../types/agent';
+import type { AgentStatus } from '../../types/agent';
 
 // Single source of truth for status -> color, shared by the graph nodes and the grid cards so both
 // views read status by color identically. Mirrors the mapping the graph shipped with.

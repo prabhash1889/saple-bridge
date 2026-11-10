@@ -3,7 +3,7 @@
 // `confirmed` flag is false; this module mirrors the gate so the UI can explain
 // itself before asking.
 
-import type { Checkpoint } from '../stores/gitStore';
+import type { Checkpoint } from '../../stores/gitStore';
 
 export interface RestoreGateInput {
   checkpoints: Checkpoint[];

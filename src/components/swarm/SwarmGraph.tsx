@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { Shield, Bot, UserCheck, CheckCircle, Clock, AlertTriangle, Play } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
-import { swarmStatusColor } from '../../lib/swarmStatus';
+import { swarmStatusColor } from '../../lib/swarm/swarmStatus';
 import { ElapsedTime } from './ElapsedTime';
 
 interface SwarmGraphProps {

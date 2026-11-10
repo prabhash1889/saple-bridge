@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { installGlobalErrorHandlers } from "./lib/errorReporting";
+import { installGlobalErrorHandlers } from "./lib/platform/errorReporting";
 import "./styles/index.css";
 
 // Forward renderer errors into the Rust-side durable log (Phase 4). Must run before the first

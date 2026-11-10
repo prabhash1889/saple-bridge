@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { toErrorMessage } from '../lib/errors';
-import type { CorruptState } from '../lib/stateLoad';
+import { toErrorMessage } from '../lib/platform/errors';
+import type { CorruptState } from '../lib/persistence/stateLoad';
 
 export interface GitFileStatus {
   path: string;

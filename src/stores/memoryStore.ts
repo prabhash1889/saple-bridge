@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useConfirmStore } from './confirmStore';
-import { hasIpcErrorCode, parseIpcError } from '../lib/errors';
+import { hasIpcErrorCode, parseIpcError } from '../lib/platform/errors';
 
 export interface MemoryNode {
   id: string;

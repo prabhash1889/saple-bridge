@@ -5,7 +5,7 @@ import {
   PROVIDER_CLI_COMMAND,
   PROVIDER_DEFAULT_MODEL,
   providerKeychainService,
-} from '../lib/providerFacts';
+} from '../lib/agents/providerFacts';
 
 interface ProviderEntry {
   provider: AgentProvider;

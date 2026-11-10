@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { contextBriefSection } from './contextBrief';
 import { buildTaskAgentPrompt } from './taskAgentPrompt';
-import type { Task } from '../types/task';
+import type { Task } from '../../types/task';
 
 // P1: every launch must name its task/role and the smallest relevant brief tool, and must not
 // inline the whole memory graph. These assert the shared contract used by task and swarm prompts.

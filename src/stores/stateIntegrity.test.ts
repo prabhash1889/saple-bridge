@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 // Real serialization semantics are irrelevant here; run tasks inline but keep ordering.
-vi.mock('../lib/writeQueue', () => ({
+vi.mock('../lib/persistence/writeQueue', () => ({
   enqueueWrite: (_key: string, fn: () => unknown) => Promise.resolve().then(fn),
 }));
 

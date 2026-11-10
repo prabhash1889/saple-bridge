@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { toErrorMessage } from '../lib/errors';
+import { toErrorMessage } from '../lib/platform/errors';
 import type {
   ArtifactPublishInput,
   AskInput,

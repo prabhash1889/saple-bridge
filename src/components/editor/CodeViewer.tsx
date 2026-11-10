@@ -11,7 +11,7 @@ import {
   tokenStyle, shikiThemeFor,
   type ThemedToken,
 } from '../../lib/highlighter';
-import { writeTextToClipboard } from '../../lib/clipboard';
+import { writeTextToClipboard } from '../../lib/platform/clipboard';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 
 const MarkdownPreview = lazy(() => import('./MarkdownPreview'));
@@ -236,7 +236,7 @@ export const CodeViewer: React.FC = () => {
   const handleCopy = async () => {
     try {
       // Shared helper: Tauri plugin with retry (bare navigator.clipboard is unreliable in
-      // WebView2 - see lib/clipboard.ts), so the "Copied" feedback only shows on success.
+      // WebView2 - see lib/platform/clipboard.ts), so the "Copied" feedback only shows on success.
       await writeTextToClipboard(fileContent);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);

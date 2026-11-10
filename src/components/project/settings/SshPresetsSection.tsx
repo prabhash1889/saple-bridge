@@ -5,7 +5,7 @@ import { useTerminalStore } from '../../../stores/terminalStore';
 import { useSshPresetStore, SshPreset } from '../../../stores/sshPresetStore';
 import { useConfirmStore } from '../../../stores/confirmStore';
 import { useNotificationStore } from '../../../stores/notificationStore';
-import { buildSshCommand, sshPresetIssue } from '../../../lib/sshPreset';
+import { buildSshCommand, sshPresetIssue } from '../../../lib/terminal/sshPreset';
 
 type DraftKey = 'name' | 'hostAlias' | 'remoteDir' | 'providerCommand';
 type Draft = Record<DraftKey, string>;

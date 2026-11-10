@@ -2,7 +2,7 @@
 // (worker roster + best-effort outcome summaries) and either injects the built digest into the
 // live coordinator's PTY as a user turn, or embeds it in a relaunch prompt (digest-relaunch
 // fallback / crash recovery). Compact by design - a digest is typed into a TUI.
-import type { AgentRole, AgentStatus } from '../types/agent';
+import type { AgentRole, AgentStatus } from '../../types/agent';
 
 export interface DigestEntry {
   taskId?: string;

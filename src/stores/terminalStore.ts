@@ -5,13 +5,13 @@ import { useConfirmStore } from './confirmStore';
 import { useProjectStore } from './projectStore';
 import { useTerminalLayoutStore } from './terminalLayoutStore';
 import { createId } from '../lib/id';
-import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminalLimits';
-import { recordFailure } from '../lib/failureTracking';
+import { TERMINAL_OUTPUT_BUFFER_CHARS } from '../lib/terminal/terminalLimits';
+import { recordFailure } from '../lib/platform/failureTracking';
 import type { AgentProvider } from '../types/provider';
 
 // The terminal layer is a dumb transport: it records raw PTY output and pane lifecycle moments
 // and emits them as RawTerminalEvents. It deliberately knows nothing about swarm agents or
-// Kanban tasks - interpreting those signals is the job of src/lib/terminalSwarmBridge.ts, which
+// Kanban tasks - interpreting those signals is the job of src/lib/swarm/terminalSwarmBridge.ts, which
 // subscribes below. Keeping this boundary one-way (bridge -> stores) is what lets swarmStore
 // keep its static import of this module without forming an import cycle.
 export type RawTerminalEvent =

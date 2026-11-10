@@ -1,9 +1,9 @@
 import React, { memo, useState } from 'react';
 import { Terminal, Play, Square, CheckCircle, RefreshCw, FileText, ArrowRightLeft, XCircle, Info } from 'lucide-react';
 import { SwarmAgent, AgentStatus } from '../../stores/swarmStore';
-import { isHeadlessProvider } from '../../lib/providerFacts';
+import { isHeadlessProvider } from '../../lib/agents/providerFacts';
 import type { AgentOutcome } from '../../types/agent';
-import { swarmStatusColor } from '../../lib/swarmStatus';
+import { swarmStatusColor } from '../../lib/swarm/swarmStatus';
 import { ElapsedTime } from './ElapsedTime';
 import { MarkdownPreview } from '../editor/MarkdownPreview';
 
