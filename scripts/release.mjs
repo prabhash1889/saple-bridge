@@ -93,9 +93,14 @@ function main() {
   const cargoToml = readFileSync(cargoPath, 'utf8');
   writeFileSync(cargoPath, cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${version}"`));
 
+  // Keep Cargo.lock's own package entry in step, or the next cargo run leaves it dirty after release.
+  const lockPath = join(root, 'src-tauri', 'Cargo.lock');
+  const cargoLock = readFileSync(lockPath, 'utf8');
+  writeFileSync(lockPath, cargoLock.replace(/(name = "saple-bridge"\r?\nversion = ")[^"]*"/, `$1${version}"`));
+
   const tag = `v${version}`;
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
-  git(['add', confPath, pkgPath, cargoPath]);
+  git(['add', confPath, pkgPath, cargoPath, lockPath]);
   git(['commit', '-m', `chore(release): ${tag}`]);
   // Annotated tag (carries tagger/date/message) — and it's what the release feed is keyed on.
   git(['tag', '-a', tag, '-m', tag]);
