@@ -192,13 +192,53 @@ fn write_text_file_inner(
     crate::fs_lock::atomic_write(&full_path, content.as_bytes()).map_err(CodedError::internal)
 }
 
+// File types whose OS default action RUNS the file instead of opening it for editing: Windows
+// executables and script hosts (plus interpreters dev machines associate: Python, Git Bash),
+// shortcuts and installers, and macOS/Linux app bundles and launchers. A project is untrusted
+// input, so "open externally" must never become "execute". Matched case-insensitively.
+// ponytail: denylist; an exotic association can still slip through - the built-in editor is the
+// safe path for anything listed here.
+const LAUNCHES_ON_OPEN: &[&str] = &[
+    // Windows executables, script hosts, shortcuts, installers, control panels.
+    "exe", "com", "bat", "cmd", "scr", "pif", "cpl", "msc", "msi", "msp", "mst", "reg", "inf",
+    "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "sct", "ps1", "lnk", "url", "scf",
+    "appref-ms", "application", "settingcontent-ms", "jar",
+    // Interpreters commonly associated on dev machines (Python launcher, Git Bash, Ruby, Perl).
+    "py", "pyw", "pyz", "sh", "bash", "rb", "pl",
+    // macOS / Linux launchers and bundles.
+    "app", "command", "tool", "terminal", "workflow", "action", "pkg", "mpkg", "desktop",
+    "appimage", "run",
+];
+
+/// Whether handing `path` to the OS default handler would execute it. On Windows the user's
+/// `PATHEXT` also counts, so a locally registered executable extension is refused too.
+fn launches_on_open(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    if LAUNCHES_ON_OPEN.contains(&ext.as_str()) {
+        return true;
+    }
+    cfg!(windows)
+        && std::env::var("PATHEXT").is_ok_and(|v| {
+            v.split(';')
+                .any(|p| p.trim_start_matches('.').eq_ignore_ascii_case(&ext))
+        })
+}
+
 fn open_in_external_editor_inner(registry: &ProjectRootRegistry, project_path: String, file_path: String) -> Result<(), CodedError> {
     registry.ensure_inside_approved_root(&project_path)?;
     let full_path = crate::project_roots::get_project_file_path(&project_path, &file_path)?;
     if !full_path.exists() {
         return Err("File not found".to_string().into());
     }
-    
+    if launches_on_open(&full_path) {
+        return Err(CodedError::protected_path(
+            "This file type would run instead of opening in an editor. Use the built-in editor, \
+             or reveal it in the file explorer.",
+        ));
+    }
+
     // Open with the platform's default handler for the file's type. Never through a shell:
     // `cmd /C start "" <path>` re-parses the path, so a project file named `x&calc&.txt` ran
     // `calc`. The opener plugin hands the path to ShellExecuteExW on Windows (and to
@@ -590,6 +630,32 @@ pub async fn search_in_files(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn external_open_refuses_types_the_os_would_execute() {
+        for name in ["build.bat", "BUILD.BAT", "run.cmd", "a.exe", "x.js", "tool.py", "s.sh", "l.lnk", "My.app"] {
+            assert!(launches_on_open(Path::new(name)), "{name} must be refused");
+        }
+        for name in ["notes.txt", "main.rs", "App.tsx", "README.md", "Makefile", "x&whoami&.txt"] {
+            assert!(!launches_on_open(Path::new(name)), "{name} must open normally");
+        }
+    }
+
+    #[test]
+    fn external_open_of_a_script_is_refused_before_anything_launches() {
+        let dir = std::env::temp_dir().join(format!("saple-open-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("build.bat"), "@echo off\r\n").unwrap();
+        let registry = approved(&dir);
+        let err = open_in_external_editor_inner(
+            &registry,
+            dir.to_string_lossy().to_string(),
+            "build.bat".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, crate::error_code::ErrorCode::ProtectedPath);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     /// A registry with `dir` approved - the "legitimately opened workspace" fixture.
     fn approved(dir: &Path) -> ProjectRootRegistry {
