@@ -199,24 +199,11 @@ fn open_in_external_editor_inner(registry: &ProjectRootRegistry, project_path: S
         return Err("File not found".to_string().into());
     }
     
-    // Open with the platform's default handler for the file's type.
-    let path_str = full_path.to_string_lossy().to_string();
-    let mut cmd = if cfg!(target_os = "windows") {
-        // `start` is a cmd builtin; the empty "" is the (ignored) window title.
-        let mut c = Command::new("cmd");
-        c.args(["/C", "start", "", &path_str]);
-        c
-    } else if cfg!(target_os = "macos") {
-        let mut c = Command::new("open");
-        c.arg(&path_str);
-        c
-    } else {
-        let mut c = Command::new("xdg-open");
-        c.arg(&path_str);
-        c
-    };
-    cmd.no_window()
-        .spawn()
+    // Open with the platform's default handler for the file's type. Never through a shell:
+    // `cmd /C start "" <path>` re-parses the path, so a project file named `x&calc&.txt` ran
+    // `calc`. The opener plugin hands the path to ShellExecuteExW on Windows (and to
+    // `open` / `xdg-open` as a single argv entry elsewhere), so no metacharacter is interpreted.
+    tauri_plugin_opener::open_path(&full_path, None::<&str>)
         .map_err(|e| format!("Failed to open file in external editor: {}", e))?;
 
     Ok(())
