@@ -69,7 +69,7 @@ impl PtyRegistry {
     /// nothing.
     ///
     /// This MUST stay non-blocking. It runs on the Tauri main/event-loop thread (the
-    /// `CloseRequested` handler), so blocking it freezes the window message pump and Windows shows
+    /// `Destroyed` window-event handler), so blocking it freezes the window message pump and Windows shows
     /// "Saple Bridge is not responding". We therefore only issue the fast, fire-and-forget kills
     /// here and deliberately do NOT `child.wait()` or join the reader/emitter threads the way
     /// `kill_pty` does: those exist to reclaim in-process resources across repeated open/close

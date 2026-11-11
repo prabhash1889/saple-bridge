@@ -107,7 +107,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Closing the window must kill every PTY child (and join its reader/emitter threads),
             // otherwise agent CLIs keep running as orphaned processes after the app exits.
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            // Hook Destroyed, not CloseRequested: the frontend can cancel a close request (the
+            // "agents are still running" confirm), and the agents must survive that cancel.
+            if let tauri::WindowEvent::Destroyed = event {
                 use tauri::Manager;
                 window.state::<terminal::pty::PtyRegistry>().shutdown();
                 // Drop the discovery record so June rejects this dead endpoint immediately.
